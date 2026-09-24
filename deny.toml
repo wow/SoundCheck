@@ -5,6 +5,16 @@ all-features = false
 [advisories]
 version = 2
 yanked = "deny"
+# "Unmaintained" advisories (no vulnerability) on crates that Tauri pulls in; nothing in SoundCheck
+# uses them directly. Revisit whenever Tauri is updated: `cargo deny check advisories`.
+ignore = [
+  { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is unmaintained; proc-macro-time only, via tauri-macros" },
+  { id = "RUSTSEC-2025-0075", reason = "unic-char-range is unmaintained; via urlpattern <- tauri-utils" },
+  { id = "RUSTSEC-2025-0080", reason = "unic-common is unmaintained; via urlpattern <- tauri-utils" },
+  { id = "RUSTSEC-2025-0081", reason = "unic-char-property is unmaintained; via urlpattern <- tauri-utils" },
+  { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version is unmaintained; via urlpattern <- tauri-utils" },
+  { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident is unmaintained; via urlpattern <- tauri-utils" },
+]
 
 [licenses]
 version = 2
@@ -28,6 +38,8 @@ confidence-threshold = 0.9
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Workspace crates reference each other by path without a version (they are never published).
+allow-wildcard-paths = true
 highlight = "all"
 
 [sources]

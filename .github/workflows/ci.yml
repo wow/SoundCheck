@@ -74,8 +74,9 @@ jobs:
       - uses: actions/checkout@v5
         with: { fetch-depth: 0 }
       - run: |
+          # The PR's own commits only: GitHub's synthetic merge commit carries no sign-off.
           missing=0
-          for sha in $(git rev-list origin/${{ github.base_ref }}..HEAD); do
+          for sha in $(git rev-list --no-merges ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}); do
             if ! git log -1 --format=%B "$sha" | grep -Eq '^Signed-off-by: .+ <.+@.+>$'; then
               echo "::error::commit $sha has no Signed-off-by (use git commit -s)"; missing=1
             fi
@@ -84,7 +85,8 @@ jobs:
 
   pr-title:
     name: conventional PR title
-    if: github.event_name == 'pull_request'
+    # Dependabot's titles start with a capital "Bump"; its PRs are squash-merged with a rewritten title.
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: check
