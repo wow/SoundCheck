@@ -85,7 +85,8 @@ jobs:
 
   pr-title:
     name: conventional PR title
-    if: github.event_name == 'pull_request'
+    # Dependabot's titles start with a capital "Bump"; its PRs are squash-merged with a rewritten title.
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: check

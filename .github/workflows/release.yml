@@ -59,9 +59,9 @@ jobs:
           echo "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/AuthKey.p8"
           echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
       - name: Release notes
+        id: notes
         uses: orhun/git-cliff-action@v4
         with: { args: "--latest --strip header" }
-        env: { OUTPUT: RELEASE_NOTES.md }
       - name: Third-party licences
         run: |
           cargo install cargo-about --locked
@@ -78,7 +78,7 @@ jobs:
         with:
           tagName: ${{ needs.check.outputs.tag }}
           releaseName: "SoundCheck ${{ needs.check.outputs.tag }}"
-          releaseBodyFile: RELEASE_NOTES.md
+          releaseBody: ${{ steps.notes.outputs.content }}
           prerelease: ${{ needs.check.outputs.prerelease }}
           args: --target ${{ needs.check.outputs.target }}
       - name: sc-cli tarball and checksums
