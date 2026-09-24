@@ -22,7 +22,7 @@ jobs:
       prerelease: ${{ steps.v.outputs.prerelease }}
       target: ${{ steps.v.outputs.target }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with: { ref: "${{ github.event.inputs.tag || github.ref_name }}" }
       - id: v
         run: |
@@ -43,13 +43,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with: { ref: "${{ needs.check.outputs.tag }}", fetch-depth: 0 }
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: "aarch64-apple-darwin, x86_64-apple-darwin" }
       - uses: Swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - name: App Store Connect API key file
@@ -67,7 +67,7 @@ jobs:
           cargo install cargo-about --locked
           cargo about generate about.hbs -o THIRD_PARTY.md
       - name: Build, sign, notarize and publish the app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
