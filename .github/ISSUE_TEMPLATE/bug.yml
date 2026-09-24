@@ -1,0 +1,22 @@
+name: Bug
+description: Something crashed, hung, or wrote a wrong file
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes: { label: SoundCheck version, placeholder: "0.1.0 (a1b2c3d4e, 2026-10-01), from About or sc-cli --version" }
+    validations: { required: true }
+  - type: input
+    id: os
+    attributes: { label: macOS version and machine }
+    validations: { required: true }
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: What you did, what you expected, what you got. }
+    validations: { required: true }
+  - type: textarea
+    id: analyze
+    attributes: { label: "sc-cli analyze --json output for the file (if it is about one file)", render: json }
+  - type: textarea
+    id: logs
+    attributes: { label: Log excerpt or screenshot }

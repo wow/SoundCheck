@@ -1,0 +1,18 @@
+name: Feature request
+description: Something SoundCheck should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: { label: The problem, description: What you are trying to do in your DJ workflow and where SoundCheck stops short. }
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes: { label: Proposal }
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before filing
+      options:
+        - label: I read the "does not do" list in the README and the changelog.
+          required: true

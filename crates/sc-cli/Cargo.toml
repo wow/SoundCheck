@@ -1,0 +1,32 @@
+[package]
+name = "sc-cli"
+description = "Headless SoundCheck: the analysis the app shows, as JSON"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sc-cli"
+path = "src/main.rs"
+
+[dependencies]
+sc-core = { workspace = true }
+sc-io = { workspace = true }
+sc-analysis = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+sc-core = { workspace = true, features = ["testsig"] }
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+hound = { workspace = true }
+tempfile = { workspace = true }

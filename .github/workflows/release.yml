@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)build, e.g. v0.1.0
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: tag matches the workspace version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      target: ${{ steps.v.outputs.target }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { ref: "${{ github.event.inputs.tag || github.ref_name }}" }
+      - id: v
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          cargo_v=$(perl -0777 -ne 'print $1 if /\[workspace\.package\][^\[]*?\nversion\s*=\s*"([^"]+)"/' Cargo.toml)
+          test "v$cargo_v" = "$tag" || { echo "::error::tag $tag but Cargo.toml version is $cargo_v"; exit 1; }
+          pre=false; case "$tag" in *-*) pre=true;; esac
+          # aarch64 while the app is 0.0.x or an alpha; universal from the first beta onward.
+          target=universal-apple-darwin; case "$tag" in v0.0.*|*-alpha*) target=aarch64-apple-darwin;; esac
+          echo "version=$cargo_v" >> "$GITHUB_OUTPUT"; echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$pre" >> "$GITHUB_OUTPUT"; echo "target=$target" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build, sign, notarize, publish
+    needs: check
+    runs-on: macos-14
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with: { ref: "${{ needs.check.outputs.tag }}", fetch-depth: 0 }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "aarch64-apple-darwin, x86_64-apple-darwin" }
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: App Store Connect API key file
+        if: ${{ env.APPLE_API_KEY_CONTENT != '' }}
+        env: { APPLE_API_KEY_CONTENT: "${{ secrets.APPLE_API_KEY_CONTENT }}" }
+        run: |
+          echo "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+      - name: Release notes
+        uses: orhun/git-cliff-action@v4
+        with: { args: "--latest --strip header" }
+        env: { OUTPUT: RELEASE_NOTES.md }
+      - name: Third-party licences
+        run: |
+          cargo install cargo-about --locked
+          cargo about generate about.hbs -o THIRD_PARTY.md
+      - name: Build, sign, notarize and publish the app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        with:
+          tagName: ${{ needs.check.outputs.tag }}
+          releaseName: "SoundCheck ${{ needs.check.outputs.tag }}"
+          releaseBodyFile: RELEASE_NOTES.md
+          prerelease: ${{ needs.check.outputs.prerelease }}
+          args: --target ${{ needs.check.outputs.target }}
+      - name: sc-cli tarball and checksums
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: |
+          target=${{ needs.check.outputs.target }}; v=${{ needs.check.outputs.version }}
+          if [ "$target" = universal-apple-darwin ]; then
+            cargo build --release -p sc-cli --target aarch64-apple-darwin
+            cargo build --release -p sc-cli --target x86_64-apple-darwin
+            lipo -create -output sc-cli target/aarch64-apple-darwin/release/sc-cli target/x86_64-apple-darwin/release/sc-cli
+          else
+            cargo build --release -p sc-cli --target "$target"; cp "target/$target/release/sc-cli" sc-cli
+          fi
+          if [ -n "${{ secrets.APPLE_SIGNING_IDENTITY }}" ]; then codesign --force --options runtime --timestamp -s "${{ secrets.APPLE_SIGNING_IDENTITY }}" sc-cli; fi
+          tar -czf "sc-cli-$v-$target.tar.gz" sc-cli
+          shasum -a 256 "sc-cli-$v-$target.tar.gz" src-tauri/target/*/release/bundle/dmg/*.dmg 2>/dev/null | sed 's#src-tauri/target/[^ ]*/release/bundle/dmg/##' > SHA256SUMS.txt || shasum -a 256 "sc-cli-$v-$target.tar.gz" > SHA256SUMS.txt
+          gh release upload "${{ needs.check.outputs.tag }}" "sc-cli-$v-$target.tar.gz" SHA256SUMS.txt THIRD_PARTY.md --clobber

@@ -1,0 +1,21 @@
+[package]
+name = "sc-io"
+description = "SoundCheck file layer: decoding, byte-preserving writers, write transactions, cache and DJ-app artefacts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sc-core = { workspace = true }
+symphonia = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+sc-core = { workspace = true, features = ["testsig"] }
+approx = { workspace = true }
+hound = { workspace = true }
+tempfile = { workspace = true }

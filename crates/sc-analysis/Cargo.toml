@@ -1,0 +1,23 @@
+[package]
+name = "sc-analysis"
+description = "SoundCheck measurements: peaks, loudness (BS.1770), beats and grid fitting"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sc-core = { workspace = true }
+sc-dsp = { workspace = true }
+
+[dev-dependencies]
+sc-core = { workspace = true, features = ["testsig"] }
+approx = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "peak"
+harness = false

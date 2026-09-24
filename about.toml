@@ -1,0 +1,7 @@
+# cargo-about: generates THIRD_PARTY.md for releases (`cargo about generate about.hbs -o THIRD_PARTY.md`).
+accepted = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "MPL-2.0", "BSD-2-Clause", "BSD-3-Clause",
+  "ISC", "Zlib", "Unicode-3.0", "Unicode-DFS-2016", "CC0-1.0", "0BSD", "BSL-1.0",
+]
+workspace = true
+ignore-dev-dependencies = true

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# commit-msg hook: Conventional Commit subject + DCO sign-off. Installed by scripts/setup-dev.sh.
+set -euo pipefail
+MSG_FILE="$1"
+SUBJECT="$(grep -v '^#' "$MSG_FILE" | sed -n '1p')"
+TYPES='feat|fix|perf|refactor|test|docs|build|ci|chore|revert'
+SCOPES='core|io|dsp|analysis|engine|cli|desktop|ui|ipc|docs|ci|deps|release'
+
+fail() { printf 'commit-msg: %s\n' "$1" >&2; exit 1; }
+
+# Merge commits and fixup/squash commits are exempt from the subject rule.
+case "$SUBJECT" in
+  "Merge "*|"fixup! "*|"squash! "*) exit 0 ;;
+esac
+
+if ! printf '%s' "$SUBJECT" | grep -Eq "^($TYPES)(\(($SCOPES)(,($SCOPES))*\))?!?: [^ A-Z].*[^.]$"; then
+  fail "subject must be 'type(scope)!: imperative lowercase subject, no trailing period'
+  types:  $TYPES
+  scopes: $SCOPES
+  got:    $SUBJECT"
+fi
+[ "${#SUBJECT}" -le 72 ] || fail "subject is ${#SUBJECT} chars; keep it <= 72"
+
+if grep -Eq '^[^#].*!: ' <<<"$SUBJECT" && ! grep -Eq '^BREAKING CHANGE: ' "$MSG_FILE"; then
+  fail "a '!' subject needs a 'BREAKING CHANGE: <what>' footer"
+fi
+if ! grep -Eq '^Signed-off-by: .+ <.+@.+>$' "$MSG_FILE"; then
+  fail "missing DCO sign-off; commit with -s (scripts/setup-dev.sh enables format.signoff)"
+fi
+exit 0

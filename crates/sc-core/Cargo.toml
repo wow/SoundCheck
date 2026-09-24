@@ -1,0 +1,24 @@
+[package]
+name = "sc-core"
+description = "SoundCheck core types: audio buffers, unit newtypes, errors, IPC types and synthetic test signals"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Deterministic synthetic signals (sine, impulse, click track, seeded noise) for tests and benches.
+testsig = []
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+ts-rs = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }
+serde_json = { workspace = true }

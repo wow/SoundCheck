@@ -1,0 +1,16 @@
+name: Loudness mismatch
+description: The measured or resulting loudness disagrees with another tool
+labels: [loudness]
+body:
+  - type: input
+    id: version
+    attributes: { label: SoundCheck version }
+    validations: { required: true }
+  - type: input
+    id: tool
+    attributes: { label: Other tool and version, placeholder: "ffmpeg 8.1 ebur128, Youlean, rekordbox Auto Gain" }
+    validations: { required: true }
+  - type: textarea
+    id: numbers
+    attributes: { label: Numbers, description: "SoundCheck values (from sc-cli analyze --json) next to the other tool's values, with the statistic each one uses (integrated, short-term, S-P95)." }
+    validations: { required: true }

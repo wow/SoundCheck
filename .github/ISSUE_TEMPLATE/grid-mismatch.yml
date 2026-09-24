@@ -1,0 +1,23 @@
+name: Grid mismatch
+description: The exported file does not sit on the grid in a DJ app
+labels: [grid]
+body:
+  - type: input
+    id: version
+    attributes: { label: SoundCheck version }
+    validations: { required: true }
+  - type: input
+    id: djapp
+    attributes: { label: DJ app and version, placeholder: "rekordbox 7.1.3, Analysis Mode Normal, BPM range 70-180" }
+    validations: { required: true }
+  - type: textarea
+    id: gridcheck
+    attributes: { label: "sc-cli grid-check output for the exported file", render: json }
+    validations: { required: true }
+  - type: textarea
+    id: observed
+    attributes: { label: What the DJ app shows, description: BPM, first beat position, and a screenshot of the grid at the start of the track. }
+    validations: { required: true }
+  - type: dropdown
+    id: meter
+    attributes: { label: Meter of the track, options: ["4/4", "3/4", "6/8", "9/8", "7/8", "other / not sure"] }

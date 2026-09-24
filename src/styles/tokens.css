@@ -1,0 +1,25 @@
+/* SoundCheck design tokens. Dark by default; a light theme redefines the same names. */
+:root {
+  --sc-bg-0: #0c0e12;
+  --sc-bg-1: #12151b;
+  --sc-bg-2: #1a1e26;
+  --sc-bg-3: #232833;
+  --sc-line: #2a303b;
+  --sc-fg-0: #f2f4f8;
+  --sc-fg-1: #b8bec9;
+  --sc-fg-2: #7d8594;
+  --sc-accent: #f5b942;
+  --sc-accent-2: #4fd1c5;
+  --sc-ok: #4ade80;
+  --sc-warn: #fbbf24;
+  --sc-err: #f87171;
+  --sc-meter-lufs: #7dd3fc;
+  --sc-meter-tp: #fb7185;
+  --sc-meter-gr: #f5b942;
+  --sc-wave-orig: #5b6472;
+  --sc-wave-proc: #c9d1dd;
+  --sc-grid-beat: rgba(79, 209, 197, 0.35);
+  --sc-grid-bar: rgba(79, 209, 197, 0.8);
+  --sc-font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --sc-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}

@@ -1,0 +1,3 @@
+# ts-rs writes the TypeScript bindings for `#[ts(export)]` types here when `cargo test -p sc-core` runs.
+[env]
+TS_RS_EXPORT_DIR = { value = "src/lib/ipc/generated", relative = true }
