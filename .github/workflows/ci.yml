@@ -17,7 +17,7 @@ jobs:
     name: fmt, clippy, test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Linux packages for Tauri
         run: |
           sudo apt-get update
@@ -38,16 +38,16 @@ jobs:
     name: cargo-deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   web:
     name: typecheck, lint, vitest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
@@ -58,7 +58,7 @@ jobs:
     name: one version everywhere
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: |
           cargo_v=$(perl -0777 -ne 'print $1 if /\[workspace\.package\][^\[]*?\nversion\s*=\s*"([^"]+)"/' Cargo.toml)
           pkg_v=$(node -p "require('./package.json').version")
@@ -71,7 +71,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - run: |
           # The PR's own commits only: GitHub's synthetic merge commit carries no sign-off.
@@ -102,11 +102,11 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: cargo test --workspace --all-features
@@ -116,7 +116,7 @@ jobs:
     name: coverage report
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Linux packages for Tauri
         run: |
           sudo apt-get update
@@ -127,5 +127,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
       - run: cargo llvm-cov report --summary-only
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: lcov, path: lcov.info }

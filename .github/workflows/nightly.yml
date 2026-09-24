@@ -13,7 +13,7 @@ jobs:
     name: EBU test set + long property tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Linux packages for Tauri
         run: |
           sudo apt-get update
