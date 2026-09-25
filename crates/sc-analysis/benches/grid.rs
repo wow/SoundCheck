@@ -1,4 +1,10 @@
-#![allow(missing_docs, clippy::cast_precision_loss)]
+#![allow(
+    missing_docs,
+    clippy::cast_precision_loss,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)] // benchmark fixture arithmetic on small counts
 //! Grid solving and refitting on a six-minute track at 128 BPM (768 beats, one kick per beat,
 //! hi-hat attacks on the eighths). Budgets: a full solve well under 20 ms, a refit (tempo and bar
 //! 1 pinned by the user) under 5 ms.
