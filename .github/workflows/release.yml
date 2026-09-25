@@ -119,7 +119,10 @@ jobs:
             gh release upload "${{ needs.check.outputs.tag }}" "$dmg" --clobber
           done
       - name: sc-cli tarball and checksums
-        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           target=${{ needs.check.outputs.target }}; v=${{ needs.check.outputs.version }}
           if [ "$target" = universal-apple-darwin ]; then
@@ -130,6 +133,13 @@ jobs:
             cargo build --release -p sc-cli --target "$target"; cp "target/$target/release/sc-cli" sc-cli
           fi
           if [ -n "${{ secrets.APPLE_SIGNING_IDENTITY }}" ]; then codesign --force --options runtime --timestamp -s "${{ secrets.APPLE_SIGNING_IDENTITY }}" sc-cli; fi
+          # A bare binary cannot carry a stapled ticket, but Gatekeeper looks the ticket up online:
+          # without this, a browser-downloaded sc-cli is killed on first run.
+          if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+            ditto -c -k sc-cli sc-cli.zip
+            xcrun notarytool submit sc-cli.zip --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
+            rm -f sc-cli.zip
+          fi
           tar -czf "sc-cli-$v-$target.tar.gz" sc-cli
           gh release view "${{ needs.check.outputs.tag }}" --json assets --jq '.assets[].name' | grep '\.app\.tar\.gz$' | while read -r a; do gh release delete-asset "${{ needs.check.outputs.tag }}" "$a" -y; done
           shasum -a 256 "sc-cli-$v-$target.tar.gz" > SHA256SUMS.txt
