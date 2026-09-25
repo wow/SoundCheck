@@ -45,3 +45,6 @@ dist-ssr
 *.sw?
 # generated at release time
 THIRD_PARTY.md
+
+# Beat-tracking model files, fetched by scripts/fetch-models.sh (bundled by the app build)
+models/
