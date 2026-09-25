@@ -6,4 +6,4 @@
 
 pub mod decode;
 
-pub use decode::read_all;
+pub use decode::{Decoder, read_all};

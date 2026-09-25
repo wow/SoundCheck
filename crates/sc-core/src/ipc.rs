@@ -78,6 +78,8 @@ pub struct MeterFrame {
 pub enum IpcErrorKind {
     /// See [`crate::Error::UnsupportedFormat`].
     UnsupportedFormat,
+    /// See [`crate::Error::UnsupportedChannels`].
+    UnsupportedChannels,
     /// See [`crate::Error::Corrupt`].
     Corrupt,
     /// See [`crate::Error::Io`].
