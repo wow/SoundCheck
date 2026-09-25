@@ -18,6 +18,7 @@ const FIRST: f64 = 0.5;
 
 struct Track {
     beats: Vec<f64>,
+    downbeats: Vec<f64>,
     logits: Vec<f32>,
     kick: Vec<TimedOnset>,
     broadband: Vec<TimedOnset>,
@@ -35,7 +36,8 @@ fn track(groups: &[u8], pulse: f64, bars: usize, model_every: usize) -> Track {
     }
     let seconds = FIRST + pulse * (bar * bars) as f64 + 1.0;
     let mut logits = vec![-6.0_f32; (seconds * 50.0).ceil() as usize + 2];
-    let (mut beats, mut kick, mut broadband) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut beats, mut downbeats, mut kick, mut broadband) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for j in 0..bar * bars {
         let t = FIRST + pulse * j as f64;
         let q = j % bar;
@@ -57,12 +59,16 @@ fn track(groups: &[u8], pulse: f64, bars: usize, model_every: usize) -> Track {
         }
         if j % model_every == 0 {
             beats.push((t * 50.0).round() / 50.0);
+            if q == 0 {
+                downbeats.push((t * 50.0).round() / 50.0);
+            }
             let f = (t * 50.0).round() as usize;
             logits[f] = if q == 0 { 3.0 } else { -3.0 };
         }
     }
     Track {
         beats,
+        downbeats,
         logits,
         kick,
         broadband,
@@ -88,6 +94,7 @@ fn analyse(t: &Track, hint: &str) -> (MeterEstimate, Grid) {
     };
     let ev = Evidence {
         beats_s: &t.beats,
+        downbeats_s: &t.downbeats,
         downbeat_logits: &t.logits,
         kick_onsets: &t.kick,
         broadband_onsets: &t.broadband,

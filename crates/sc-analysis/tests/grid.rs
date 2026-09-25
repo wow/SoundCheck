@@ -15,6 +15,7 @@ const SR: u32 = 44_100;
 /// Synthetic evidence of a steady track.
 struct Synth {
     beats: Vec<f64>,
+    downbeats: Vec<f64>,
     logits: Vec<f32>,
     onsets: Vec<TimedOnset>,
 }
@@ -68,10 +69,11 @@ fn synth(spec: &Spec) -> Synth {
         times.push(t);
         t += period * (1.0 + spec.ramp_ppm * 1e-6 * i as f64 / n as f64);
     }
-    let beats = times
+    let beats: Vec<f64> = times
         .iter()
         .map(|t| ((t + spec.model_offset_s) * 50.0).round() / 50.0)
         .collect();
+    let downbeats = beats.iter().step_by(spec.downbeat_every).copied().collect();
     let frames = (spec.seconds * 50.0).ceil() as usize + 2;
     let mut logits = vec![-6.0_f32; frames];
     for (i, t) in times.iter().enumerate() {
@@ -100,6 +102,7 @@ fn synth(spec: &Spec) -> Synth {
         .collect();
     Synth {
         beats,
+        downbeats,
         logits,
         onsets,
     }
@@ -108,6 +111,7 @@ fn synth(spec: &Spec) -> Synth {
 fn run(s: &Synth, settings: &SolveSettings) -> Grid {
     let ev = Evidence {
         beats_s: &s.beats,
+        downbeats_s: &s.downbeats,
         downbeat_logits: &s.logits,
         kick_onsets: &s.onsets,
         broadband_onsets: &[],
@@ -124,7 +128,7 @@ fn click_tempi_fit_bpm_and_bar_one_within_tolerance() {
     // (true BPM, expected BPM inside the 70-180 range, downbeat spacing in model beats)
     for (bpm, expected, downbeat_every) in [
         (60.0, 120.0, 4),
-        (85.0, 85.0, 4),
+        (85.0, 170.0, 4),
         (100.0, 100.0, 4),
         (120.0, 120.0, 4),
         (127.98, 127.98, 4),
@@ -148,7 +152,14 @@ fn click_tempi_fit_bpm_and_bar_one_within_tolerance() {
             anchor_s(&g)
         );
         assert_eq!(g.verdict, Verdict::Static, "{bpm}: {g:?}");
-        assert_eq!(g.confidence, Confidence::Green, "{bpm}: {:?}", g.reasons);
+        if (bpm - 85.0).abs() < 1e-9 {
+            // Both 85 and 170 fit 70-180: the faster is taken, as DJ apps do, but the kicks only
+            // fill every other slot of it, so it is flagged.
+            assert_eq!(g.confidence, Confidence::Amber, "{bpm}: {:?}", g.reasons);
+            assert!(g.reasons.contains(&Reason::OctaveMargin));
+        } else {
+            assert_eq!(g.confidence, Confidence::Green, "{bpm}: {:?}", g.reasons);
+        }
     }
 }
 
@@ -211,34 +222,60 @@ fn missing_and_spurious_beats_do_not_move_the_tempo() {
     assert!((anchor_s(&g) - 0.5).abs() <= 0.005);
 }
 
+/// 1500 ppm over four minutes moves the attacks about 45 ms off a static grid: drifting. (A
+/// 300 ppm ramp moves them about 9 ms, which a static grid serves well.)
 #[test]
-fn a_300_ppm_tempo_ramp_is_reported_as_drifting() {
+fn a_1500_ppm_tempo_ramp_is_reported_as_drifting() {
     let spec = Spec {
         seconds: 240.0,
-        ramp_ppm: 300.0,
+        ramp_ppm: 1500.0,
         ..Spec::steady(120.0)
     };
     let g = run(&synth(&spec), &SolveSettings::default());
     assert_eq!(g.verdict, Verdict::Drifts, "{g:?}");
     assert!(
-        (f64::from(g.drift_ppm) - 300.0).abs() <= 50.0,
+        (f64::from(g.drift_ppm) - 1500.0).abs() <= 150.0,
         "{}",
         g.drift_ppm
     );
     assert!(g.reasons.contains(&Reason::Drifts));
+    let gentle = run(
+        &synth(&Spec {
+            seconds: 240.0,
+            ramp_ppm: 300.0,
+            ..Spec::steady(120.0)
+        }),
+        &SolveSettings::default(),
+    );
+    assert_eq!(gentle.verdict, Verdict::Static, "{gentle:?}");
 }
 
 #[test]
-fn fifteen_ms_of_jitter_is_static_with_a_warning() {
+fn fifteen_ms_of_random_jitter_scatters_around_a_static_grid() {
     let spec = Spec {
         seconds: 240.0,
         jitter_s: 0.015,
         ..Spec::steady(120.0)
     };
     let g = run(&synth(&spec), &SolveSettings::default());
-    assert_eq!(g.verdict, Verdict::StaticWarn, "{g:?}");
-    assert!(g.reasons.contains(&Reason::Residuals));
+    assert_eq!(g.verdict, Verdict::Static, "{g:?}");
     assert!((g.bpm.0 - 120.0).abs() <= 0.02);
+}
+
+#[test]
+fn an_18_ms_phase_step_halfway_is_not_static() {
+    let mut s = synth(&Spec {
+        seconds: 240.0,
+        ..Spec::steady(120.0)
+    });
+    for o in &mut s.onsets {
+        if o.time_s > 120.0 {
+            o.time_s += 0.018;
+        }
+    }
+    let g = run(&s, &SolveSettings::default());
+    assert_ne!(g.verdict, Verdict::Static, "{g:?}");
+    assert!(g.residual_p95_ms > 12.0, "{g:?}");
 }
 
 #[test]
@@ -255,8 +292,10 @@ fn tag_and_genre_settle_an_octave_the_range_allows_twice() {
         ..SolveSettings::default()
     };
     assert!((run(&s, &dnb).bpm.0 - 174.0).abs() <= 0.02);
-    // Without hints the kick density keeps the slower lattice (no kick between the beats).
-    assert!((run(&s, &SolveSettings::default()).bpm.0 - 87.0).abs() <= 0.02);
+    // Without hints the faster octave is taken and flagged (no kick between the beats).
+    let g = run(&s, &SolveSettings::default());
+    assert!((g.bpm.0 - 174.0).abs() <= 0.02);
+    assert!(g.reasons.contains(&Reason::OctaveMargin));
 }
 
 #[test]
@@ -274,6 +313,7 @@ fn without_kick_onsets_the_broadband_attack_anchors_bar_one() {
     let s = synth(&Spec::steady(118.0));
     let ev = Evidence {
         beats_s: &s.beats,
+        downbeats_s: &s.downbeats,
         downbeat_logits: &s.logits,
         kick_onsets: &[],
         broadband_onsets: &s.onsets,
@@ -321,6 +361,7 @@ fn too_few_beats_give_no_grid() {
     });
     let ev = Evidence {
         beats_s: &s.beats[..5],
+        downbeats_s: &[],
         downbeat_logits: &s.logits,
         kick_onsets: &s.onsets,
         broadband_onsets: &[],
@@ -364,7 +405,7 @@ fn regression_half_beat_phase_jump_of_the_model() {
         ..Spec::steady(141.03)
     });
     let half = 60.0 / 141.03 / 2.0;
-    for b in &mut s.beats {
+    for b in s.beats.iter_mut().chain(s.downbeats.iter_mut()) {
         if *b > 8.0 {
             *b = ((*b + half) * 50.0).round() / 50.0;
         }

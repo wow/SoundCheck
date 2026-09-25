@@ -14,14 +14,15 @@
 //! 3. **Score per meter**: the accent profile folded at the bar length is correlated with the
 //!    meter's template (1.0 on the bar start, 0.6 on the other group starts, 0 elsewhere) at
 //!    every rotation; the best rotation's correlation plus the accent sequence's
-//!    autocorrelation at the bar length plus a prior (4/4 favoured by 0.2, odd meters penalised
-//!    by 0.1 unless the genre or title suggests Turkish, Balkan, Greek or Arabic music, where
-//!    they gain 0.15).
+//!    autocorrelation at the bar length plus a prior (4/4 favoured by 0.2 except shuffled 4/4
+//!    against 6/8, odd meters penalised by 0.1 unless the genre or title suggests Turkish,
+//!    Balkan, Greek or Arabic music, where they gain 0.15).
 //! 4. The best meter, the runner-up and their margin (difference of scores, clamped to 0..1)
 //!    go to the grid, whose downbeat phase is then solved at that bar length.
 //!
-//! At the eighth-note pulse 4/4 and 3/4 are folded as 2+2+2+2 and 2+2+2, so every candidate is
-//! compared on the same pulse.
+//! At the eighth-note pulse 4/4 and 3/4 are folded as 2+2+2+2 and 2+2+2 (straight) or
+//! 3+3+3+3 and 3+3+3 (shuffled), so every candidate is compared on the same pulse; the odd
+//! meters are only considered when the pulse is a straight eighth.
 
 use sc_core::analysis::{BeatUnit, Meter};
 
@@ -88,37 +89,62 @@ struct Candidate {
     pulses_per_unit: f64,
 }
 
-fn candidates(eighth_level: bool) -> Vec<Candidate> {
-    let quarter = |meter: Meter| {
-        let groups = if eighth_level {
-            vec![2; meter.grouping.len()]
-        } else {
-            meter.grouping.clone()
-        };
-        Candidate {
-            meter,
-            groups,
-            pulses_per_unit: if eighth_level { 2.0 } else { 1.0 },
-        }
+/// How the pulse relates to the model's beat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Level {
+    /// No attacks between the model's beats: the beat is the pulse.
+    Beat,
+    /// Attacks halve the beat: straight eighths.
+    Duple,
+    /// Attacks divide the beat in three: triplet eighths (shuffle, compound meters).
+    Triple,
+    /// The model's beat is already the eighth-note pulse (faster than 200 per minute).
+    Fast,
+}
+
+fn candidates(level: Level) -> Vec<Candidate> {
+    // A quarter-note meter whose beats hold `per_beat` pulses.
+    let simple = |meter: Meter, per_beat: u8| Candidate {
+        groups: vec![per_beat; meter.grouping.len()],
+        pulses_per_unit: f64::from(per_beat),
+        meter,
     };
-    let mut list = vec![quarter(Meter::four_four()), quarter(Meter::three_four())];
-    if eighth_level {
-        for meter in [
-            Meter::six_eight(),
-            Meter::nine_eight_aksak(),
-            Meter::nine_eight_long_first(),
-            Meter::five_eight(),
-            Meter::seven_eight(),
-            Meter::ten_eight(),
-        ] {
-            list.push(Candidate {
-                groups: meter.grouping.clone(),
-                meter,
-                pulses_per_unit: 1.0,
-            });
+    let eighth = |meter: Meter| Candidate {
+        groups: meter.grouping.clone(),
+        pulses_per_unit: 1.0,
+        meter,
+    };
+    match level {
+        Level::Beat => vec![
+            simple(Meter::four_four(), 1),
+            simple(Meter::three_four(), 1),
+        ],
+        Level::Triple => vec![
+            simple(Meter::four_four(), 3),
+            simple(Meter::three_four(), 3),
+            eighth(Meter::six_eight()),
+        ],
+        Level::Duple | Level::Fast => {
+            let mut list = vec![
+                simple(Meter::four_four(), 2),
+                simple(Meter::three_four(), 2),
+            ];
+            if level == Level::Fast {
+                list.push(simple(Meter::four_four(), 3));
+            }
+            for meter in [
+                Meter::six_eight(),
+                Meter::nine_eight_aksak(),
+                Meter::nine_eight_long_first(),
+                Meter::five_eight(),
+                Meter::seven_eight(),
+                Meter::ten_eight(),
+            ] {
+                list.push(eighth(meter));
+            }
+            list
         }
     }
-    list
 }
 
 /// Estimates the meter from the model's beat lattice (`period`, `phase`), the attacks and the
@@ -134,13 +160,13 @@ pub fn estimate(
     hint: &str,
 ) -> MeterEstimate {
     let attacks: Vec<TimedOnset> = merged(kick, broadband);
-    let (pulse, eighth_level) = pulse_period(period, phase, span, &attacks);
+    let (pulse, level) = pulse_period(period, phase, span, &attacks);
     let accents = accents(pulse, phase, span, kick, &attacks, downbeat_logits);
     let regional = {
         let text = hint.to_lowercase();
         REGIONAL.iter().any(|k| text.contains(k))
     };
-    let mut scored: Vec<(f64, Candidate)> = candidates(eighth_level)
+    let mut scored: Vec<(f64, Candidate)> = candidates(level)
         .into_iter()
         .map(|c| (score(&accents, &c, regional), c))
         .collect();
@@ -175,20 +201,20 @@ fn merged(kick: &[TimedOnset], broadband: &[TimedOnset]) -> Vec<TimedOnset> {
     all
 }
 
-/// The finest stable pulse and whether it is the eighth-note level.
-fn pulse_period(period: f64, phase: f64, span: (f64, f64), attacks: &[TimedOnset]) -> (f64, bool) {
+/// The finest stable pulse and how it divides the model's beat.
+fn pulse_period(period: f64, phase: f64, span: (f64, f64), attacks: &[TimedOnset]) -> (f64, Level) {
     if 60.0 / period >= EIGHTH_PULSE_PER_MIN {
-        return (period, true);
+        return (period, Level::Fast);
     }
     let times: Vec<f64> = attacks.iter().map(|o| o.time_s).collect();
     let halves = subdivision_density(&times, period, phase, span, &[0.5]);
     let thirds = subdivision_density(&times, period, phase, span, &[1.0 / 3.0, 2.0 / 3.0]);
     if thirds >= SUBDIVISION_DENSITY && thirds > halves {
-        (period / 3.0, true)
+        (period / 3.0, Level::Triple)
     } else if halves >= SUBDIVISION_DENSITY {
-        (period / 2.0, true)
+        (period / 2.0, Level::Duple)
     } else {
-        (period, false)
+        (period, Level::Beat)
     }
 }
 
@@ -324,8 +350,15 @@ fn score(accents: &[f64], c: &Candidate, regional: bool) -> f64 {
         .fold(f64::NEG_INFINITY, f64::max);
     // Odd: the x/8 meters other than 6/8 (5/8, 7/8, 9/8, 10/8).
     let odd = c.meter.unit == BeatUnit::Eighth && c.meter.beats_per_bar != 6;
+    // Shuffled 4/4 (12 pulses) and 6/8 (6 pulses) differ only in how often the bar repeats; the
+    // data decides, not a prior.
+    let shuffled = (c.pulses_per_unit - 3.0).abs() < 1e-9;
     let prior = if c.meter == Meter::four_four() {
-        if regional { 0.0 } else { PRIOR_FOUR_FOUR }
+        if regional || shuffled {
+            0.0
+        } else {
+            PRIOR_FOUR_FOUR
+        }
     } else if odd {
         if regional {
             PRIOR_ODD_REGIONAL
@@ -380,11 +413,14 @@ mod tests {
 
     #[test]
     fn quarter_level_candidates_are_only_the_simple_meters() {
-        let list = candidates(false);
-        assert_eq!(list.len(), 2);
-        let eighth = candidates(true);
-        assert_eq!(eighth.len(), 8);
-        assert_eq!(eighth[0].groups, vec![2, 2, 2, 2]);
-        assert_eq!(eighth[3].groups, vec![2, 2, 2, 3]);
+        assert_eq!(candidates(Level::Beat).len(), 2);
+        let triple = candidates(Level::Triple);
+        assert_eq!(triple[0].groups, vec![3, 3, 3, 3]);
+        assert_eq!(triple.len(), 3);
+        let duple = candidates(Level::Duple);
+        assert_eq!(duple.len(), 8);
+        assert_eq!(duple[0].groups, vec![2, 2, 2, 2]);
+        assert_eq!(duple[3].groups, vec![2, 2, 2, 3]);
+        assert_eq!(candidates(Level::Fast).len(), 9);
     }
 }

@@ -13,12 +13,22 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use sc_analysis::grid::{Evidence, SolveSettings, TimedOnset, fit_beats, solve};
 use sc_analysis::meter::estimate;
 
-fn evidence() -> (Vec<f64>, Vec<f32>, Vec<TimedOnset>, Vec<TimedOnset>) {
+/// Beats, downbeats, activations, kick onsets, broadband onsets.
+type Evidence5 = (
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f32>,
+    Vec<TimedOnset>,
+    Vec<TimedOnset>,
+);
+
+fn evidence() -> Evidence5 {
     let period = 60.0 / 128.0;
     let n = 768;
     let beats: Vec<f64> = (0..n)
         .map(|i| ((0.5 + period * i as f64) * 50.0).round() / 50.0)
         .collect();
+    let downbeats: Vec<f64> = beats.iter().step_by(4).copied().collect();
     let mut logits = vec![-6.0_f32; 370 * 50];
     for i in 0..n {
         let f = ((0.5 + period * i as f64) * 50.0).round() as usize;
@@ -38,13 +48,14 @@ fn evidence() -> (Vec<f64>, Vec<f32>, Vec<TimedOnset>, Vec<TimedOnset>) {
             level_db: if i % 8 == 0 { 0.0 } else { -8.0 },
         })
         .collect();
-    (beats, logits, kick, broadband)
+    (beats, downbeats, logits, kick, broadband)
 }
 
 fn bench_grid(c: &mut Criterion) {
-    let (beats, logits, kick, broadband) = evidence();
+    let (beats, downbeats, logits, kick, broadband) = evidence();
     let ev = Evidence {
         beats_s: &beats,
+        downbeats_s: &downbeats,
         downbeat_logits: &logits,
         kick_onsets: &kick,
         broadband_onsets: &broadband,
