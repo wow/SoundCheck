@@ -40,9 +40,10 @@ else
   echo "dry-run: bump Cargo.toml + package.json to $VERSION; cargo update --workspace; pnpm install --lockfile-only"
 fi
 
-# 3. Changelog section from the commits (Keep a Changelog groups via cliff.toml).
-[ -f CHANGELOG.md ] || printf '# Changelog\n\nAll notable changes to SoundCheck are listed here. The format follows Keep a Changelog; versions follow SemVer (docs/RELEASING.md).\n\n' > CHANGELOG.md
+# 3. Changelog section prepended from the commits (Keep a Changelog groups via cliff.toml).
+[ -f CHANGELOG.md ] || : > CHANGELOG.md
 run git cliff --unreleased --tag "v$VERSION" --prepend CHANGELOG.md
+[ "$DRY" = 1 ] || perl -0pi -e 's/\n+\z/\n/' CHANGELOG.md   # one newline at the end, not a blank line
 SECTION="$(git cliff --unreleased --tag "v$VERSION" --strip all 2>/dev/null || true)"
 
 # 4. Verification and smoke build.
