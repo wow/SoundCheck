@@ -30,3 +30,7 @@ harness = false
 [[bench]]
 name = "loudness"
 harness = false
+
+[[bench]]
+name = "grid"
+harness = false

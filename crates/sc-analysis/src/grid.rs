@@ -1,0 +1,1361 @@
+//! The static beat grid: tempo, phase, octave, bar 1, residuals, verdict and confidence.
+//!
+//! 1. **Tempo** from the model's beats by robust least squares: Huber weights (20 ms) with hard
+//!    rejection beyond 40 ms, over beat indices assigned progressively (the first 16 beats by
+//!    their spacing, then windows doubling in length, each indexed by the previous fit), so
+//!    missing and spurious beats neither bias the tempo nor shift the count. No beat is snapped
+//!    to a transient: at the model's 20 ms resolution that adds structured noise, while the
+//!    global fit averages it out (768 beats give about 0.0005 BPM).
+//! 2. **Phase**: one global offset from correlating the onset train with a comb at the fitted
+//!    period, within +/-40 ms of the beats' own phase (the model's beats can sit a frame or two
+//!    off the attacks), then centred on the median offset of the attacks near the comb peak.
+//! 3. **Octave**: inside the user's DJ-app BPM range first, then the file's BPM tag (2 %), the
+//!    genre's usual range; when both octaves still fit the range the faster one is taken (what DJ
+//!    apps do), marked uncertain unless the kicks also fill the faster lattice.
+//! 4. **Round BPM** only when the round value lies within max(3 sigma, 0.002) BPM of the fit: a
+//!    true 127.98 exported as 128.00 drifts 56 ms over six minutes.
+//! 5. **Bar 1**: the meter's downbeat phase from the model's downbeats (each votes for the bar
+//!    position it lands on), its downbeat activation and, as a tie-breaker, the onset accents
+//!    gives the lattice point; the anchor moves onto the earliest significant rise
+//!    (within 6 dB of the strongest within +/-40 ms) only when that rise agrees with the global
+//!    phase to 5 ms, so a single early or late kick never shifts the whole grid.
+//! 6. **Fitness**: the running median of the attacks' residuals against the final grid (about two
+//!    bars) gives the verdict from its P95 and maximum; local tempo over 128-beat windows and a
+//!    quadratic drift are reported for the drift card; coverage, recall and the
+//!    octave, downbeat and meter margins give a calibrated three-state confidence.
+
+use sc_core::analysis::{Alternatives, Confidence, Grid, Meter, Reason, Verdict};
+use sc_core::{Bpm, SampleIndex, Seconds};
+
+/// Fewest beats (after removing double detections) a grid is fitted to.
+pub const MIN_BEATS: usize = 8;
+/// Beats below this count make the grid at most amber (reason `Short`).
+const SHORT_BEATS: usize = 32;
+/// Huber threshold of the tempo fit.
+const HUBER_S: f64 = 0.020;
+/// Residual beyond which a beat is ignored by the tempo fit.
+const REJECT_S: f64 = 0.040;
+/// Search range, step and kernel half-width of the comb phase.
+const COMB_RANGE_S: f64 = 0.040;
+const COMB_STEPS: i32 = 80;
+const COMB_KERNEL_S: f64 = 0.006;
+/// Window around the bar-1 lattice point in which the anchor onset is sought.
+const ANCHOR_WINDOW_S: f64 = 0.040;
+/// A rise within this many dB of the strongest one in the window counts as significant.
+const ANCHOR_SIGNIFICANCE_DB: f32 = 6.0;
+/// The anchor moves to that rise only when it agrees with the global phase this closely;
+/// otherwise one early or late kick would shift the whole grid.
+const ANCHOR_AGREE_S: f64 = 0.005;
+/// Largest distance at which an onset is matched to a grid line (never more than a quarter
+/// beat).
+const MATCH_WINDOW_S: f64 = 0.050;
+/// Distance within which a model beat counts as on the lattice (coverage, recall, density).
+const INLIER_S: f64 = 0.025;
+/// Frames per second of the model's activations.
+const MODEL_FPS: f64 = 50.0;
+/// Verdict thresholds.
+const STATIC_P95_MS: f64 = 12.0;
+const STATIC_MAX_MS: f64 = 30.0;
+const WARN_P95_MS: f64 = 25.0;
+const WARN_MAX_MS: f64 = 50.0;
+const LOCAL_WINDOW: f64 = 128.0;
+const LOCAL_HOP: f64 = 32.0;
+/// Attacks in the running median the verdict is judged on.
+const SMOOTH_ATTACKS: usize = 8;
+/// Confidence cut points.
+const GREEN: f64 = 0.8;
+const AMBER: f64 = 0.5;
+/// Accents break ties between bar positions but never outvote the model's downbeat activation
+/// (kick patterns such as the one-drop put the loudest kick on beat 3): their contribution is
+/// `ACCENT_WEIGHT * tanh(difference / ACCENT_SCALE_DB)`.
+const ACCENT_SCALE_DB: f64 = 6.0;
+const ACCENT_WEIGHT: f64 = 0.25;
+/// The downbeat activation read at the lattice counts half as much as the model's own downbeat
+/// votes (the activation peaks can sit a frame or two off the attack-based lattice).
+const LOGIT_WEIGHT: f64 = 0.5;
+
+/// An onset on the file's timeline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimedOnset {
+    /// Time in seconds from the start of the decoded audio.
+    pub time_s: f64,
+    /// Energy rise in dB (how sharp the attack is).
+    pub rise_db: f32,
+    /// Envelope level just after the rise, in dBFS (how loud the attack is).
+    pub level_db: f32,
+}
+
+/// What the solver works from, all on the decoded file's timeline.
+#[derive(Debug, Clone, Copy)]
+pub struct Evidence<'a> {
+    /// Model beat times in seconds.
+    pub beats_s: &'a [f64],
+    /// Model downbeat times in seconds.
+    pub downbeats_s: &'a [f64],
+    /// Model downbeat activation (raw logits) per 20 ms frame.
+    pub downbeat_logits: &'a [f32],
+    /// Kick-band (30-150 Hz) onsets.
+    pub kick_onsets: &'a [TimedOnset],
+    /// Broadband onsets, the anchor's fallback when the kick band is silent.
+    pub broadband_onsets: &'a [TimedOnset],
+}
+
+/// Everything besides the audio that shapes the grid.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SolveSettings {
+    /// The user's DJ-app BPM range.
+    pub bpm_range: (f64, f64),
+    /// BPM from the file's tags.
+    pub tag_bpm: Option<f64>,
+    /// Genre from the file's tags.
+    pub genre: Option<String>,
+    /// The bar's pulse count and grouping.
+    pub meter: Meter,
+    /// The meter estimator's margin (1.0 when the user chose the meter).
+    pub meter_margin: f64,
+    /// The period of one grid beat when the meter fixes it (the eighth-note pulse of the x/8
+    /// meters); skips the octave choice.
+    pub fixed_period: Option<f64>,
+    /// A tempo set by the user; skips the octave choice.
+    pub bpm_override: Option<f64>,
+    /// A bar-1 position set by the user, in seconds; used exactly.
+    pub anchor_override_s: Option<f64>,
+}
+
+impl Default for SolveSettings {
+    fn default() -> Self {
+        Self {
+            bpm_range: (70.0, 180.0),
+            tag_bpm: None,
+            genre: None,
+            meter: Meter::four_four(),
+            meter_margin: 1.0,
+            fixed_period: None,
+            bpm_override: None,
+            anchor_override_s: None,
+        }
+    }
+}
+
+/// Fits the grid; `None` when fewer than [`MIN_BEATS`] usable beats exist.
+#[must_use]
+pub fn solve(ev: &Evidence<'_>, settings: &SolveSettings, sample_rate: u32) -> Option<Grid> {
+    let beats = clean_beats(ev.beats_s);
+    let tempo = fit_tempo(&beats)?;
+    let span = (beats[0], beats[beats.len() - 1]);
+
+    // Kick band unless it is (nearly) silent; then broadband attacks.
+    let kick_enough = ev.kick_onsets.len() * 4 >= beats.len();
+    let (onsets, used_broadband) = if kick_enough || ev.broadband_onsets.is_empty() {
+        (ev.kick_onsets, false)
+    } else {
+        (ev.broadband_onsets, true)
+    };
+
+    let (coverage, recall) = (tempo.coverage, tempo.recall);
+    let phase = phase_from_onsets(tempo.period, tempo.phase, tempo.alt_phase, span, onsets);
+
+    // Octave (or the user's tempo).
+    let octave = match settings.bpm_override {
+        Some(bpm) if bpm > 0.0 => Octave {
+            period: 60.0 / bpm,
+            phase,
+            rule: OctaveRule::Override,
+            margin: 1.0,
+        },
+        _ => match settings.fixed_period {
+            Some(period) if period > 0.0 => Octave {
+                period,
+                phase,
+                rule: OctaveRule::Range,
+                margin: 1.0,
+            },
+            _ => choose_octave(&tempo, phase, settings, onsets, span),
+        },
+    };
+    let sigma_period = tempo.sigma_period * octave.period / tempo.period;
+    let fitted_bpm = 60.0 / octave.period;
+    let bpm = if octave.rule == OctaveRule::Override {
+        fitted_bpm
+    } else {
+        snap_bpm(
+            fitted_bpm,
+            60.0 * sigma_period / (octave.period * octave.period),
+        )
+    };
+    let period = 60.0 / bpm;
+
+    // Bar 1.
+    let bar = usize::from(settings.meter.beats_per_bar.max(1));
+    let (anchor_s, downbeat) = if let Some(anchor) = settings.anchor_override_s {
+        (anchor.max(0.0), Downbeat::pinned())
+    } else {
+        let db = downbeat_phase(
+            period,
+            octave.phase,
+            bar,
+            span,
+            ev.downbeats_s,
+            ev.downbeat_logits,
+            onsets,
+        );
+        let lattice = first_downbeat(period, octave.phase, bar, db.r, span.0);
+        let local = snap_anchor(lattice, onsets).filter(|t| (t - lattice).abs() <= ANCHOR_AGREE_S);
+        (local.unwrap_or(lattice), db)
+    };
+
+    let fit = fitness(anchor_s, period, onsets, &beats, span);
+    let verdict = verdict(&fit);
+    let first_downbeat_index = nearest_index(ev.beats_s, anchor_s);
+
+    let (confidence, reasons) = assess(&Assessment {
+        coverage,
+        recall,
+        octave_margin: octave.margin,
+        downbeat_margin: downbeat.margin,
+        verdict,
+        bpm,
+        used_broadband,
+        beats: beats.len(),
+        settings,
+    });
+
+    Some(Grid {
+        anchor: Seconds(anchor_s).to_sample_index(sample_rate),
+        bpm: Bpm(bpm),
+        meter: settings.meter.clone(),
+        meter_runner_up: None,
+        first_downbeat_index,
+        phrase_len_bars: 8,
+        segments: Vec::new(),
+        residual_p95_ms: to_f32(fit.p95_ms),
+        residual_max_ms: to_f32(fit.max_ms),
+        local_bpm_range: to_f32(fit.local_range_bpm),
+        drift_ppm: to_f32(fit.drift_ppm),
+        verdict,
+        confidence,
+        reasons,
+        alternatives: Alternatives {
+            octave_up: (bpm * 2.0 <= 400.0).then_some(Bpm(bpm * 2.0)),
+            octave_down: (bpm / 2.0 >= 30.0).then_some(Bpm(bpm / 2.0)),
+            downbeat_shift_beats: downbeat.shifts,
+        },
+    })
+}
+
+/// The inputs of the confidence and the reason chips.
+struct Assessment<'a> {
+    coverage: f64,
+    recall: f64,
+    octave_margin: f64,
+    downbeat_margin: f64,
+    verdict: Verdict,
+    bpm: f64,
+    used_broadband: bool,
+    beats: usize,
+    settings: &'a SolveSettings,
+}
+
+/// Calibrated three-state confidence from the weakest term, and the chips explaining it.
+fn assess(a: &Assessment<'_>) -> (Confidence, Vec<Reason>) {
+    let mut reasons = Vec::new();
+    let terms = [
+        (a.coverage, Reason::Coverage),
+        (a.recall, Reason::Recall),
+        (a.octave_margin, Reason::OctaveMargin),
+        (a.downbeat_margin, Reason::DownbeatMargin),
+        (a.settings.meter_margin, Reason::MeterMargin),
+    ];
+    let mut weakest = terms.iter().map(|t| t.0).fold(1.0_f64, f64::min);
+    for (value, reason) in terms {
+        if value < GREEN {
+            reasons.push(reason);
+        }
+    }
+    match a.verdict {
+        Verdict::Static => {}
+        Verdict::StaticWarn => reasons.push(Reason::Residuals),
+        Verdict::Drifts => reasons.push(Reason::Drifts),
+    }
+    let (lo, hi) = a.settings.bpm_range;
+    if a.bpm < lo - 1e-9 || a.bpm > hi + 1e-9 {
+        reasons.push(Reason::OutsideRange);
+    }
+    if let Some(tag) = a.settings.tag_bpm
+        && tag > 0.0
+        && (a.bpm - tag).abs() / tag > 0.02
+    {
+        reasons.push(Reason::TagDisagrees);
+    }
+    if a.used_broadband {
+        reasons.push(Reason::NoKick);
+    }
+    if a.beats < SHORT_BEATS {
+        reasons.push(Reason::Short);
+        weakest = weakest.min(AMBER);
+    }
+    let confidence = if weakest >= GREEN {
+        Confidence::Green
+    } else if weakest >= AMBER {
+        Confidence::Amber
+    } else {
+        Confidence::Red
+    };
+    (confidence, reasons)
+}
+
+/// The tempo fit of the model's beats alone: beat period and phase (seconds) and the span of
+/// the usable beats. The meter estimator works on this lattice before the grid is solved.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BeatFit {
+    /// Seconds per model beat.
+    pub period: f64,
+    /// Time of lattice index 0, in seconds.
+    pub phase: f64,
+    /// A second phase the model followed for a sustained section (at least eight beats a
+    /// quarter period or more away), such as a stretch on the off-beat.
+    pub alt_phase: Option<f64>,
+    /// First and last usable beat, in seconds.
+    pub span: (f64, f64),
+}
+
+/// Fits the model's beats; `None` when fewer than [`MIN_BEATS`] usable beats exist.
+#[must_use]
+pub fn fit_beats(beats_s: &[f64]) -> Option<BeatFit> {
+    let beats = clean_beats(beats_s);
+    let tempo = fit_tempo(&beats)?;
+    Some(BeatFit {
+        period: tempo.period,
+        phase: tempo.phase,
+        alt_phase: tempo.alt_phase,
+        span: (beats[0], beats[beats.len() - 1]),
+    })
+}
+
+/// The global phase of the attacks on the model's beat lattice: the comb is tried around the
+/// model's majority phase and, when the model itself followed another phase for a sustained
+/// section, around that one too; the better one wins (the alternative needs a 20 % better score)
+/// and is centred on the attacks' median offset. Without attacks the model's phase stands.
+#[must_use]
+pub fn onset_phase(fit: &BeatFit, onsets: &[TimedOnset]) -> f64 {
+    phase_from_onsets(fit.period, fit.phase, fit.alt_phase, fit.span, onsets)
+}
+
+fn phase_from_onsets(
+    period: f64,
+    phase: f64,
+    alt_phase: Option<f64>,
+    span: (f64, f64),
+    onsets: &[TimedOnset],
+) -> f64 {
+    let (off_a, score_a) = comb_offset(onsets, period, phase, span);
+    let mut coarse = phase + off_a;
+    if let Some(alt) = alt_phase {
+        let (off_b, score_b) = comb_offset(onsets, period, alt, span);
+        if score_b > score_a * 1.2 {
+            coarse = alt + off_b;
+        }
+    }
+    coarse + median_offset(onsets, period, coarse, span)
+}
+
+/// Samples of a grid line: `anchor + i * 60 * sample_rate / bpm`, rounded.
+#[must_use]
+pub fn line_at(grid: &Grid, i: i64, sample_rate: u32) -> SampleIndex {
+    let t = grid.anchor.to_seconds(sample_rate).0 + index_f64(i) * 60.0 / grid.bpm.0;
+    Seconds(t).to_sample_index(sample_rate)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tempo
+
+#[derive(Debug, Clone, Copy)]
+struct Tempo {
+    period: f64,
+    /// Phase of the largest group of segments that agree (the model's majority phase).
+    phase: f64,
+    /// The second group's phase, when it is sustained and a quarter period or more away.
+    alt_phase: Option<f64>,
+    sigma_period: f64,
+    /// Fraction of the beats that fit the shared period in their segment.
+    coverage: f64,
+    /// Fitting beats per lattice slot over the span (capped at 1).
+    recall: f64,
+}
+
+/// A spacing more than this fraction of a period away from a whole number of periods is a
+/// phase jump (the model moved to the off-beat or back); a new segment starts there.
+const PHASE_JUMP: f64 = 0.25;
+
+/// Sorted, finite, non-negative beats without double detections (closer than 30 % of the
+/// median spacing to the previous kept beat).
+fn clean_beats(beats: &[f64]) -> Vec<f64> {
+    let mut sorted: Vec<f64> = beats
+        .iter()
+        .copied()
+        .filter(|t| t.is_finite() && *t >= 0.0)
+        .collect();
+    sorted.sort_by(f64::total_cmp);
+    let mut increments: Vec<f64> = sorted
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .filter(|d| *d > 0.0)
+        .collect();
+    if increments.is_empty() {
+        return sorted;
+    }
+    let spacing = median(&mut increments);
+    let mut kept: Vec<f64> = Vec::with_capacity(sorted.len());
+    for t in sorted {
+        if kept.last().is_none_or(|&prev| t - prev >= 0.3 * spacing) {
+            kept.push(t);
+        }
+    }
+    kept
+}
+
+/// One period shared by every phase-consistent segment of the beats, each with its own phase:
+/// a half-beat jump of the model (to the off-beat and back) then cannot bend the tempo.
+fn fit_tempo(beats: &[f64]) -> Option<Tempo> {
+    if beats.len() < MIN_BEATS {
+        return None;
+    }
+    let mut increments: Vec<f64> = beats.windows(2).map(|w| w[1] - w[0]).collect();
+    let spacing = median(&mut increments);
+    if spacing <= 0.0 {
+        return None;
+    }
+    let segs = segments(beats, spacing);
+    let first = joint_irls(&segs)?;
+    // Again with the fitted period, which indexes long gaps more reliably than the median
+    // spacing (the model's spacings are quantised to 20 ms).
+    let segs = segments(beats, first.slope);
+    let joint = joint_irls(&segs)?;
+    if joint.slope <= 0.0 {
+        return None;
+    }
+    let period = joint.slope;
+
+    // Inliers per segment and the residual spread.
+    let (mut inliers, mut ss, mut skk) = (0usize, 0.0, 0.0);
+    let mut segment_weight = Vec::with_capacity(segs.len());
+    for (seg, &ic) in segs.iter().zip(&joint.intercepts) {
+        let fitting: Vec<(f64, f64)> = seg
+            .iter()
+            .copied()
+            .filter(|&(k, t)| ic.is_finite() && (t - (ic + period * k)).abs() <= REJECT_S)
+            .collect();
+        segment_weight.push(count_f64(fitting.len()));
+        if fitting.is_empty() {
+            continue;
+        }
+        inliers += fitting.len();
+        let mk = fitting.iter().map(|p| p.0).sum::<f64>() / count_f64(fitting.len());
+        for &(k, t) in &fitting {
+            ss += (t - (ic + period * k)).powi(2);
+            skk += (k - mk) * (k - mk);
+        }
+    }
+    let dof = count_f64(inliers).max(3.0) - count_f64(segs.len()) - 1.0;
+    let sigma_period = if skk > 0.0 && dof > 0.0 {
+        (ss / dof).sqrt() / skk.sqrt()
+    } else {
+        f64::INFINITY
+    };
+
+    // The phase most segments agree on (circularly, within the rejection distance).
+    let wrap = |x: f64| x - period * (x / period).floor();
+    let phases: Vec<f64> = joint.intercepts.iter().map(|&ic| wrap(ic)).collect();
+    let mut best = (0.0, -1.0);
+    for (i, &candidate) in phases.iter().enumerate() {
+        if !joint.intercepts[i].is_finite() {
+            continue;
+        }
+        let support: f64 = phases
+            .iter()
+            .zip(&segment_weight)
+            .filter(|(p, _)| {
+                let d = (*p - candidate).abs();
+                d.min(period - d) <= REJECT_S
+            })
+            .map(|(_, w)| w)
+            .sum();
+        if support > best.1 {
+            best = (candidate, support);
+        }
+    }
+    let near_start = |p: f64| p + period * ((beats[0] - p) / period).round();
+    let phase = near_start(best.0);
+    let circular = |a: f64, b: f64| {
+        let d = (a - b).abs();
+        d.min(period - d)
+    };
+    let mut alt = (0.0, 0.0);
+    for (i, &candidate) in phases.iter().enumerate() {
+        if !joint.intercepts[i].is_finite() || circular(candidate, best.0) < period / 4.0 {
+            continue;
+        }
+        let support: f64 = phases
+            .iter()
+            .zip(&segment_weight)
+            .filter(|(p, _)| circular(**p, candidate) <= REJECT_S)
+            .map(|(_, w)| w)
+            .sum();
+        if support > alt.1 {
+            alt = (candidate, support);
+        }
+    }
+    let alt_phase = (alt.1 >= count_f64(MIN_BEATS)).then(|| near_start(alt.0));
+    let slots = ((beats[beats.len() - 1] - beats[0]) / period).round() + 1.0;
+    Some(Tempo {
+        period,
+        phase,
+        alt_phase,
+        sigma_period,
+        coverage: count_f64(inliers) / count_f64(beats.len()),
+        recall: (count_f64(inliers) / slots).min(1.0),
+    })
+}
+
+/// Splits the beats into runs whose spacings stay near whole numbers of `spacing` and indexes
+/// each run from zero; a beat less than half a spacing after the last kept one is skipped.
+fn segments(beats: &[f64], spacing: f64) -> Vec<Vec<(f64, f64)>> {
+    let mut all = Vec::new();
+    let mut current = vec![(0.0, beats[0])];
+    let (mut k, mut last) = (0.0, beats[0]);
+    for &t in &beats[1..] {
+        let x = (t - last) / spacing;
+        let steps = x.round();
+        if steps < 1.0 {
+            continue;
+        }
+        if (x - steps).abs() > PHASE_JUMP {
+            all.push(std::mem::replace(&mut current, vec![(0.0, t)]));
+            k = 0.0;
+            last = t;
+            continue;
+        }
+        k += steps;
+        current.push((k, t));
+        last = t;
+    }
+    all.push(current);
+    all
+}
+
+#[derive(Debug, Clone)]
+struct Joint {
+    slope: f64,
+    /// One per segment; NaN for a segment without weight.
+    intercepts: Vec<f64>,
+}
+
+/// Weighted least squares of `t = intercept_s + slope * k` with one intercept per segment.
+fn joint_fit(segs: &[Vec<(f64, f64)>], weights: &[Vec<f64>]) -> Option<Joint> {
+    let (mut num, mut den) = (0.0, 0.0);
+    let mut means = Vec::with_capacity(segs.len());
+    for (seg, ws) in segs.iter().zip(weights) {
+        let sw: f64 = ws.iter().sum();
+        if sw <= 0.0 {
+            means.push(None);
+            continue;
+        }
+        let mk = seg.iter().zip(ws).map(|(p, w)| p.0 * w).sum::<f64>() / sw;
+        let mt = seg.iter().zip(ws).map(|(p, w)| p.1 * w).sum::<f64>() / sw;
+        for (&(k, t), &w) in seg.iter().zip(ws) {
+            num += w * (k - mk) * (t - mt);
+            den += w * (k - mk) * (k - mk);
+        }
+        means.push(Some((mk, mt)));
+    }
+    if den <= 0.0 {
+        return None;
+    }
+    let slope = num / den;
+    let intercepts = means
+        .iter()
+        .map(|m| m.map_or(f64::NAN, |(mk, mt)| mt - slope * mk))
+        .collect();
+    Some(Joint { slope, intercepts })
+}
+
+/// Iteratively reweighted [`joint_fit`]: Huber weights, then hard rejection beyond 40 ms.
+fn joint_irls(segs: &[Vec<(f64, f64)>]) -> Option<Joint> {
+    let mut weights: Vec<Vec<f64>> = segs.iter().map(|s| vec![1.0; s.len()]).collect();
+    let mut joint = joint_fit(segs, &weights)?;
+    for iteration in 0..8 {
+        for ((seg, ws), &ic) in segs.iter().zip(weights.iter_mut()).zip(&joint.intercepts) {
+            for (w, &(k, t)) in ws.iter_mut().zip(seg) {
+                let r = if ic.is_finite() {
+                    (t - (ic + joint.slope * k)).abs()
+                } else {
+                    f64::INFINITY
+                };
+                *w = if iteration >= 2 && r > REJECT_S {
+                    0.0
+                } else if r <= HUBER_S {
+                    1.0
+                } else {
+                    HUBER_S / r
+                };
+            }
+        }
+        joint = joint_fit(segs, &weights)?;
+    }
+    Some(joint)
+}
+
+/// Slope of the weighted least-squares line through `(k, t)` pairs.
+fn weighted_slope(pairs: &[(f64, f64)], weights: &[f64]) -> Option<f64> {
+    let sw: f64 = weights.iter().sum();
+    if sw <= 0.0 {
+        return None;
+    }
+    let mk = pairs.iter().zip(weights).map(|(p, w)| p.0 * w).sum::<f64>() / sw;
+    let mt = pairs.iter().zip(weights).map(|(p, w)| p.1 * w).sum::<f64>() / sw;
+    let (mut skk, mut skt) = (0.0, 0.0);
+    for (&(k, t), &w) in pairs.iter().zip(weights) {
+        skk += w * (k - mk) * (k - mk);
+        skt += w * (k - mk) * (t - mt);
+    }
+    (skk > 0.0).then(|| skt / skk)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Phase and octave
+
+/// Signed distance from `t` to the nearest lattice line.
+fn lattice_distance(t: f64, period: f64, phase: f64) -> f64 {
+    let x = (t - phase) / period;
+    (x - x.round()) * period
+}
+
+/// Offset (seconds) that best aligns the onsets with the lattice, within +/-40 ms, and its
+/// score.
+fn comb_offset(onsets: &[TimedOnset], period: f64, phase: f64, span: (f64, f64)) -> (f64, f64) {
+    let relevant: Vec<&TimedOnset> = onsets
+        .iter()
+        .filter(|o| o.time_s >= span.0 - period && o.time_s <= span.1 + period)
+        .collect();
+    if relevant.is_empty() {
+        return (0.0, 0.0);
+    }
+    let score = |offset: f64| -> f64 {
+        relevant
+            .iter()
+            .map(|o| {
+                let d = lattice_distance(o.time_s, period, phase + offset).abs();
+                f64::from(o.rise_db.max(0.0)) * (1.0 - d / COMB_KERNEL_S).max(0.0)
+            })
+            .sum()
+    };
+    let step = COMB_RANGE_S / f64::from(COMB_STEPS);
+    let mut best = (0.0, score(0.0));
+    for i in 1..=COMB_STEPS {
+        for sign in [1.0, -1.0] {
+            let offset = sign * f64::from(i) * step;
+            let s = score(offset);
+            if s > best.1 + 1e-9 {
+                best = (offset, s);
+            }
+        }
+    }
+    best
+}
+
+/// Median signed distance of the onsets within [`INLIER_S`] of the lattice: the comb finds the
+/// peak region, this centres it (a plateau of evenly spread attacks has no single comb maximum).
+fn median_offset(onsets: &[TimedOnset], period: f64, phase: f64, span: (f64, f64)) -> f64 {
+    let window = INLIER_S.min(period / 4.0);
+    let mut offsets: Vec<f64> = onsets
+        .iter()
+        .filter(|o| o.time_s >= span.0 - window && o.time_s <= span.1 + window)
+        .map(|o| lattice_distance(o.time_s, period, phase))
+        .filter(|d| d.abs() <= window)
+        .collect();
+    if offsets.is_empty() {
+        0.0
+    } else {
+        median(&mut offsets)
+    }
+}
+
+/// Fraction of lattice slots within `span` that hold an event within `window`.
+fn slot_hits(events: &[f64], period: f64, phase: f64, span: (f64, f64), window: f64) -> f64 {
+    let first = ((span.0 - phase) / period).ceil();
+    let last = ((span.1 - phase) / period).floor();
+    if last < first {
+        return 0.0;
+    }
+    let slots = last - first + 1.0;
+    let window = window.min(period / 4.0);
+    let mut hit: Vec<f64> = events
+        .iter()
+        .filter_map(|&t| {
+            let x = (t - phase) / period;
+            let k = x.round();
+            ((x - k).abs() * period <= window && k >= first && k <= last).then_some(k)
+        })
+        .collect();
+    hit.sort_by(f64::total_cmp);
+    hit.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    count_f64(hit.len()) / slots
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OctaveRule {
+    Range,
+    Tag,
+    Genre,
+    Density,
+    Override,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Octave {
+    period: f64,
+    phase: f64,
+    rule: OctaveRule,
+    margin: f64,
+}
+
+/// The usual tempo range of a genre tag, by keyword.
+fn genre_range(genre: Option<&str>) -> Option<(f64, f64)> {
+    const TABLE: [(&[&str], f64, f64); 6] = [
+        (
+            &[
+                "drum & bass",
+                "drum and bass",
+                "drum'n'bass",
+                "drum n bass",
+                "dnb",
+                "d&b",
+                "jungle",
+            ],
+            160.0,
+            180.0,
+        ),
+        (&["dubstep"], 135.0, 145.0),
+        (&["trance"], 125.0, 150.0),
+        (&["techno"], 120.0, 150.0),
+        (&["house"], 120.0, 130.0),
+        (&["hip-hop", "hip hop", "hiphop", "rap"], 80.0, 100.0),
+    ];
+    let genre = genre?.to_lowercase();
+    TABLE
+        .iter()
+        .find(|(keys, _, _)| keys.iter().any(|k| genre.contains(k)))
+        .map(|&(_, lo, hi)| (lo, hi))
+}
+
+fn choose_octave(
+    tempo: &Tempo,
+    phase: f64,
+    settings: &SolveSettings,
+    onsets: &[TimedOnset],
+    span: (f64, f64),
+) -> Octave {
+    let onset_times: Vec<f64> = onsets.iter().map(|o| o.time_s).collect();
+    // Candidates slow to fast. Half tempo has two possible parities: keep the one on more onsets.
+    let slow_phase = {
+        let a = slot_hits(&onset_times, tempo.period * 2.0, phase, span, INLIER_S);
+        let b = slot_hits(
+            &onset_times,
+            tempo.period * 2.0,
+            phase + tempo.period,
+            span,
+            INLIER_S,
+        );
+        if b > a { phase + tempo.period } else { phase }
+    };
+    let candidates = [
+        (tempo.period * 2.0, slow_phase),
+        (tempo.period, phase),
+        (tempo.period / 2.0, phase),
+    ];
+    let (lo, hi) = settings.bpm_range;
+    let bpm_of = |period: f64| 60.0 / period;
+    let in_range: Vec<(f64, f64)> = candidates
+        .iter()
+        .copied()
+        .filter(|&(p, _)| (lo - 1e-9..=hi + 1e-9).contains(&bpm_of(p)))
+        .collect();
+    let octave = |(period, phase): (f64, f64), rule, margin| Octave {
+        period,
+        phase,
+        rule,
+        margin,
+    };
+    match in_range.len() {
+        0 => {
+            let distance = |p: f64| {
+                let b = bpm_of(p);
+                if b < lo { (lo / b).ln() } else { (b / hi).ln() }
+            };
+            let best = candidates
+                .iter()
+                .copied()
+                .min_by(|a, b| distance(a.0).total_cmp(&distance(b.0)))
+                .unwrap_or((tempo.period, phase));
+            octave(best, OctaveRule::Range, 1.0)
+        }
+        1 => octave(in_range[0], OctaveRule::Range, 1.0),
+        _ => {
+            if let Some(tag) = settings.tag_bpm.filter(|t| *t > 0.0)
+                && let Some(&c) = in_range
+                    .iter()
+                    .find(|c| (bpm_of(c.0) - tag).abs() / tag <= 0.02)
+            {
+                return octave(c, OctaveRule::Tag, 0.9);
+            }
+            if let Some((glo, ghi)) = genre_range(settings.genre.as_deref()) {
+                let matches: Vec<(f64, f64)> = in_range
+                    .iter()
+                    .copied()
+                    .filter(|c| (glo..=ghi).contains(&bpm_of(c.0)))
+                    .collect();
+                if matches.len() == 1 {
+                    return octave(matches[0], OctaveRule::Genre, 0.8);
+                }
+            }
+            // Both octaves fit the range and nothing else decides: take the faster one, as DJ
+            // apps do with such a range; it is certain only when the kicks also fill the faster
+            // lattice (at least 75 % of the slower lattice's density).
+            let density = |c: (f64, f64)| slot_hits(&onset_times, c.0, c.1, span, INLIER_S);
+            let slow = in_range[0];
+            let fast = in_range[in_range.len() - 1];
+            let (d_slow, d_fast) = (density(slow), density(fast));
+            let margin = if d_slow > 0.0 && d_fast / d_slow >= 0.75 {
+                1.0
+            } else {
+                0.6
+            };
+            octave(fast, OctaveRule::Density, margin)
+        }
+    }
+}
+
+/// Snaps to the nearest integer BPM when it lies within max(3 sigma, 0.002) of the fit.
+fn snap_bpm(bpm: f64, sigma_bpm: f64) -> f64 {
+    let round = bpm.round();
+    if (bpm - round).abs() <= (3.0 * sigma_bpm).max(0.002) {
+        round
+    } else {
+        bpm
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bar 1
+
+#[derive(Debug, Clone)]
+struct Downbeat {
+    r: usize,
+    margin: f64,
+    shifts: Vec<i8>,
+}
+
+impl Downbeat {
+    fn pinned() -> Self {
+        Self {
+            r: 0,
+            margin: 1.0,
+            shifts: Vec::new(),
+        }
+    }
+}
+
+fn sigmoid(x: f32) -> f64 {
+    1.0 / (1.0 + (-f64::from(x)).exp())
+}
+
+/// Which lattice position modulo `bar` is beat 1: model downbeat activation plus the accent
+/// of the onsets on each position.
+#[allow(clippy::too_many_arguments)]
+fn downbeat_phase(
+    period: f64,
+    phase: f64,
+    bar: usize,
+    span: (f64, f64),
+    downbeats: &[f64],
+    logits: &[f32],
+    onsets: &[TimedOnset],
+) -> Downbeat {
+    if bar <= 1 {
+        return Downbeat::pinned();
+    }
+    let mut levels: Vec<f64> = onsets.iter().map(|o| f64::from(o.level_db)).collect();
+    let floor = if levels.is_empty() {
+        -80.0
+    } else {
+        median(&mut levels) - 20.0
+    };
+    let window = INLIER_S.min(period / 4.0);
+    let mut logit_sum = vec![0.0; bar];
+    let mut accent_sum = vec![0.0; bar];
+    let mut count = vec![0.0; bar];
+    let first = ((span.0 - phase) / period).ceil();
+    let last = ((span.1 - phase) / period).floor();
+    let mut k = first;
+    let mut o = 0;
+    while k <= last {
+        let t = phase + period * k;
+        let r = rem_index(k, bar);
+        let frame = t * MODEL_FPS;
+        let logit = [-1.0, 0.0, 1.0]
+            .iter()
+            .filter_map(|d| frame_index(frame.round() + d).and_then(|i| logits.get(i)))
+            .map(|&x| sigmoid(x))
+            .fold(0.0, f64::max);
+        while o < onsets.len() && onsets[o].time_s < t - window {
+            o += 1;
+        }
+        let accent = onsets[o..]
+            .iter()
+            .take_while(|x| x.time_s <= t + window)
+            .map(|x| f64::from(x.level_db))
+            .fold(f64::NEG_INFINITY, f64::max);
+        logit_sum[r] += logit;
+        accent_sum[r] += if accent.is_finite() { accent } else { floor };
+        count[r] += 1.0;
+        k += 1.0;
+    }
+    let mean_accent = accent_sum
+        .iter()
+        .zip(&count)
+        .filter(|(_, c)| **c > 0.0)
+        .map(|(a, c)| a / c)
+        .sum::<f64>()
+        / count_f64(count.iter().filter(|c| **c > 0.0).count().max(1));
+    // Votes: each model downbeat counts for the bar position it lands on.
+    let mut votes = vec![0.0; bar];
+    let vote_window = (period / 4.0).min(0.1);
+    for &d in downbeats {
+        if d < span.0 - vote_window || d > span.1 + vote_window {
+            continue;
+        }
+        let x = (d - phase) / period;
+        let k = x.round();
+        if (x - k).abs() * period <= vote_window {
+            votes[rem_index(k, bar)] += 1.0;
+        }
+    }
+    let total_votes: f64 = votes.iter().sum();
+    let vote_share = |r: usize| {
+        if total_votes >= 4.0 {
+            votes[r] / total_votes
+        } else {
+            0.0
+        }
+    };
+    let scores: Vec<f64> = (0..bar)
+        .map(|r| {
+            if count[r] > 0.0 {
+                vote_share(r)
+                    + LOGIT_WEIGHT * logit_sum[r] / count[r]
+                    + ACCENT_WEIGHT
+                        * ((accent_sum[r] / count[r] - mean_accent) / ACCENT_SCALE_DB).tanh()
+            } else {
+                f64::NEG_INFINITY
+            }
+        })
+        .collect();
+    let mut order: Vec<usize> = (0..bar).collect();
+    order.sort_by(|&a, &b| scores[b].total_cmp(&scores[a]).then(a.cmp(&b)));
+    let best = order[0];
+    let margin = if scores[order[1]].is_finite() {
+        ((scores[best] - scores[order[1]]) / 0.3).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    let shifts = order[1..]
+        .iter()
+        .map(|&r| signed_shift(r, best, bar))
+        .collect();
+    Downbeat {
+        r: best,
+        margin,
+        shifts,
+    }
+}
+
+/// The first lattice point at or after the first beat (to within half a period) that is beat 1.
+fn first_downbeat(period: f64, phase: f64, bar: usize, r: usize, start: f64) -> f64 {
+    let bar_f = count_f64(bar);
+    let k_first = ((start - phase) / period).round();
+    let offset = (count_f64(r) - k_first.rem_euclid(bar_f)).rem_euclid(bar_f);
+    let mut k = k_first + offset;
+    while phase + period * k < 0.0 {
+        k += bar_f;
+    }
+    phase + period * k
+}
+
+/// The earliest significant rise within +/-40 ms of `t`.
+fn snap_anchor(t: f64, onsets: &[TimedOnset]) -> Option<f64> {
+    let near: Vec<&TimedOnset> = onsets
+        .iter()
+        .filter(|o| (o.time_s - t).abs() <= ANCHOR_WINDOW_S)
+        .collect();
+    let strongest = near
+        .iter()
+        .map(|o| o.rise_db)
+        .fold(f32::NEG_INFINITY, f32::max);
+    near.iter()
+        .filter(|o| o.rise_db >= strongest - ANCHOR_SIGNIFICANCE_DB)
+        .map(|o| o.time_s)
+        .min_by(f64::total_cmp)
+}
+
+fn nearest_index(times: &[f64], t: f64) -> u32 {
+    times
+        .iter()
+        .enumerate()
+        .min_by(|a, b| (a.1 - t).abs().total_cmp(&(b.1 - t).abs()))
+        .map_or(0, |(i, _)| u32::try_from(i).unwrap_or(u32::MAX))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fitness and verdict
+
+#[derive(Debug, Clone, Copy)]
+struct Fitness {
+    p95_ms: f64,
+    max_ms: f64,
+    local_range_bpm: f64,
+    drift_ppm: f64,
+}
+
+/// Residuals of the onsets (or, without enough onsets, the beats) against the grid anchored at
+/// `anchor` with `period`, the local tempo range and the drift.
+fn fitness(
+    anchor: f64,
+    period: f64,
+    onsets: &[TimedOnset],
+    beats: &[f64],
+    span: (f64, f64),
+) -> Fitness {
+    let window = MATCH_WINDOW_S.min(period / 4.0);
+    let match_events = |times: &mut dyn Iterator<Item = f64>| -> Vec<(f64, f64)> {
+        let mut pairs: Vec<(f64, f64)> = Vec::new();
+        for t in times {
+            if t < span.0 - window || t > span.1 + window {
+                continue;
+            }
+            let x = (t - anchor) / period;
+            let j = x.round();
+            let d = (x - j) * period;
+            if d.abs() > window {
+                continue;
+            }
+            match pairs.last_mut() {
+                Some(last) if (last.0 - j).abs() < 0.5 => {
+                    if d.abs() < (last.1 - (anchor + period * j)).abs() {
+                        *last = (j, t);
+                    }
+                }
+                _ => pairs.push((j, t)),
+            }
+        }
+        pairs
+    };
+    let mut pairs = match_events(&mut onsets.iter().map(|o| o.time_s));
+    if pairs.len() < MIN_BEATS {
+        pairs = match_events(&mut beats.iter().copied());
+    }
+    // A static grid fails when the attacks drift away from it for a while, not when single
+    // attacks scatter: judge the running median over SMOOTH_ATTACKS consecutive attacks
+    // (about two bars).
+    let residuals: Vec<f64> = pairs
+        .iter()
+        .map(|&(j, t)| (t - (anchor + period * j)) * 1000.0)
+        .collect();
+    let smooth = running_median(&residuals, SMOOTH_ATTACKS);
+    let mut abs_ms: Vec<f64> = smooth.iter().map(|r| r.abs()).collect();
+    abs_ms.sort_by(f64::total_cmp);
+    let (p95_ms, max_ms) = if abs_ms.is_empty() {
+        (0.0, 0.0)
+    } else {
+        let rank = (95 * abs_ms.len()).div_ceil(100).max(1);
+        (abs_ms[rank - 1], abs_ms[abs_ms.len() - 1])
+    };
+    // Local tempo and drift from the same smoothed curve: stray attacks must not bend them.
+    let smooth_pairs: Vec<(f64, f64)> = pairs
+        .iter()
+        .zip(&smooth)
+        .map(|(&(j, _), r)| (j, anchor + period * j + r / 1000.0))
+        .collect();
+    let local_range_bpm = local_range(&smooth_pairs);
+    let drift_ppm = drift(&smooth_pairs).0;
+    Fitness {
+        p95_ms,
+        max_ms,
+        local_range_bpm,
+        drift_ppm,
+    }
+}
+
+/// Range of the tempo fitted over 128-slot windows (hop 32), in BPM.
+fn local_range(pairs: &[(f64, f64)]) -> f64 {
+    let Some(&(first, _)) = pairs.first() else {
+        return 0.0;
+    };
+    let last = pairs[pairs.len() - 1].0;
+    let mut bpms = Vec::new();
+    let mut start = first;
+    loop {
+        let window: Vec<(f64, f64)> = pairs
+            .iter()
+            .copied()
+            .filter(|p| p.0 >= start && p.0 < start + LOCAL_WINDOW)
+            .collect();
+        if window.len() >= 16
+            && let Some(slope) = weighted_slope(&window, &vec![1.0; window.len()])
+            && slope > 0.0
+        {
+            bpms.push(60.0 / slope);
+        }
+        if start + LOCAL_WINDOW > last {
+            break;
+        }
+        start += LOCAL_HOP;
+    }
+    if bpms.len() < 2 {
+        return 0.0;
+    }
+    bpms.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+        - bpms.iter().copied().fold(f64::INFINITY, f64::min)
+}
+
+/// Linear tempo change over the matched span in ppm, with its standard error, from a quadratic
+/// fit `t = a + b u + c u^2` on `u` scaled to [-1, 1]: the period changes by `4 c / b` of itself
+/// from start to end.
+fn drift(pairs: &[(f64, f64)]) -> (f64, f64) {
+    if pairs.len() < 16 {
+        return (0.0, 0.0);
+    }
+    let j0 = pairs[0].0;
+    let j1 = pairs[pairs.len() - 1].0;
+    let half = (j1 - j0) / 2.0;
+    if half <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let center = j0 + half;
+    let rows: Vec<(f64, f64)> = pairs
+        .iter()
+        .map(|&(j, t)| ((j - center) / half, t))
+        .collect();
+    // Normal equations for [1, u, u^2].
+    let mut m = [[0.0_f64; 3]; 3];
+    let mut v = [0.0_f64; 3];
+    for &(u, t) in &rows {
+        let basis = [1.0, u, u * u];
+        for a in 0..3 {
+            for b in 0..3 {
+                m[a][b] += basis[a] * basis[b];
+            }
+            v[a] += basis[a] * t;
+        }
+    }
+    let Some(inv) = invert3(m) else {
+        return (0.0, 0.0);
+    };
+    let coef: Vec<f64> = (0..3)
+        .map(|a| (0..3).map(|b| inv[a][b] * v[b]).sum())
+        .collect();
+    let ss: f64 = rows
+        .iter()
+        .map(|&(u, t)| (t - (coef[0] + coef[1] * u + coef[2] * u * u)).powi(2))
+        .sum();
+    let sigma2 = ss / (count_f64(rows.len()) - 3.0).max(1.0);
+    let (b, c) = (coef[1], coef[2]);
+    if b <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let drift = 4.0 * c / b * 1e6;
+    let sigma = 4.0 * (sigma2 * inv[2][2]).sqrt() / b * 1e6;
+    (drift, sigma)
+}
+
+fn invert3(m: [[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
+    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    if det.abs() < 1e-300 {
+        return None;
+    }
+    let mut inv = [[0.0; 3]; 3];
+    for (r, row) in inv.iter_mut().enumerate() {
+        for (c, cell) in row.iter_mut().enumerate() {
+            // Cofactor of m[c][r] (transposed) over the determinant.
+            let rows: Vec<usize> = (0..3).filter(|&i| i != c).collect();
+            let cols: Vec<usize> = (0..3).filter(|&i| i != r).collect();
+            let minor = m[rows[0]][cols[0]] * m[rows[1]][cols[1]]
+                - m[rows[0]][cols[1]] * m[rows[1]][cols[0]];
+            let sign = if (r + c) % 2 == 0 { 1.0 } else { -1.0 };
+            *cell = sign * minor / det;
+        }
+    }
+    Some(inv)
+}
+
+/// Whether one static grid fits, judged on the smoothed residual curve alone: a tempo change
+/// that the curve does not show (a few hundred ppm over a song moves the grid by milliseconds)
+/// does not matter to a DJ, and one that matters shows in the curve.
+fn verdict(f: &Fitness) -> Verdict {
+    if f.p95_ms < STATIC_P95_MS && f.max_ms < STATIC_MAX_MS {
+        Verdict::Static
+    } else if f.p95_ms < WARN_P95_MS && f.max_ms < WARN_MAX_MS {
+        Verdict::StaticWarn
+    } else {
+        Verdict::Drifts
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Small numeric helpers
+
+/// Centred running median over `window` values (shorter at the edges).
+fn running_median(values: &[f64], window: usize) -> Vec<f64> {
+    let half = window / 2;
+    (0..values.len())
+        .map(|i| {
+            let lo = i.saturating_sub(half);
+            let hi = (i + half).min(values.len());
+            let mut w = values[lo..hi.max(lo + 1)].to_vec();
+            median(&mut w)
+        })
+        .collect()
+}
+
+fn median(values: &mut [f64]) -> f64 {
+    values.sort_by(f64::total_cmp);
+    let n = values.len();
+    if n == 0 {
+        0.0
+    } else if n % 2 == 1 {
+        values[n / 2]
+    } else {
+        f64::midpoint(values[n / 2 - 1], values[n / 2])
+    }
+}
+
+/// Counts in this module are far below 2^52, so the conversion is exact.
+#[allow(clippy::cast_precision_loss)]
+fn count_f64(n: usize) -> f64 {
+    n as f64
+}
+
+/// Grid indices in this module are far below 2^52, so the conversion is exact.
+#[allow(clippy::cast_precision_loss)]
+fn index_f64(i: i64) -> f64 {
+    i as f64
+}
+
+/// `k mod bar` for an integer-valued `k`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn rem_index(k: f64, bar: usize) -> usize {
+    k.rem_euclid(count_f64(bar)) as usize % bar
+}
+
+/// A frame index when `frame` is a non-negative integer value.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn frame_index(frame: f64) -> Option<usize> {
+    (0.0..1e12).contains(&frame).then_some(frame as usize)
+}
+
+/// A shift in beats from `best` to `r`, in `(-bar/2, bar/2]`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+fn signed_shift(r: usize, best: usize, bar: usize) -> i8 {
+    let d = (r + bar - best) % bar;
+    let signed = if d * 2 > bar {
+        d as i64 - bar as i64
+    } else {
+        d as i64
+    };
+    signed.clamp(-128, 127) as i8
+}
+
+/// Reported statistics are display values; f32 keeps every meaningful digit.
+#[allow(clippy::cast_possible_truncation)]
+fn to_f32(x: f64) -> f32 {
+    x as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snap_only_within_the_fit_noise() {
+        assert!((snap_bpm(127.98, 0.001) - 127.98).abs() < 1e-12);
+        assert!((snap_bpm(128.0015, 0.0001) - 128.0).abs() < 1e-12);
+        assert!((snap_bpm(128.004, 0.002) - 128.0).abs() < 1e-12);
+        assert!((snap_bpm(128.01, 0.002) - 128.01).abs() < 1e-12);
+    }
+
+    #[test]
+    fn genre_keywords() {
+        assert_eq!(genre_range(Some("Drum & Bass")), Some((160.0, 180.0)));
+        assert_eq!(genre_range(Some("Progressive House")), Some((120.0, 130.0)));
+        assert_eq!(genre_range(Some("Hip-Hop/Rap")), Some((80.0, 100.0)));
+        assert_eq!(genre_range(Some("Türkçe Pop")), None);
+        assert_eq!(genre_range(None), None);
+    }
+
+    #[test]
+    fn signed_shifts_wrap_around_the_bar() {
+        assert_eq!(signed_shift(1, 0, 4), 1);
+        assert_eq!(signed_shift(2, 0, 4), 2);
+        assert_eq!(signed_shift(3, 0, 4), -1);
+        assert_eq!(signed_shift(0, 3, 4), 1);
+        assert_eq!(signed_shift(4, 0, 9), 4);
+        assert_eq!(signed_shift(5, 0, 9), -4);
+    }
+
+    #[test]
+    fn joint_fit_ignores_outliers_and_phase_jumps() {
+        let mut beats: Vec<f64> = (0..64).map(|k| 0.3 + 0.5 * f64::from(k)).collect();
+        beats[10] += 0.2;
+        beats[40] -= 0.15;
+        for b in &mut beats[48..] {
+            *b += 0.25;
+        }
+        let tempo = fit_tempo(&beats).unwrap();
+        assert!((tempo.period - 0.5).abs() < 1e-9, "{tempo:?}");
+        assert!(tempo.coverage > 0.95, "{tempo:?}");
+    }
+
+    #[test]
+    fn inverse_of_a_symmetric_matrix() {
+        let m = [[4.0, 1.0, 2.0], [1.0, 3.0, 0.5], [2.0, 0.5, 5.0]];
+        let inv = invert3(m).unwrap();
+        for (i, row) in m.iter().enumerate() {
+            for (j, _) in inv.iter().enumerate() {
+                let product: f64 = row
+                    .iter()
+                    .zip(&inv)
+                    .map(|(a, inv_row)| a * inv_row[j])
+                    .sum();
+                let expected = if i == j { 1.0 } else { 0.0 };
+                assert!((product - expected).abs() < 1e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn drift_recovers_a_linear_tempo_change() {
+        // Period grows linearly by 500 ppm over 400 beats.
+        let n = 400;
+        let mut t = 1.0;
+        let pairs: Vec<(f64, f64)> = (0..n)
+            .map(|k| {
+                let pair = (f64::from(k), t);
+                t += 0.5 + 0.5 * 500e-6 * f64::from(k) / f64::from(n - 1);
+                pair
+            })
+            .collect();
+        let (ppm, sigma) = drift(&pairs);
+        assert!((ppm - 500.0).abs() < 5.0, "{ppm} +/- {sigma}");
+    }
+}
