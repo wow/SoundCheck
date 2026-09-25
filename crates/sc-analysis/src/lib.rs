@@ -5,7 +5,9 @@
 #![forbid(unsafe_code)]
 
 pub mod beats;
+pub mod grid;
 pub mod loudness;
+pub mod meter;
 pub mod peak;
 
 pub use beats::{BeatTracker, RawBeats};
