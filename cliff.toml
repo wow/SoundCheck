@@ -3,7 +3,9 @@
 header = ""
 body = """
 {% if version %}## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}{% else %}## [Unreleased]{% endif %}
-{% for group, commits in commits | group_by(attribute="group") %}
+{% if commits | length == 0 %}
+No user-facing changes (build, CI, docs or test work only).
+{% endif %}{% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | striptags | trim | upper_first }}
 {% for commit in commits %}- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}{% if commit.breaking %} [**breaking**]{% endif %}
 {% endfor %}{% endfor %}
