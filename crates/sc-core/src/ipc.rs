@@ -90,6 +90,8 @@ pub enum IpcErrorKind {
     DrmProtected,
     /// See [`crate::Error::WouldClip`].
     WouldClip,
+    /// See [`crate::Error::ModelUnavailable`].
+    ModelUnavailable,
     /// See [`crate::Error::InvalidArgument`].
     InvalidArgument,
     /// Anything the engine did not classify.
