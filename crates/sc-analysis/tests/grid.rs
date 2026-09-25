@@ -354,3 +354,27 @@ fn solving_is_deterministic_and_lines_follow_the_anchor() {
     let tenth = line_at(&a, 10, SR).0 as f64;
     assert!((tenth - (a.anchor.0 as f64 + 10.0 * spb)).abs() <= 1.0);
 }
+
+/// The model follows the beat for 8 s, then the off-beat for the rest of the track (seen on a
+/// 141.03 BPM eurodance track): the tempo must not bend and bar 1 stays on the kicks.
+#[test]
+fn regression_half_beat_phase_jump_of_the_model() {
+    let mut s = synth(&Spec {
+        seconds: 200.0,
+        ..Spec::steady(141.03)
+    });
+    let half = 60.0 / 141.03 / 2.0;
+    for b in &mut s.beats {
+        if *b > 8.0 {
+            *b = ((*b + half) * 50.0).round() / 50.0;
+        }
+    }
+    let g = run(&s, &SolveSettings::default());
+    assert!((g.bpm.0 - 141.03).abs() <= 0.02, "{}", g.bpm.0);
+    assert!(
+        (anchor_s(&g) - 0.5).abs() <= 0.005,
+        "bar 1 at {:.4}",
+        anchor_s(&g)
+    );
+    assert_eq!(g.verdict, Verdict::Static, "{g:?}");
+}
