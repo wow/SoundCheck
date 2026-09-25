@@ -12,12 +12,18 @@ workspace = true
 [dependencies]
 sc-core = { workspace = true }
 sc-dsp = { workspace = true }
+ebur128 = { workspace = true }
 
 [dev-dependencies]
 sc-core = { workspace = true, features = ["testsig"] }
+sc-io = { workspace = true }
 approx = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]
 name = "peak"
+harness = false
+
+[[bench]]
+name = "loudness"
 harness = false

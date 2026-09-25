@@ -26,6 +26,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 symphonia = { version = "0.6", default-features = false, features = ["wav", "pcm", "flac", "mp3", "aiff", "isomp4", "aac", "alac", "ogg", "vorbis", "opt-simd"] }
 ts-rs = { version = "10", features = ["serde-compat"] }
+ebur128 = "0.1"
 tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-opener = "2"
@@ -47,6 +48,11 @@ missing_docs = "warn"
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
+
+# Dependencies (ebur128, symphonia, the model runtime) are optimised even in dev builds so tests
+# on real-length audio stay fast; workspace crates keep full debug info.
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
 lto = "thin"
