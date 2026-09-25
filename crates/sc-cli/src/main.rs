@@ -1,6 +1,7 @@
 //! Headless SoundCheck: the same analysis the app shows, printed as text or JSON.
 
 mod analyze;
+mod eval;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -87,6 +88,22 @@ enum Command {
         #[command(flatten)]
         analysis: AnalysisArgs,
     },
+    /// Score the analysis against hand labels (CSV columns `file`, `bpm`, `bar1_s`, `meter`,
+    /// `grouping`, `ffmpeg_i_lufs`); files are found by name anywhere under the folder. The cache
+    /// is not used.
+    Eval {
+        /// The labels CSV.
+        #[arg(long)]
+        labels: PathBuf,
+        /// Folder holding the labelled files.
+        #[arg(long)]
+        dir: PathBuf,
+        /// Print JSON (rows and summary) instead of text.
+        #[arg(long)]
+        json: bool,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+    },
     /// Inspect or empty the analysis cache.
     Cache {
         #[command(subcommand)]
@@ -152,6 +169,31 @@ fn main() -> anyhow::Result<()> {
         } => {
             let mut analyzer = analyzer(&analysis, None);
             bench(&mut analyzer, &file, runs.max(1))
+        }
+        Command::Eval {
+            labels,
+            dir,
+            json,
+            analysis,
+        } => {
+            let text = std::fs::read_to_string(&labels)
+                .with_context(|| format!("reading {}", labels.display()))?;
+            let labels = eval::parse_labels(&text)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", labels.display()))?;
+            let mut analyzer = analyzer(&analysis, None);
+            let (rows, summary) = eval::run(&mut analyzer, &labels, &dir);
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            if json {
+                serde_json::to_writer_pretty(
+                    &mut out,
+                    &serde_json::json!({ "rows": rows, "summary": summary }),
+                )?;
+                writeln!(out)?;
+            } else {
+                eval::write_text(&rows, &summary, &mut out)?;
+            }
+            Ok(())
         }
         Command::Cache { action } => cache_command(action),
     }

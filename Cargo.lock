@@ -3688,6 +3688,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-subscriber",
+ "unicode-normalization",
 ]
 
 [[package]]
