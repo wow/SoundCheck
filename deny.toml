@@ -14,6 +14,7 @@ ignore = [
   { id = "RUSTSEC-2025-0081", reason = "unic-char-property is unmaintained; via urlpattern <- tauri-utils" },
   { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version is unmaintained; via urlpattern <- tauri-utils" },
   { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident is unmaintained; via urlpattern <- tauri-utils" },
+  { id = "RUSTSEC-2024-0436", reason = "paste (proc-macro helper) is unmaintained; pulled in by lofty 0.25; build-time only, no runtime code" },
 ]
 
 [licenses]
