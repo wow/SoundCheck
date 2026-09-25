@@ -58,6 +58,12 @@ pub enum Error {
         /// By how much the ceiling would be exceeded, in dB.
         over_db: f64,
     },
+    /// The beat-tracking model files were not found.
+    #[error("beat-tracking model not found; looked in {}", searched.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "))]
+    ModelUnavailable {
+        /// Directories tried, in order.
+        searched: Vec<PathBuf>,
+    },
     /// A caller passed an invalid value.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
@@ -78,6 +84,7 @@ impl Error {
             Self::Cancelled => IpcErrorKind::Cancelled,
             Self::DrmProtected { .. } => IpcErrorKind::DrmProtected,
             Self::WouldClip { .. } => IpcErrorKind::WouldClip,
+            Self::ModelUnavailable { .. } => IpcErrorKind::ModelUnavailable,
             Self::InvalidArgument(_) => IpcErrorKind::InvalidArgument,
         }
     }
