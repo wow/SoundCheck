@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 sc-core = { workspace = true }
+rubato = { workspace = true }
 
 [dev-dependencies]
 sc-core = { workspace = true, features = ["testsig"] }
@@ -19,4 +20,8 @@ criterion = { workspace = true }
 
 [[bench]]
 name = "gain"
+harness = false
+
+[[bench]]
+name = "onset"
 harness = false
