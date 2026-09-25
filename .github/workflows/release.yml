@@ -79,6 +79,10 @@ jobs:
           releaseName: "SoundCheck ${{ needs.check.outputs.tag }}"
           releaseBody: ${{ steps.notes.outputs.content }}
           prerelease: ${{ needs.check.outputs.prerelease }}
+          # Create the release as a draft: the repository makes published releases immutable, so
+          # every asset (app, notarized DMG, CLI tarball, checksums, licences) must be attached
+          # before the final publish step below.
+          releaseDraft: true
           args: --target ${{ needs.check.outputs.target }}
       - name: Notarize and staple the DMG
         # Tauri notarizes and staples the .app; the disk image around it must be notarized too,
@@ -113,3 +117,6 @@ jobs:
             [ -f "$dmg" ] && (cd "$(dirname "$dmg")" && shasum -a 256 "$(basename "$dmg")") >> SHA256SUMS.txt
           done
           gh release upload "${{ needs.check.outputs.tag }}" "sc-cli-$v-$target.tar.gz" SHA256SUMS.txt THIRD_PARTY.md --clobber
+      - name: Publish the release
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: gh release edit "${{ needs.check.outputs.tag }}" --draft=false
