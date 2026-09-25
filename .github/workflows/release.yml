@@ -80,6 +80,21 @@ jobs:
           releaseBody: ${{ steps.notes.outputs.content }}
           prerelease: ${{ needs.check.outputs.prerelease }}
           args: --target ${{ needs.check.outputs.target }}
+      - name: Notarize and staple the DMG
+        # Tauri notarizes and staples the .app; the disk image around it must be notarized too,
+        # otherwise Gatekeeper reports the downloaded DMG as "Unnotarized Developer ID".
+        if: ${{ env.APPLE_API_KEY_PATH != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          for dmg in target/*/release/bundle/dmg/*.dmg; do
+            [ -f "$dmg" ] || continue
+            xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
+            xcrun stapler staple "$dmg"
+            gh release upload "${{ needs.check.outputs.tag }}" "$dmg" --clobber
+          done
       - name: sc-cli tarball and checksums
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
         run: |
