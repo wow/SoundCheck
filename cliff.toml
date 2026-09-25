@@ -23,7 +23,7 @@ tag_pattern = "v[0-9].*"
 topo_order = false
 sort_commits = "oldest"
 commit_parsers = [
-  { footer = "^Output-Change: yes", group = "<!-- 2 -->Output changes" },
+  { footer = "^Output-Change:\\s*yes", group = "<!-- 2 -->Output changes" },
   { message = "^feat", group = "<!-- 0 -->Added" },
   { message = "^fix\\(security\\)", group = "<!-- 4 -->Security" },
   { message = "^fix", group = "<!-- 1 -->Fixed" },
