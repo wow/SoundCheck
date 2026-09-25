@@ -16,6 +16,14 @@ pub enum Error {
         /// What was not supported.
         detail: String,
     },
+    /// The file has more channels than SoundCheck handles (mono and stereo only).
+    #[error("{} has {channels} channels; only mono and stereo are supported", path.display())]
+    UnsupportedChannels {
+        /// The file concerned.
+        path: PathBuf,
+        /// The channel count found.
+        channels: usize,
+    },
     /// The file could not be parsed or decoded.
     #[error("corrupt file {}: {detail}", path.display())]
     Corrupt {
@@ -64,6 +72,7 @@ impl Error {
     pub fn kind(&self) -> IpcErrorKind {
         match self {
             Self::UnsupportedFormat { .. } => IpcErrorKind::UnsupportedFormat,
+            Self::UnsupportedChannels { .. } => IpcErrorKind::UnsupportedChannels,
             Self::Corrupt { .. } => IpcErrorKind::Corrupt,
             Self::Io { .. } => IpcErrorKind::Io,
             Self::Cancelled => IpcErrorKind::Cancelled,

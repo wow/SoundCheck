@@ -3,4 +3,4 @@
 /**
  * Error classes as the UI sees them.
  */
-export type IpcErrorKind = "unsupportedFormat" | "corrupt" | "io" | "cancelled" | "drmProtected" | "wouldClip" | "invalidArgument" | "internal";
+export type IpcErrorKind = "unsupportedFormat" | "unsupportedChannels" | "corrupt" | "io" | "cancelled" | "drmProtected" | "wouldClip" | "invalidArgument" | "internal";
