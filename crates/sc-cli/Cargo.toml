@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 sc-core = { workspace = true }
+sc-dsp = { workspace = true }
 sc-io = { workspace = true }
 sc-analysis = { workspace = true }
 anyhow = { workspace = true }

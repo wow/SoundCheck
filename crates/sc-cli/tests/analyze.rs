@@ -33,10 +33,49 @@ fn write_tone_wav(dir: &Path) -> PathBuf {
     path
 }
 
+/// The workspace's model directory when `scripts/fetch-models.sh` has run.
+fn models() -> Option<PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models");
+    let ok =
+        dir.join("mel_spectrogram.onnx").is_file() && dir.join("beat_this_small.onnx").is_file();
+    if !ok {
+        eprintln!("skipped: no model files; run scripts/fetch-models.sh");
+    }
+    ok.then_some(dir)
+}
+
 fn sc_cli(cache_dir: &Path) -> Command {
     let mut cmd = Command::cargo_bin("sc-cli").expect("binary");
     cmd.env("SC_CACHE_DIR", cache_dir);
+    if let Some(models) = models() {
+        cmd.env("SC_MODEL_DIR", models);
+    }
     cmd
+}
+
+/// `lead` seconds of silence, then a 1 kHz click every beat at `bpm` for `beats` beats (the first
+/// of every four louder), stereo 44.1 kHz 16-bit.
+fn write_click_wav(dir: &Path, bpm: f64, beats: u32, lead: f64) -> PathBuf {
+    let path = dir.join(format!("click-{bpm}.wav"));
+    let clicks = testsig::click_track(AudioSpec::CD, sc_core::Bpm(bpm), beats, 15.0);
+    let lead_samples = 2 * testsig::frames_for(AudioSpec::CD, lead);
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: 44_100,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut w = hound::WavWriter::create(&path, spec).expect("create wav");
+    for _ in 0..lead_samples {
+        w.write_sample(0_i16).expect("write");
+    }
+    for s in &clicks.data {
+        #[allow(clippy::cast_possible_truncation)]
+        let q = (f64::from(*s) * 0.5 * f64::from(i16::MAX)).round() as i16;
+        w.write_sample(q).expect("write");
+    }
+    w.finalize().expect("finalize");
+    path
 }
 
 fn analyze_json(cache_dir: &Path, args: &[&str]) -> (bool, serde_json::Value, String) {
@@ -109,12 +148,11 @@ fn second_run_is_a_cache_hit_with_the_identical_record() {
     assert_eq!(second["record"], first["record"]);
 
     // Different settings are a different key: analysed again.
-    let (_, other, _) = analyze_json(&cache, &[wav.to_str().unwrap()]);
-    assert_eq!(other["cache"], "written");
-    assert_eq!(
-        other["record"]["gridSkipped"],
-        "beat tracking is not available in this build"
+    let (_, other, _) = analyze_json(
+        &cache,
+        &[wav.to_str().unwrap(), "--no-grid", "--bpm-range", "60-150"],
     );
+    assert_eq!(other["cache"], "written");
 
     // A touched file is a different key too.
     let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
@@ -252,8 +290,87 @@ fn version_prints_semver_with_revision_and_date() {
 fn missing_file_fails_with_a_message() {
     let dir = tempfile::tempdir().expect("tempdir");
     sc_cli(dir.path())
-        .args(["analyze", "/nonexistent.wav", "--no-cache"])
+        .args(["analyze", "/nonexistent.wav", "--no-cache", "--no-grid"])
         .assert()
         .code(2)
         .stderr(predicates::str::contains("nonexistent.wav"));
+}
+
+#[test]
+fn a_click_track_gets_a_static_four_four_grid_with_bar_one_after_the_lead_in() {
+    let Some(_) = models() else { return };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wav = write_click_wav(dir.path(), 120.0, 120, 0.5);
+    let (ok, doc, stderr) = analyze_json(dir.path(), &[wav.to_str().unwrap(), "--no-cache"]);
+    assert!(ok, "{stderr}");
+    let grid = &doc["record"]["grid"];
+    assert!(grid.is_object(), "{}", doc["record"]["gridSkipped"]);
+    let bpm = grid["bpm"].as_f64().unwrap();
+    assert!((bpm - 120.0).abs() <= 0.02, "bpm {bpm}");
+    assert_eq!(grid["meter"]["beatsPerBar"], 4, "{}", grid["meter"]);
+    let anchor = grid["anchor"].as_f64().unwrap() / 44_100.0;
+    assert!((anchor - 0.5).abs() <= 0.005, "bar 1 at {anchor:.4} s");
+    assert_eq!(grid["verdict"], "static", "{grid}");
+    assert_eq!(
+        doc["record"]["evidence"],
+        serde_json::Value::Null,
+        "evidence only with --evidence"
+    );
+    let (_, with, _) = analyze_json(
+        dir.path(),
+        &[wav.to_str().unwrap(), "--no-cache", "--evidence"],
+    );
+    assert!(
+        with["record"]["evidence"]["beats"]
+            .as_array()
+            .unwrap()
+            .len()
+            >= 100
+    );
+}
+
+#[test]
+fn a_short_file_gets_loudness_and_no_grid() {
+    let Some(_) = models() else { return };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wav = write_tone_wav(dir.path());
+    let (ok, doc, stderr) = analyze_json(dir.path(), &[wav.to_str().unwrap(), "--no-cache"]);
+    assert!(ok, "{stderr}");
+    assert_eq!(doc["record"]["gridSkipped"], "shorter than 10 s");
+    assert!(doc["record"]["loudness"]["integrated"].is_number());
+}
+
+#[test]
+fn a_missing_model_stops_the_run_with_what_to_do() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wav = write_tone_wav(dir.path());
+    let empty = dir.path().join("no-models");
+    std::fs::create_dir(&empty).unwrap();
+    let home = dir.path().join("home");
+    Command::cargo_bin("sc-cli")
+        .expect("binary")
+        .current_dir(dir.path())
+        .env("SC_CACHE_DIR", dir.path())
+        .env("SC_MODEL_DIR", &empty)
+        .env("HOME", &home)
+        .args(["analyze", wav.to_str().unwrap()])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("beat-tracking model not found"))
+        .stderr(predicates::str::contains("--no-grid"));
+}
+
+#[test]
+fn bench_prints_every_stage_and_the_real_time_factor() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wav = write_tone_wav(dir.path());
+    sc_cli(dir.path())
+        .args(["bench", wav.to_str().unwrap(), "--runs", "1", "--no-grid"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("decode"))
+        .stdout(predicates::str::contains("loudness"))
+        .stdout(predicates::str::contains("meter + grid"))
+        .stdout(predicates::str::contains("analyze"))
+        .stdout(predicates::str::contains("x real time"));
 }
