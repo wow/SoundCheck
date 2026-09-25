@@ -67,6 +67,9 @@ pub enum Error {
     /// A caller passed an invalid value.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
+    /// A failure inside SoundCheck or a bundled model that the user cannot fix.
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
 /// Result alias for SoundCheck library crates.
@@ -86,6 +89,7 @@ impl Error {
             Self::WouldClip { .. } => IpcErrorKind::WouldClip,
             Self::ModelUnavailable { .. } => IpcErrorKind::ModelUnavailable,
             Self::InvalidArgument(_) => IpcErrorKind::InvalidArgument,
+            Self::Internal(_) => IpcErrorKind::Internal,
         }
     }
 }

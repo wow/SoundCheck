@@ -26,6 +26,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 symphonia = { version = "0.6", default-features = false, features = ["wav", "pcm", "flac", "mp3", "aiff", "isomp4", "aac", "alac", "ogg", "vorbis", "opt-simd"] }
 ts-rs = { version = "10", features = ["serde-compat"] }
+beat-this = "1"
 rubato = "5"
 ebur128 = "0.1"
 lofty = "0.25"
