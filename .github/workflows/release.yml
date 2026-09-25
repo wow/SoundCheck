@@ -65,12 +65,31 @@ jobs:
       - uses: taiki-e/install-action@cargo-about
       - name: Third-party licences
         run: cargo about generate about.hbs -o THIRD_PARTY.md
+      - name: Signing keychain
+        # Import the Developer ID certificate into a job-wide keychain so that both tauri-action
+        # and the later codesign of sc-cli can use it (tauri-action's own import lives only inside
+        # its step). Deleted again in the last step.
+        if: ${{ env.APPLE_CERTIFICATE != '' }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          echo "SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          security find-identity -v -p codesigning "$keychain"
       - name: Build, sign, notarize and publish the app
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
@@ -112,6 +131,7 @@ jobs:
           fi
           if [ -n "${{ secrets.APPLE_SIGNING_IDENTITY }}" ]; then codesign --force --options runtime --timestamp -s "${{ secrets.APPLE_SIGNING_IDENTITY }}" sc-cli; fi
           tar -czf "sc-cli-$v-$target.tar.gz" sc-cli
+          gh release view "${{ needs.check.outputs.tag }}" --json assets --jq '.assets[].name' | grep '\.app\.tar\.gz$' | while read -r a; do gh release delete-asset "${{ needs.check.outputs.tag }}" "$a" -y; done
           shasum -a 256 "sc-cli-$v-$target.tar.gz" > SHA256SUMS.txt
           for dmg in target/*/release/bundle/dmg/*.dmg; do
             [ -f "$dmg" ] && (cd "$(dirname "$dmg")" && shasum -a 256 "$(basename "$dmg")") >> SHA256SUMS.txt
@@ -120,3 +140,6 @@ jobs:
       - name: Publish the release
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
         run: gh release edit "${{ needs.check.outputs.tag }}" --draft=false
+      - name: Remove the signing keychain
+        if: ${{ always() && env.SIGNING_KEYCHAIN != '' }}
+        run: security delete-keychain "$SIGNING_KEYCHAIN"
