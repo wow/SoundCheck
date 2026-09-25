@@ -26,9 +26,11 @@ Requires a stable Rust toolchain, Node 22+ and pnpm 10+. On macOS, Xcode command
 git clone https://github.com/wow/SoundCheck && cd SoundCheck
 ./scripts/setup-dev.sh        # git hooks, sign-off, toolchain check
 pnpm install
+./scripts/fetch-models.sh     # beat-tracking model files (11 MB, checksum-verified) into models/
 ./scripts/verify.sh           # fmt, clippy, tests, typecheck, vitest
 pnpm tauri dev                # run the app
-cargo run -p sc-cli -- analyze <file> --json
+cargo run --release -p sc-cli -- analyze <file>          # loudness, BPM, meter and bar 1
+cargo run --release -p sc-cli -- bench <file>            # speed of each analysis stage
 ```
 
 Unsigned development builds show a Gatekeeper warning on first launch; release builds are signed and notarized. To run a development build you downloaded, remove the quarantine flag: `xattr -dr com.apple.quarantine SoundCheck.app`.

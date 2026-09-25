@@ -3,17 +3,19 @@
 mod analyze;
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use sc_analysis::beats::{BEAT_MODEL_FILE, BEAT_MODEL_FULL_FILE, BeatTracker, find_model_dir};
 use sc_core::Bpm;
-use sc_core::analysis::AnalysisSettings;
+use sc_core::analysis::{AnalysisSettings, Model};
 use sc_core::ipc::IpcError;
 use sc_io::cache::Cache;
 use tracing_subscriber::EnvFilter;
 
-use crate::analyze::{ErrorReport, Options, REPORT_SCHEMA, analyze_file, write_text};
+use crate::analyze::{Analyzer, ErrorReport, REPORT_SCHEMA, Timings, write_text};
 
 /// Version with git revision and build date, e.g. `0.1.0 (a1b2c3d4e, 2026-10-01)`.
 const VERSION_LONG: &str = concat!(
@@ -25,14 +27,35 @@ const VERSION_LONG: &str = concat!(
     ")"
 );
 
-/// Exit code when at least one file failed.
-const EXIT_FILE_FAILED: i32 = 2;
+/// Exit code when at least one file failed, or the analysis could not start.
+const EXIT_FAILED: i32 = 2;
 
 #[derive(Parser)]
 #[command(name = "sc-cli", version = VERSION_LONG, about = "Headless SoundCheck")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ModelArg {
+    /// The bundled small model.
+    Small,
+    /// The full model (developer option; `scripts/fetch-models.sh --full`).
+    Full,
+}
+
+#[derive(clap::Args)]
+struct AnalysisArgs {
+    /// Loudness only: skip beat tracking and the grid.
+    #[arg(long)]
+    no_grid: bool,
+    /// The DJ app's BPM range; the tempo octave is chosen inside it first.
+    #[arg(long, default_value = "70-180", value_parser = parse_bpm_range)]
+    bpm_range: (f64, f64),
+    /// Beat-tracking model.
+    #[arg(long, value_enum, default_value = "small")]
+    model: ModelArg,
 }
 
 #[derive(Subcommand)]
@@ -45,15 +68,24 @@ enum Command {
         /// Print JSON (one document per file) instead of text.
         #[arg(long)]
         json: bool,
-        /// Loudness only: skip beat tracking and the grid.
+        /// Include the grid evidence (model beats, activations, onsets) in the JSON.
         #[arg(long)]
-        no_grid: bool,
-        /// The DJ app's BPM range; the tempo octave is chosen inside it first.
-        #[arg(long, default_value = "70-180", value_parser = parse_bpm_range)]
-        bpm_range: (f64, f64),
+        evidence: bool,
         /// Neither read nor write the analysis cache.
         #[arg(long)]
         no_cache: bool,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+    },
+    /// Time each analysis stage on one file (cache off) and print real-time factors.
+    Bench {
+        /// The audio file.
+        file: PathBuf,
+        /// Runs; the median of each stage is reported.
+        #[arg(long, default_value_t = 3)]
+        runs: usize,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
     },
     /// Inspect or empty the analysis cache.
     Cache {
@@ -97,40 +129,87 @@ fn main() -> anyhow::Result<()> {
         Command::Analyze {
             files,
             json,
-            no_grid,
-            bpm_range,
+            evidence,
             no_cache,
+            analysis,
         } => {
-            let settings = AnalysisSettings {
-                bpm_range: (Bpm(bpm_range.0), Bpm(bpm_range.1)),
-                grid: !no_grid,
-                ..AnalysisSettings::default()
-            };
             let cache = if no_cache {
                 None
             } else {
                 Some(Cache::open(Cache::default_dir()?))
             };
-            let opts = Options { settings, cache };
-            let failed = analyze_all(&files, &opts, json)?;
+            let mut analyzer = analyzer(&analysis, cache);
+            let failed = analyze_all(&mut analyzer, &files, json, evidence)?;
             if failed > 0 {
-                std::process::exit(EXIT_FILE_FAILED);
+                std::process::exit(EXIT_FAILED);
             }
             Ok(())
+        }
+        Command::Bench {
+            file,
+            runs,
+            analysis,
+        } => {
+            let mut analyzer = analyzer(&analysis, None);
+            bench(&mut analyzer, &file, runs.max(1))
         }
         Command::Cache { action } => cache_command(action),
     }
 }
 
+/// Builds the analyzer; a missing model stops the run before any file, with the directories
+/// searched and what to do.
+fn analyzer(args: &AnalysisArgs, cache: Option<Cache>) -> Analyzer {
+    let model = match args.model {
+        ModelArg::Small => Model::Small,
+        ModelArg::Full => Model::Full,
+    };
+    let settings = AnalysisSettings {
+        bpm_range: (Bpm(args.bpm_range.0), Bpm(args.bpm_range.1)),
+        grid: !args.no_grid,
+        model,
+    };
+    let tracker = if settings.grid {
+        let file = match model {
+            Model::Small => BEAT_MODEL_FILE,
+            Model::Full => BEAT_MODEL_FULL_FILE,
+        };
+        match find_model_dir().and_then(|dir| BeatTracker::load_named(&dir, file)) {
+            Ok(tracker) => Some(tracker),
+            Err(err) => {
+                eprintln!(
+                    "sc-cli: {err}\nrun scripts/fetch-models.sh (or set SC_MODEL_DIR), or pass --no-grid for loudness only"
+                );
+                std::process::exit(EXIT_FAILED);
+            }
+        }
+    } else {
+        None
+    };
+    Analyzer {
+        settings,
+        cache,
+        tracker,
+    }
+}
+
 /// Analyses every file, printing as it goes; returns how many failed.
-fn analyze_all(files: &[PathBuf], opts: &Options, json: bool) -> anyhow::Result<usize> {
+fn analyze_all(
+    analyzer: &mut Analyzer,
+    files: &[PathBuf],
+    json: bool,
+    evidence: bool,
+) -> anyhow::Result<usize> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let mut failed = 0;
     for file in files {
-        match analyze_file(file, opts) {
-            Ok(report) => {
+        match analyzer.analyze(file) {
+            Ok(mut report) => {
                 if json {
+                    if !evidence {
+                        report.record.evidence = None;
+                    }
                     serde_json::to_writer_pretty(&mut out, &report)?;
                     writeln!(out)?;
                 } else {
@@ -153,6 +232,57 @@ fn analyze_all(files: &[PathBuf], opts: &Options, json: bool) -> anyhow::Result<
         }
     }
     Ok(failed)
+}
+
+/// Picks one stage's time out of [`Timings`].
+type Stage = fn(&Timings) -> Duration;
+
+fn bench(analyzer: &mut Analyzer, file: &Path, runs: usize) -> anyhow::Result<()> {
+    let mut all: Vec<Timings> = Vec::with_capacity(runs);
+    let mut duration = 0.0;
+    for _ in 0..runs {
+        let mut t = Timings::default();
+        let report = analyzer
+            .analyze_timed(file, &mut t)
+            .with_context(|| format!("analysing {}", file.display()))?;
+        duration = report.record.duration.0;
+        all.push(t);
+    }
+    let median = |pick: fn(&Timings) -> Duration| {
+        let mut v: Vec<f64> = all.iter().map(|t| pick(t).as_secs_f64()).collect();
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    };
+    println!("{} ({duration:.1} s, median of {runs})", file.display());
+    let stages: [(&str, Stage); 6] = [
+        ("decode", |t| t.decode),
+        ("loudness", |t| t.loudness),
+        ("resample", |t| t.resample),
+        ("beats", |t| t.beats),
+        ("onsets", |t| t.onsets),
+        ("meter + grid", |t| t.grid),
+    ];
+    let mut total = 0.0;
+    for (name, pick) in stages {
+        let s = median(pick);
+        total += s;
+        println!("  {name:<13} {:>8.3} s  {}", s, real_time(duration, s));
+    }
+    println!(
+        "  {:<13} {:>8.3} s  {}",
+        "analyze",
+        total,
+        real_time(duration, total)
+    );
+    Ok(())
+}
+
+fn real_time(duration: f64, seconds: f64) -> String {
+    if seconds > 0.0 {
+        format!("{:>7.1}x real time", duration / seconds)
+    } else {
+        "        (skipped)".to_owned()
+    }
 }
 
 fn cache_command(action: CacheAction) -> anyhow::Result<()> {

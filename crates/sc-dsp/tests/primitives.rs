@@ -52,6 +52,8 @@ fn onsets_land_within_one_hop_of_each_burst_and_nowhere_else() {
                 onset.rise_db > 6.0,
                 "a burst rises by more than 6 dB: {onset:?}"
             );
+            // 0.8 amplitude through the band (60 Hz is inside it): about -2 dBFS at the peak.
+            assert!((-6.0..=0.5).contains(&onset.level_db), "level {onset:?}");
         }
     }
 }
