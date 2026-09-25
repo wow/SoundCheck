@@ -62,10 +62,9 @@ jobs:
         id: notes
         uses: orhun/git-cliff-action@v4
         with: { args: "--latest --strip header" }
+      - uses: taiki-e/install-action@cargo-about
       - name: Third-party licences
-        run: |
-          cargo install cargo-about --locked
-          cargo about generate about.hbs -o THIRD_PARTY.md
+        run: cargo about generate about.hbs -o THIRD_PARTY.md
       - name: Build, sign, notarize and publish the app
         uses: tauri-apps/tauri-action@v1
         env:
@@ -94,5 +93,8 @@ jobs:
           fi
           if [ -n "${{ secrets.APPLE_SIGNING_IDENTITY }}" ]; then codesign --force --options runtime --timestamp -s "${{ secrets.APPLE_SIGNING_IDENTITY }}" sc-cli; fi
           tar -czf "sc-cli-$v-$target.tar.gz" sc-cli
-          shasum -a 256 "sc-cli-$v-$target.tar.gz" src-tauri/target/*/release/bundle/dmg/*.dmg 2>/dev/null | sed 's#src-tauri/target/[^ ]*/release/bundle/dmg/##' > SHA256SUMS.txt || shasum -a 256 "sc-cli-$v-$target.tar.gz" > SHA256SUMS.txt
+          shasum -a 256 "sc-cli-$v-$target.tar.gz" > SHA256SUMS.txt
+          for dmg in target/*/release/bundle/dmg/*.dmg; do
+            [ -f "$dmg" ] && (cd "$(dirname "$dmg")" && shasum -a 256 "$(basename "$dmg")") >> SHA256SUMS.txt
+          done
           gh release upload "${{ needs.check.outputs.tag }}" "sc-cli-$v-$target.tar.gz" SHA256SUMS.txt THIRD_PARTY.md --clobber
