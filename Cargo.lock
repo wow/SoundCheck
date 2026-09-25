@@ -3238,7 +3238,7 @@ dependencies = [
 
 [[package]]
 name = "sc-analysis"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "approx",
  "criterion",
@@ -3248,7 +3248,7 @@ dependencies = [
 
 [[package]]
 name = "sc-cli"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3267,7 +3267,7 @@ dependencies = [
 
 [[package]]
 name = "sc-core"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "approx",
  "serde",
@@ -3278,7 +3278,7 @@ dependencies = [
 
 [[package]]
 name = "sc-dsp"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "approx",
  "criterion",
@@ -3287,7 +3287,7 @@ dependencies = [
 
 [[package]]
 name = "sc-io"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "approx",
  "hound",
@@ -3642,7 +3642,7 @@ dependencies = [
 
 [[package]]
 name = "soundcheck-desktop"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "sc-core",
  "serde",
