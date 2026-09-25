@@ -30,7 +30,7 @@ Contributors read `CONTRIBUTING.md`; this page is the maintainer's procedure for
    git push origin v0.1.0
    ```
 5. **`release.yml`** (trigger `v*`): asserts tag == workspace version; runs the verification; builds the DMG and the `sc-cli` tarball; signs, notarizes (`notarytool`) and staples; writes `SHA256SUMS.txt`; regenerates `THIRD_PARTY.md`; generates release notes with `git cliff --latest --strip header`; creates the GitHub Release (pre-release when the tag contains `-`). Assets: `SoundCheck_<version>_<arch>.dmg`, `sc-cli-<version>-<target>.tar.gz`, `SHA256SUMS.txt`, `THIRD_PARTY.md`; from v0.2 also `latest.json` + `.sig` (minisign) for the updater, final releases only.
-6. **Post-release check, same day**: download the DMG on a clean macOS user account; `spctl -a -vv -t install SoundCheck.app` says "accepted, source=Notarized Developer ID"; launch; drop three files, analyse, export one, open it in rekordbox. Log the result in the release PR.
+6. **Post-release check, same day**: download the DMG on a clean macOS user account; `spctl -a -vv -t open --context context:primary-signature SoundCheck_<version>_<arch>.dmg` and, after mounting, `spctl -a -vv -t exec SoundCheck.app` both say "accepted, source=Notarized Developer ID"; launch; drop three files, analyse, export one, open it in rekordbox. Log the result in the release PR.
 7. **Announce**: the GitHub Release is the announcement; README badge updates itself.
 
 ## 4. Hotfixes and maintenance branches
