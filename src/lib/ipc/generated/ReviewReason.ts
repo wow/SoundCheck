@@ -4,7 +4,7 @@ import type { Bpm } from "./Bpm";
 /**
  * What a human should look at before processing.
  */
-export type ReviewReason = { "type": "confidence" } | { "type": "checkGrid" } | { "type": "drifts" } | { "type": "outsideBpmRange" } | { "type": "tagBpmDisagrees", 
+export type ReviewReason = { "type": "confidence" } | { "type": "drifts" } | { "type": "outsideBpmRange" } | { "type": "tagBpmDisagrees", 
 /**
  * The tagged BPM.
  */

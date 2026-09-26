@@ -152,6 +152,14 @@ export function BpmCell({ row }: { row: Row }) {
         </span>
       )}
       {!grid.fourFour && <MeterBadge meter={grid.meter} />}
+      {grid.verdict === 'staticWarn' && (
+        <span
+          className="text-[11px] text-fg-2"
+          title={`The grid fits, but some beats land up to ${Math.round(grid.residualMaxMs)} ms off it; worth a listen`}
+        >
+          check
+        </span>
+      )}
     </div>
   );
 }

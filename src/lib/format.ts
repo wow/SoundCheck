@@ -127,9 +127,6 @@ export function reviewText(
         parts.push(first.length > 0 ? first.slice(0, 2).join(', ') : 'low confidence');
         break;
       }
-      case 'checkGrid':
-        parts.push(`check grid (max ${Math.round(analysis?.grid?.residualMaxMs ?? 0)} ms)`);
-        break;
       case 'drifts': {
         const g = analysis?.grid;
         parts.push(
