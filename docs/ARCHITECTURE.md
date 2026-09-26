@@ -17,7 +17,7 @@ Dependency direction: `sc-core <- sc-dsp <- sc-analysis`, `sc-core <- sc-io`, al
 
 ## Data flow per file
 ```
-ADD (on drop): collect_audio_files (folders walked in natural order; hidden files, AppleDouble `._*` and symlinked folders skipped;
+ADD (on drop): collect_audio_files (folders walked in natural order; dot-files (one leading dot, incl. AppleDouble `._*`) and symlinked folders skipped, names starting with "..." kept;
   NFC duplicates dropped) -> probe in parallel (lofty headers and tags, cover art not read: codec incl. ALAC vs AAC, rate, depth,
   float WAV, bitrate, duration, title/artist/album, first DJ-unsafe reason) -> FileEntry rows before any decoding
 

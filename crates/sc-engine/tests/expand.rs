@@ -13,6 +13,13 @@ fn folders_are_walked_in_natural_order_without_hidden_files_links_or_duplicates(
     let root = dir.path().join("crate");
     std::fs::create_dir_all(root.join("B")).unwrap();
     std::fs::create_dir_all(root.join(".Trash")).unwrap();
+    std::fs::create_dir_all(root.join("...Baby One More Time")).unwrap();
+    common::tone_wav(
+        &root.join("...Baby One More Time"),
+        "01 Title.wav",
+        0.5,
+        0.1,
+    );
     common::tone_wav(&root, "Track 10.wav", 0.5, 0.1);
     common::tone_wav(&root, "Track 2.WAV", 0.5, 0.1);
     common::tone_wav(&root, ".hidden.wav", 0.5, 0.1);
@@ -32,7 +39,15 @@ fn folders_are_walked_in_natural_order_without_hidden_files_links_or_duplicates(
         .iter()
         .map(|p| p.strip_prefix(&root).unwrap().display().to_string())
         .collect();
-    assert_eq!(names, vec!["B/inner.wav", "Track 2.WAV", "Track 10.wav"]);
+    assert_eq!(
+        names,
+        vec![
+            "...Baby One More Time/01 Title.wav",
+            "B/inner.wav",
+            "Track 2.WAV",
+            "Track 10.wav"
+        ]
+    );
 }
 
 #[test]

@@ -20,9 +20,8 @@ pub const AUDIO_EXTENSIONS: [&str; 14] = [
 /// Audio files under `paths`, in the order a file browser lists them: each dropped path in turn,
 /// folders walked depth first with names in natural order ("Track 2" before "Track 10").
 ///
-/// Hidden entries (a leading `.`, which includes macOS `._` resource files) and symbolic links
-/// inside folders are skipped; a path dropped directly is followed. A file reached twice (the
-/// same NFC path) appears once.
+/// Hidden entries (see [`is_hidden`]) and symbolic links inside folders are skipped; a path
+/// dropped directly is followed. A file reached twice (the same NFC path) appears once.
 #[must_use]
 pub fn collect_audio_files(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut seen = HashSet::new();
@@ -83,7 +82,7 @@ fn walk(dir: &Path, seen: &mut HashSet<String>, out: &mut Vec<PathBuf>) {
     };
     let mut entries: Vec<_> = entries
         .filter_map(Result::ok)
-        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .filter(|e| !is_hidden(&e.file_name().to_string_lossy()))
         .collect();
     entries.sort_by(|a, b| {
         natural_cmp(
@@ -105,6 +104,13 @@ fn walk(dir: &Path, seen: &mut HashSet<String>, out: &mut Vec<PathBuf>) {
             push_unique(path, seen, out);
         }
     }
+}
+
+/// A dot-file or dot-folder: one leading `.` followed by something else (`.Trash`, `.DS_Store`,
+/// macOS `._` resource files). Names that start with an ellipsis or two dots are titles, not
+/// hidden entries: "...Baby One More Time", "...And Justice for All".
+fn is_hidden(name: &str) -> bool {
+    name.starts_with('.') && !name.starts_with("..")
 }
 
 fn push_unique(path: PathBuf, seen: &mut HashSet<String>, out: &mut Vec<PathBuf>) {
@@ -188,6 +194,16 @@ mod tests {
                 "Track 10.wav"
             ]
         );
+    }
+
+    #[test]
+    fn only_single_dot_names_are_hidden() {
+        assert!(is_hidden(".Trash"));
+        assert!(is_hidden("._Track 2.wav"));
+        assert!(is_hidden(".DS_Store"));
+        assert!(!is_hidden("...Baby One More Time (Digital Deluxe Version)"));
+        assert!(!is_hidden("..Two Dots"));
+        assert!(!is_hidden("Track.flac"));
     }
 
     #[test]
