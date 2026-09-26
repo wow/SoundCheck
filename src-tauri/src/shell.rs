@@ -99,13 +99,22 @@ impl Shell {
         std::thread::Builder::new()
             .name(format!("sc-job-{job_id}"))
             .spawn(move || {
+                // The job leaves the running set before its last event goes out, so a caller
+                // that has seen `finished` never finds it still cancellable.
+                let jobs = shell.clone();
+                let mut forward = |event: JobEvent| {
+                    if matches!(event, JobEvent::Finished { .. }) {
+                        jobs.jobs().remove(&job_id);
+                    }
+                    send(event);
+                };
                 run_job(
                     &shell.inner.session,
                     job_id,
                     &req.file_ids,
                     &settings,
                     &cancel,
-                    &mut send,
+                    &mut forward,
                 );
                 shell.jobs().remove(&job_id);
             })
