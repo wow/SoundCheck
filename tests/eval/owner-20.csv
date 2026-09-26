@@ -1,0 +1,27 @@
+# Evaluation set: 20 tracks from the maintainer's own library (the audio is not in the
+# repository). bpm and bar1_s of the first 13 are rekordbox 7's analysis on tracks where the beat
+# model agreed with it; their 4/4 is assumed. The last 7 are odd-meter tracks whose meter,
+# grouping, bpm and bar 1 are still to be labelled by hand. ffmpeg_i_lufs is ffmpeg's ebur128
+# integrated loudness (scripts/ffmpeg-reference.sh). Lines starting with # are ignored. Run:
+#   sc-cli eval --labels tests/eval/owner-20.csv --dir <folder>
+file,bpm,bar1_s,meter,grouping,ffmpeg_i_lufs
+Coolio - Gangsta's Paradise.flac,79.96,0.503,4/4,,-10.2
+Hakan Peker - Karam.flac,86.0,0.079,4/4,,-14.4
+Mustafa Sandal - Aya Benzer.flac,94.99,0.884,4/4,,-12.9
+Mr. President - Coco Jamboo.flac,100.0,0.417,4/4,,-9.1
+Aşkın Nur Yengi - Nazlanma.flac,104.85,0.788,4/4,,-17.5
+Seyyal Taner - Alladı Pulladı.flac,110.85,1.182,4/4,,-15.7
+Sertab Erener - Sakin Ol.flac,117.8,0.629,4/4,,-15.5
+Mustafa Sandal - Bu Kız Beni Görmeli.flac,122.94,1.355,4/4,,-18.8
+Ragga Oktay - Yeniden.flac,128.0,0.584,4/4,,-7.9
+Emir - Eline Düştüm.flac,132.0,0.545,4/4,,-8.2
+Seda Sayan - Ah Geceler.flac,138.41,0.381,4/4,,-13.5
+Serdar Ortaç - Gamzelim.flac,148.08,0.450,4/4,,-15.3
+Bomfunk MC's - Freestyler.flac,163.85,0.389,4/4,,-9.2
+Athena - Skalonga.flac,,,,,-12.3
+Athena - Tarlaya Ektim Soğan.flac,,,,,-10.4
+DJ Yılmaz - Antalya Gaydası - Kalite Marka.flac,,,,,-13.2
+Kırklarelili Sercan - Yemekte Yaparım Salçayla.flac,,,,,-8.7
+Rumeli Orhan Kemal - Para Bizde.flac,,,,,-7.6
+Rumeli Orhan Kemal - Geliyor Havalı Geliyor.flac,,,,,-8.3
+MFÖ - Ele Güne Karşı.flac,,,,,-14.5
