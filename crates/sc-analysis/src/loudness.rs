@@ -6,10 +6,19 @@
 //! module keeps what the standards do not define: the short-term timeline at a 100 ms hop,
 //! S-P95 (the DJ alignment statistic), S-top30 and the peak-to-loudness ratio.
 //!
+//! The maximum momentary loudness is read every 10 ms, not once per 100 ms hop: a 400 ms burst
+//! that falls between two 100 ms readings would otherwise lose up to 10·log10(350/400) = 0.58 LU
+//! (0.46 LU on EBU Tech 3341 case 13, which offsets its bursts in 20 ms steps). At 10 ms the
+//! worst loss is 10·log10(395/400) = 0.055 LU. Where 10 ms is a whole number of frames (every
+//! rate divisible by 100), each reading is the mean of the last forty 10 ms energies instead of
+//! a fresh 400 ms sum: the same value up to summation order (about 1e-13 LU) at a tenth of the
+//! cost. The 3 s short-term maximum loses at most 10·log10(2950/3000) = 0.073 LU at the 100 ms
+//! hop and stays there.
+//!
 //! Mono is measured as dual mono (+3.01 LU against one channel), as Tech 3341 prescribes.
 //!
-//! Determinism: audio reaches the meter in exact 100 ms chunks whatever block sizes the caller
-//! pushes, so two runs and any chunking yield identical numbers.
+//! Determinism: audio reaches the meter in exact 100 ms hops, each fed in fixed tenths, whatever
+//! block sizes the caller pushes, so two runs and any chunking yield identical numbers.
 
 use ebur128::{Channel, EbuR128, Mode};
 use sc_core::analysis::{LoudnessReport, TIMELINE_HOP_MS, Timeline};
@@ -21,6 +30,15 @@ pub const ABSOLUTE_GATE_LUFS: f64 = -70.0;
 /// Number of 100 ms hops in the 30 s that S-top30 averages.
 const TOP30_HOPS: usize = 300;
 
+/// Momentary readings per 100 ms hop (one every 10 ms).
+const MOMENTARY_READS_PER_HOP: usize = 10;
+
+/// 10 ms slices in the 400 ms momentary window.
+const SLICES_PER_MOMENTARY: usize = 40;
+
+/// BS.1770 loudness offset: L = -0.691 + 10 log10(energy).
+const LOUDNESS_OFFSET_LU: f64 = -0.691;
+
 /// A streaming loudness meter: [`push`](Self::push) blocks, then [`finish`](Self::finish).
 pub struct LoudnessMeter {
     meter: EbuR128,
@@ -31,6 +49,11 @@ pub struct LoudnessMeter {
     short_term: Vec<Option<f32>>,
     momentary_max: f64,
     short_term_max: f64,
+    /// Frames per 10 ms slice when that is a whole number, else `None` (read the meter directly).
+    slice_frames: Option<usize>,
+    /// Energies of the last forty 10 ms slices, a ring written at `slice_next`.
+    slice_energy: [f64; SLICES_PER_MOMENTARY],
+    slice_next: usize,
 }
 
 impl std::fmt::Debug for LoudnessMeter {
@@ -76,6 +99,12 @@ impl LoudnessMeter {
             short_term: Vec::new(),
             momentary_max: f64::NEG_INFINITY,
             short_term_max: f64::NEG_INFINITY,
+            slice_frames: spec
+                .sample_rate
+                .is_multiple_of(100)
+                .then_some(hop_frames / 10),
+            slice_energy: [0.0; SLICES_PER_MOMENTARY],
+            slice_next: 0,
         })
     }
 
@@ -114,12 +143,8 @@ impl LoudnessMeter {
     }
 
     fn feed_hop(&mut self, chunk: &[f32]) {
-        self.meter
-            .add_frames_f32(chunk)
-            .expect("a hop is whole frames of the configured channel count");
-        let momentary = loudness_or_silence(self.meter.loudness_momentary());
+        self.feed_reading_momentary(chunk);
         let short_term = loudness_or_silence(self.meter.loudness_shortterm());
-        self.momentary_max = self.momentary_max.max(momentary);
         self.short_term_max = self.short_term_max.max(short_term);
         // Timeline values are display precision; f32 is plenty.
         #[allow(clippy::cast_possible_truncation)]
@@ -169,16 +194,53 @@ impl LoudnessMeter {
         }
     }
 
-    /// The trailing partial hop still counts for the peaks and completes the meter's own gating
-    /// blocks; it adds no timeline entry.
+    /// Feeds `samples` (at most one hop) in 10 ms slices, reading the momentary loudness after
+    /// each. Slice boundaries are fixed tenths of the hop, so they fall on the same frames at any
+    /// push size, including at rates whose 10 ms is not a whole number of frames.
+    fn feed_reading_momentary(&mut self, samples: &[f32]) {
+        let channels = usize::from(self.spec.channels);
+        let hop_frames = self.hop_samples / channels;
+        let frames = samples.len() / channels;
+        let mut start = 0;
+        for k in 1..=MOMENTARY_READS_PER_HOP {
+            let end = (k * hop_frames / MOMENTARY_READS_PER_HOP).min(frames);
+            if end > start {
+                self.meter
+                    .add_frames_f32(&samples[start * channels..end * channels])
+                    .expect("a slice is whole frames of the configured channel count");
+                let momentary = self.momentary_after_slice(end - start);
+                self.momentary_max = self.momentary_max.max(momentary);
+                start = end;
+            }
+        }
+    }
+
+    /// Momentary loudness once a slice of `frames` has been added. A whole 10 ms slice enters the
+    /// ring and the reading is the ring's mean: the meter's windows start zero-filled and the
+    /// forty slices tile the 400 ms window exactly, so it equals the meter's own 400 ms sum. A
+    /// shorter slice (the end of the stream) or a rate without whole 10 ms slices is read from
+    /// the meter directly.
+    fn momentary_after_slice(&mut self, frames: usize) -> f64 {
+        if self.slice_frames != Some(frames) {
+            return loudness_or_silence(self.meter.loudness_momentary());
+        }
+        let slice = loudness_or_silence(self.meter.loudness_window(10));
+        self.slice_energy[self.slice_next] = 10.0_f64.powf((slice - LOUDNESS_OFFSET_LU) / 10.0);
+        self.slice_next = (self.slice_next + 1) % SLICES_PER_MOMENTARY;
+        // 40 is exactly representable.
+        #[allow(clippy::cast_precision_loss)]
+        let energy = self.slice_energy.iter().sum::<f64>() / SLICES_PER_MOMENTARY as f64;
+        LOUDNESS_OFFSET_LU + 10.0 * energy.log10()
+    }
+
+    /// The trailing partial hop still counts for the peaks, the momentary maximum and the
+    /// meter's own gating blocks; it adds no timeline entry.
     fn feed_tail(&mut self) {
         if self.pending.is_empty() {
             return;
         }
         let tail = std::mem::take(&mut self.pending);
-        self.meter
-            .add_frames_f32(&tail)
-            .expect("the tail is whole frames of the configured channel count");
+        self.feed_reading_momentary(&tail);
     }
 }
 
@@ -234,6 +296,7 @@ mod tests {
     #![allow(clippy::float_cmp)] // exact values are intended in these tests
     use super::*;
     use approx::assert_abs_diff_eq;
+    use sc_core::testsig;
 
     #[test]
     fn percentile_uses_nearest_rank() {
@@ -257,6 +320,75 @@ mod tests {
             top_power_mean(&[-23.0; 5], 5).unwrap(),
             -23.0,
             epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn momentary_max_is_the_meters_own_reading_after_every_10_ms() {
+        // Noise rising to its loudest in the partial last slice, pushed in odd block sizes, must
+        // give exactly the maximum a plain meter reads after each 10 ms slice of the same audio,
+        // so the ring (whole slices) and the direct read (the partial tail) are both checked.
+        for spec in [
+            AudioSpec::CD,
+            AudioSpec::new(48_000, 1),
+            AudioSpec::new(96_000, 2),
+        ] {
+            let channels = usize::from(spec.channels);
+            let mut signal = testsig::seeded_noise(spec, 11, 1.0, 3.456).data;
+            let frames = signal.len() / channels;
+            let meter = LoudnessMeter::new(spec).unwrap();
+            let slice = meter.slice_frames.unwrap();
+            assert_ne!(
+                frames % meter.hop_frames() % slice,
+                0,
+                "a partial last slice"
+            );
+            for (i, sample) in signal.iter_mut().enumerate() {
+                // Silence, then a linear rise to full scale at the last frame.
+                #[allow(clippy::cast_precision_loss)]
+                let ramp = ((i / channels) as f32 / frames as f32 - 0.1).max(0.0);
+                *sample *= ramp;
+            }
+
+            let mut reference = EbuR128::new(
+                u32::from(spec.channels),
+                spec.sample_rate,
+                Mode::I | Mode::LRA,
+            )
+            .unwrap();
+            if channels == 1 {
+                reference.set_channel(0, Channel::DualMono).unwrap();
+            }
+            let mut expected = f64::NEG_INFINITY;
+            let mut last = f64::NEG_INFINITY;
+            for part in signal.chunks(slice * channels) {
+                reference.add_frames_f32(part).unwrap();
+                last = loudness_or_silence(reference.loudness_momentary());
+                expected = expected.max(last);
+            }
+            assert_eq!(expected, last, "the loudest window ends the stream");
+
+            let mut meter = meter;
+            // 1234 samples: whole frames for mono and stereo, never a whole hop.
+            for block in signal.chunks(1234) {
+                meter.push(block);
+            }
+            let max = meter.finish().momentary_max.unwrap().0;
+            assert_abs_diff_eq!(max, expected, epsilon = 1e-9);
+        }
+    }
+
+    #[test]
+    fn rates_without_whole_10_ms_slices_read_the_meter_directly() {
+        assert_eq!(
+            LoudnessMeter::new(AudioSpec::new(22_050, 2))
+                .unwrap()
+                .slice_frames,
+            None
+        );
+        assert_eq!(
+            LoudnessMeter::new(AudioSpec::CD).unwrap().slice_frames,
+            Some(441)
         );
     }
 
