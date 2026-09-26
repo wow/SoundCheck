@@ -126,6 +126,7 @@ const REASON_TEXT: Record<Reason, string> = {
   short: 'too short to be sure',
   drifts: 'drifts',
   noKick: 'no kick to anchor',
+  manual: 'set by hand',
 };
 
 /** One short phrase per review reason, as the Action column's second line shows them. */

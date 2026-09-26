@@ -118,8 +118,15 @@ pub struct SolveSettings {
     pub fixed_period: Option<f64>,
     /// A tempo set by the user; skips the octave choice.
     pub bpm_override: Option<f64>,
-    /// A bar-1 position set by the user, in seconds; used exactly.
+    /// A bar line placed by the user, in seconds: bar 1 is the line of its lattice at or after
+    /// the first beat (to within half a period); a line placed there is kept exactly.
     pub anchor_override_s: Option<f64>,
+    /// Octave steps from the chosen tempo (the user's x2 / /2): +1 doubles it, -1 halves it.
+    /// Ignored with `bpm_override`.
+    pub octave_shift: i8,
+    /// Bar positions to move beat 1 on from the solved one (the user's `1`-`n`). Ignored with
+    /// `anchor_override_s`.
+    pub downbeat_shift: u8,
 }
 
 impl Default for SolveSettings {
@@ -133,13 +140,51 @@ impl Default for SolveSettings {
             fixed_period: None,
             bpm_override: None,
             anchor_override_s: None,
+            octave_shift: 0,
+            downbeat_shift: 0,
         }
     }
+}
+
+/// A solved grid with the residual of every grid line, for the grid view's residual lane.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Solved {
+    /// The grid.
+    pub grid: Grid,
+    /// Residuals per grid line.
+    pub lines: LineResiduals,
+}
+
+/// How far the attack nearest each grid line lands from it, lines counted from bar 1's.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LineResiduals {
+    /// Line index of `residuals_ms[0]` (bar 1's line is 0; earlier lines are negative). The
+    /// first line is the first at or after the start of the file.
+    pub first_line: i64,
+    /// Signed residual per line in milliseconds (attack minus line); NaN where no attack lies
+    /// within the match window. Lines after the last matched span are left out.
+    pub residuals_ms: Vec<f32>,
+    /// The line where the smoothed residual curve (the verdict's) is furthest from the grid.
+    pub worst_line: Option<i64>,
+    /// Attacks matched to a line.
+    pub matched: u32,
+    /// Attacks within the span the grid was judged on.
+    pub attacks: u32,
 }
 
 /// Fits the grid; `None` when fewer than [`MIN_BEATS`] usable beats exist.
 #[must_use]
 pub fn solve(ev: &Evidence<'_>, settings: &SolveSettings, sample_rate: u32) -> Option<Grid> {
+    solve_detailed(ev, settings, sample_rate).map(|s| s.grid)
+}
+
+/// As [`solve`], with the residual of every grid line.
+#[must_use]
+pub fn solve_detailed(
+    ev: &Evidence<'_>,
+    settings: &SolveSettings,
+    sample_rate: u32,
+) -> Option<Solved> {
     let beats = clean_beats(ev.beats_s);
     let tempo = fit_tempo(&beats)?;
     let span = (beats[0], beats[beats.len() - 1]);
@@ -155,40 +200,17 @@ pub fn solve(ev: &Evidence<'_>, settings: &SolveSettings, sample_rate: u32) -> O
     let (coverage, recall) = (tempo.coverage, tempo.recall);
     let phase = phase_from_onsets(tempo.period, tempo.phase, tempo.alt_phase, span, onsets);
 
-    // Octave (or the user's tempo).
-    let octave = match settings.bpm_override {
-        Some(bpm) if bpm > 0.0 => Octave {
-            period: 60.0 / bpm,
-            phase,
-            rule: OctaveRule::Override,
-            margin: 1.0,
-        },
-        _ => match settings.fixed_period {
-            Some(period) if period > 0.0 => Octave {
-                period,
-                phase,
-                rule: OctaveRule::Range,
-                margin: 1.0,
-            },
-            _ => choose_octave(&tempo, phase, settings, onsets, span),
-        },
-    };
-    let sigma_period = tempo.sigma_period * octave.period / tempo.period;
-    let fitted_bpm = 60.0 / octave.period;
-    let bpm = if octave.rule == OctaveRule::Override {
-        fitted_bpm
-    } else {
-        snap_bpm(
-            fitted_bpm,
-            60.0 * sigma_period / (octave.period * octave.period),
-        )
-    };
+    let (octave, bpm) = choose_tempo(&tempo, phase, settings, onsets, span);
     let period = 60.0 / bpm;
 
     // Bar 1.
     let bar = usize::from(settings.meter.beats_per_bar.max(1));
     let (anchor_s, downbeat) = if let Some(anchor) = settings.anchor_override_s {
-        (anchor.max(0.0), Downbeat::pinned())
+        let bar_len = period * count_f64(bar);
+        (
+            first_bar_line(anchor, bar_len, span.0 - period / 2.0),
+            Downbeat::pinned(),
+        )
     } else {
         let db = downbeat_phase(
             period,
@@ -198,7 +220,8 @@ pub fn solve(ev: &Evidence<'_>, settings: &SolveSettings, sample_rate: u32) -> O
             ev.downbeats_s,
             ev.downbeat_logits,
             onsets,
-        );
+        )
+        .shifted(settings.downbeat_shift, bar);
         let lattice = first_downbeat(period, octave.phase, bar, db.r, span.0);
         let local = snap_anchor(lattice, onsets).filter(|t| (t - lattice).abs() <= ANCHOR_AGREE_S);
         (local.unwrap_or(lattice), db)
@@ -220,7 +243,8 @@ pub fn solve(ev: &Evidence<'_>, settings: &SolveSettings, sample_rate: u32) -> O
         settings,
     });
 
-    Some(Grid {
+    let lines = line_residuals(&fit, anchor_s, period, span);
+    let grid = Grid {
         anchor: Seconds(anchor_s).to_sample_index(sample_rate),
         bpm: Bpm(bpm),
         meter: settings.meter.clone(),
@@ -240,7 +264,181 @@ pub fn solve(ev: &Evidence<'_>, settings: &SolveSettings, sample_rate: u32) -> O
             octave_down: (bpm / 2.0 >= 30.0).then_some(Bpm(bpm / 2.0)),
             downbeat_shift_beats: downbeat.shifts,
         },
-    })
+    };
+    Some(Solved { grid, lines })
+}
+
+/// The grid's beat period and phase and its BPM: the user's tempo, the meter's fixed pulse or
+/// the octave choice, then the user's octave steps, then the round-BPM snap.
+fn choose_tempo(
+    tempo: &Tempo,
+    phase: f64,
+    settings: &SolveSettings,
+    onsets: &[TimedOnset],
+    span: (f64, f64),
+) -> (Octave, f64) {
+    let octave = match settings.bpm_override {
+        Some(bpm) if bpm > 0.0 => Octave {
+            period: 60.0 / bpm,
+            phase,
+            rule: OctaveRule::Override,
+            margin: 1.0,
+        },
+        _ => match settings.fixed_period {
+            Some(period) if period > 0.0 => Octave {
+                period,
+                phase,
+                rule: OctaveRule::Range,
+                margin: 1.0,
+            },
+            _ => choose_octave(tempo, phase, settings, onsets, span),
+        },
+    };
+    let octave = if settings.octave_shift != 0 && octave.rule != OctaveRule::Override {
+        shift_octave(octave, settings.octave_shift, onsets, span)
+    } else {
+        octave
+    };
+    let sigma_period = tempo.sigma_period * octave.period / tempo.period;
+    let fitted_bpm = 60.0 / octave.period;
+    let bpm = if octave.rule == OctaveRule::Override {
+        fitted_bpm
+    } else {
+        snap_bpm(
+            fitted_bpm,
+            60.0 * sigma_period / (octave.period * octave.period),
+        )
+    };
+    (octave, bpm)
+}
+
+/// A grid from a typed tempo and a placed bar line alone, for tracks in which the model found
+/// too few beats: bar 1 is the first bar line at or after the start of the file, residuals come
+/// from the kick onsets (or the broadband ones without a kick), and the confidence stays amber
+/// with the reason [`Reason::Manual`]. `None` for a tempo that is not positive.
+#[must_use]
+pub fn manual(
+    bpm: f64,
+    anchor_s: f64,
+    meter: &Meter,
+    ev: &Evidence<'_>,
+    sample_rate: u32,
+) -> Option<Solved> {
+    if !(bpm.is_finite() && bpm > 0.0 && anchor_s.is_finite()) {
+        return None;
+    }
+    let period = 60.0 / bpm;
+    let bar_len = period * f64::from(meter.beats_per_bar.max(1));
+    let anchor = first_bar_line(anchor_s, bar_len, 0.0);
+    let onsets = if ev.kick_onsets.is_empty() {
+        ev.broadband_onsets
+    } else {
+        ev.kick_onsets
+    };
+    let span = match (onsets.first(), onsets.last()) {
+        (Some(first), Some(last)) => (first.time_s, last.time_s),
+        _ => (anchor, anchor),
+    };
+    let fit = fitness(anchor, period, onsets, &[], span);
+    let verdict = verdict(&fit);
+    let mut reasons = vec![Reason::Manual];
+    match verdict {
+        Verdict::Static => {}
+        Verdict::StaticWarn => reasons.push(Reason::Residuals),
+        Verdict::Drifts => reasons.push(Reason::Drifts),
+    }
+    let lines = line_residuals(&fit, anchor, period, span);
+    let grid = Grid {
+        anchor: Seconds(anchor).to_sample_index(sample_rate),
+        bpm: Bpm(bpm),
+        meter: meter.clone(),
+        meter_runner_up: None,
+        first_downbeat_index: 0,
+        phrase_len_bars: 8,
+        segments: Vec::new(),
+        residual_p95_ms: to_f32(fit.p95_ms),
+        residual_max_ms: to_f32(fit.max_ms),
+        local_bpm_range: to_f32(fit.local_range_bpm),
+        drift_ppm: to_f32(fit.drift_ppm),
+        verdict,
+        confidence: Confidence::Amber,
+        reasons,
+        alternatives: Alternatives {
+            octave_up: (bpm * 2.0 <= 400.0).then_some(Bpm(bpm * 2.0)),
+            octave_down: (bpm / 2.0 >= 30.0).then_some(Bpm(bpm / 2.0)),
+            downbeat_shift_beats: Vec::new(),
+        },
+    };
+    Some(Solved { grid, lines })
+}
+
+/// The bar line of `t`'s lattice (bars of `bar_len` seconds) at or after `start`, and never
+/// before the start of the file.
+fn first_bar_line(t: f64, bar_len: f64, start: f64) -> f64 {
+    let n = ((t - start) / bar_len).floor();
+    let mut line = if n == 0.0 { t } else { t - n * bar_len };
+    while line < 0.0 {
+        line += bar_len;
+    }
+    line
+}
+
+/// The residual lane: one value per grid line from the first line in the file to the end of
+/// the judged span.
+fn line_residuals(fit: &Fitness, anchor: f64, period: f64, span: (f64, f64)) -> LineResiduals {
+    let window = MATCH_WINDOW_S.min(period / 4.0);
+    let first = (-anchor / period).ceil();
+    let last = ((span.1 + window - anchor) / period).floor();
+    let len = if last >= first {
+        line_count(last - first + 1.0)
+    } else {
+        0
+    };
+    let mut residuals_ms = vec![f32::NAN; len];
+    for &(j, t) in &fit.pairs {
+        if let Some(slot) = line_slot(j - first).and_then(|i| residuals_ms.get_mut(i)) {
+            *slot = to_f32((t - (anchor + period * j)) * 1000.0);
+        }
+    }
+    let worst_line = fit
+        .smooth
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+        .map(|(i, _)| line_index(fit.pairs[i].0));
+    LineResiduals {
+        first_line: line_index(first),
+        residuals_ms,
+        worst_line,
+        matched: u32::try_from(fit.pairs.len()).unwrap_or(u32::MAX),
+        attacks: u32::try_from(fit.attacks).unwrap_or(u32::MAX),
+    }
+}
+
+/// The octave `steps` away from `o`: doubling halves the period; halving doubles it and keeps
+/// the parity of the slower lattice that lands on more attacks. The user chose it, so the
+/// octave is no longer in doubt.
+fn shift_octave(o: Octave, steps: i8, onsets: &[TimedOnset], span: (f64, f64)) -> Octave {
+    let times: Vec<f64> = onsets.iter().map(|x| x.time_s).collect();
+    let (mut period, mut phase) = (o.period, o.phase);
+    for _ in 0..steps.unsigned_abs() {
+        if steps > 0 {
+            period /= 2.0;
+        } else {
+            let on = slot_hits(&times, period * 2.0, phase, span, INLIER_S);
+            let off = slot_hits(&times, period * 2.0, phase + period, span, INLIER_S);
+            if off > on {
+                phase += period;
+            }
+            period *= 2.0;
+        }
+    }
+    Octave {
+        period,
+        phase,
+        rule: o.rule,
+        margin: 1.0,
+    }
 }
 
 /// The inputs of the confidence and the reason chips.
@@ -863,6 +1061,35 @@ impl Downbeat {
             shifts: Vec::new(),
         }
     }
+
+    /// Beat 1 moved `by` bar positions on (the user's choice, so no longer in doubt); the other
+    /// candidates stay in their order, as shifts from the new position.
+    fn shifted(self, by: u8, bar: usize) -> Self {
+        if by == 0 || bar <= 1 {
+            return self;
+        }
+        let r = (self.r + usize::from(by)) % bar;
+        let shifts = std::iter::once(self.r)
+            .chain(self.shifts.iter().map(|&s| position(self.r, s, bar)))
+            .filter(|&p| p != r)
+            .map(|p| signed_shift(p, r, bar))
+            .collect();
+        Self {
+            r,
+            margin: 1.0,
+            shifts,
+        }
+    }
+}
+
+/// The bar position `shift` beats from `r`.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+fn position(r: usize, shift: i8, bar: usize) -> usize {
+    (r as i64 + i64::from(shift)).rem_euclid(bar as i64) as usize
 }
 
 fn sigmoid(x: f32) -> f64 {
@@ -1018,12 +1245,18 @@ fn nearest_index(times: &[f64], t: f64) -> u32 {
 // ---------------------------------------------------------------------------------------------
 // Fitness and verdict
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Fitness {
     p95_ms: f64,
     max_ms: f64,
     local_range_bpm: f64,
     drift_ppm: f64,
+    /// Matched (line index from the anchor, attack time) pairs, one per line.
+    pairs: Vec<(f64, f64)>,
+    /// The running median of the pairs' residuals, in milliseconds.
+    smooth: Vec<f64>,
+    /// Events within the judged span, matched or not.
+    attacks: usize,
 }
 
 /// Residuals of the onsets (or, without enough onsets, the beats) against the grid anchored at
@@ -1036,12 +1269,14 @@ fn fitness(
     span: (f64, f64),
 ) -> Fitness {
     let window = MATCH_WINDOW_S.min(period / 4.0);
-    let match_events = |times: &mut dyn Iterator<Item = f64>| -> Vec<(f64, f64)> {
+    let match_events = |times: &mut dyn Iterator<Item = f64>| -> (Vec<(f64, f64)>, usize) {
         let mut pairs: Vec<(f64, f64)> = Vec::new();
+        let mut within = 0;
         for t in times {
             if t < span.0 - window || t > span.1 + window {
                 continue;
             }
+            within += 1;
             let x = (t - anchor) / period;
             let j = x.round();
             let d = (x - j) * period;
@@ -1057,11 +1292,11 @@ fn fitness(
                 _ => pairs.push((j, t)),
             }
         }
-        pairs
+        (pairs, within)
     };
-    let mut pairs = match_events(&mut onsets.iter().map(|o| o.time_s));
-    if pairs.len() < MIN_BEATS {
-        pairs = match_events(&mut beats.iter().copied());
+    let (mut pairs, mut attacks) = match_events(&mut onsets.iter().map(|o| o.time_s));
+    if pairs.len() < MIN_BEATS && !beats.is_empty() {
+        (pairs, attacks) = match_events(&mut beats.iter().copied());
     }
     // A static grid fails when the attacks drift away from it for a while, not when single
     // attacks scatter: judge the running median over SMOOTH_ATTACKS consecutive attacks
@@ -1092,6 +1327,9 @@ fn fitness(
         max_ms,
         local_range_bpm,
         drift_ppm,
+        pairs,
+        smooth,
+        attacks,
     }
 }
 
@@ -1274,6 +1512,24 @@ fn signed_shift(r: usize, best: usize, bar: usize) -> i8 {
         d as i64
     };
     signed.clamp(-128, 127) as i8
+}
+
+/// A grid line index (an integer value far below 2^52) as an integer.
+#[allow(clippy::cast_possible_truncation)]
+fn line_index(j: f64) -> i64 {
+    j as i64
+}
+
+/// A non-negative line offset as a slot of the residual lane.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn line_slot(offset: f64) -> Option<usize> {
+    (offset >= 0.0).then_some(offset as usize)
+}
+
+/// A line count from a positive integer value.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn line_count(n: f64) -> usize {
+    n.max(0.0) as usize
 }
 
 /// Reported statistics are display values; f32 keeps every meaningful digit.

@@ -19,7 +19,7 @@ sc-analysis = { path = "crates/sc-analysis" }
 sc-engine = { path = "crates/sc-engine" }
 
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
