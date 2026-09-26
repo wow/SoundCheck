@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::analysis::{AnalysisRecord, Confidence, Reason, Verdict};
+use crate::analysis::{AnalysisRecord, AnalysisSettings, Confidence, Reason, Verdict};
 use crate::plan::{Codec, Plan};
 use crate::units::{Bpm, DbTp, Lu, Lufs, Seconds};
 
@@ -226,6 +226,17 @@ pub struct RowPlan {
     pub file_id: u32,
     /// What processing would do.
     pub plan: Plan,
+}
+
+/// Analyse these files with these settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeRequest {
+    /// Files by id, in the order to analyse them.
+    pub file_ids: Vec<u32>,
+    /// Analysis settings (part of the cache key).
+    pub analysis: AnalysisSettings,
 }
 
 /// What a batch job reports to the UI, in order: per file `started`, `progress` at most every
