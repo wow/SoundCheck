@@ -15,6 +15,7 @@ sc-dsp = { workspace = true }
 sc-io = { workspace = true }
 sc-analysis = { workspace = true }
 serde = { workspace = true }
+unicode-normalization = { workspace = true }
 
 [dev-dependencies]
 sc-core = { workspace = true, features = ["testsig"] }
