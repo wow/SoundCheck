@@ -45,6 +45,8 @@ RENDER (streamed)
 
 ## Threading and IPC
 - Analysis pool bounded to physical performance cores; each file runs decode -> loudness -> beats -> solver on one worker. `analyze --no-grid` skips the model.
+- Memory per worker (M1, measured): loudness alone streams in about 12 MB; with the grid the model's inference dominates at about 450 MB peak footprint (resident size 600-800 MB while the allocator keeps freed pages), independent of track length because the model runs on 30 s chunks, and of its thread count. The pool size is chosen with this in mind.
+- Model files are looked up, in order, in `SC_MODEL_DIR`, `models/` next to the executable, `../Resources/models` inside the app bundle, `models/` under the working directory (a checkout after `scripts/fetch-models.sh`) and `~/Library/Application Support/app.soundcheck.desktop/models`; a missing model stops the run before any file.
 - Selected track: PCM held as i16 in memory for `read_peaks{file_id, level, from, to} -> ipc::Response` (64-sample level for the visible window) and for the click player producer (`Arc<Grid>` swapped atomically on edit; cpal callback only copies from an `rtrb` ring).
 - `grid_refit{anchor?, bpm?, from_beat?}` is arithmetic over cached beats + onsets (< 5 ms) and returns residuals as raw f32 bytes.
 - Tauri commands are async, return a `JobId`, and stream `JobEvent`s through `Channel` at <= 10 Hz per file.
