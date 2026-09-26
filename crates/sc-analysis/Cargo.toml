@@ -13,6 +13,8 @@ workspace = true
 sc-core = { workspace = true }
 sc-dsp = { workspace = true }
 beat-this = { workspace = true }
+# Only to implement beat-this's `Model` trait, whose runs return `anyhow::Result`.
+anyhow = { workspace = true }
 tracing = { workspace = true }
 ebur128 = { workspace = true }
 

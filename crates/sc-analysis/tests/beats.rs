@@ -3,6 +3,8 @@
 //! they did nothing and pass, so a checkout without the weights stays green.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use sc_analysis::beats::{
     BEAT_MODEL_FILE, BeatTracker, MEL_MODEL_FILE, MODEL_SAMPLE_RATE, find_model_dir,
@@ -94,4 +96,51 @@ fn empty_audio_is_rejected_before_inference() {
         tracker.track(&[]).unwrap_err(),
         Error::InvalidArgument(_)
     ));
+}
+
+#[test]
+fn track_with_reports_each_chunk_up_to_one() {
+    let Some(dir) = models() else { return };
+    let mut tracker = BeatTracker::load(&dir).expect("load model");
+    let spec = AudioSpec::new(MODEL_SAMPLE_RATE, 1);
+    // 70 s: three 30 s chunks.
+    let clicks = testsig::click_track(spec, Bpm(120.0), 140, 20.0);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let raw = tracker
+        .track_with(
+            &clicks.data,
+            Box::new(move |f| sink.lock().unwrap().push(f)),
+        )
+        .expect("track");
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 3, "{seen:?}");
+    assert!(seen.windows(2).all(|w| w[0] < w[1]), "{seen:?}");
+    assert!((seen[2] - 1.0).abs() < f32::EPSILON, "{seen:?}");
+    // Same result as the plain call.
+    assert_eq!(raw, tracker.track(&clicks.data).expect("track"));
+}
+
+#[test]
+fn a_set_cancel_flag_stops_tracking_at_the_next_chunk() {
+    let Some(dir) = models() else { return };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut tracker =
+        BeatTracker::load_with_cancel(&dir, BEAT_MODEL_FILE, Arc::clone(&cancel)).expect("load");
+    let spec = AudioSpec::new(MODEL_SAMPLE_RATE, 1);
+    let clicks = testsig::click_track(spec, Bpm(120.0), 180, 20.0);
+    let chunks = Arc::new(Mutex::new(0));
+    let (flag, count) = (Arc::clone(&cancel), Arc::clone(&chunks));
+    let result = tracker.track_with(
+        &clicks.data,
+        Box::new(move |_| {
+            *count.lock().unwrap() += 1;
+            flag.store(true, Ordering::Relaxed);
+        }),
+    );
+    assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
+    assert_eq!(*chunks.lock().unwrap(), 1, "stopped after the first chunk");
+    // Cleared, the same tracker works again.
+    cancel.store(false, Ordering::Relaxed);
+    assert!(tracker.track(&clicks.data).is_ok());
 }
