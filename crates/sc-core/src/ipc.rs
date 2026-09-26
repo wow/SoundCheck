@@ -7,7 +7,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::units::{DbTp, Lufs};
+use crate::plan::Codec;
+use crate::units::{DbTp, Lufs, Seconds};
 
 /// Largest JSON encoding allowed for any single event or frame.
 pub const MAX_EVENT_BYTES: usize = 256;
@@ -69,6 +70,63 @@ pub struct MeterFrame {
     pub short_term: Lufs,
     /// True peak since the last frame.
     pub true_peak: DbTp,
+}
+
+/// Why a file's format is not what DJ players handle everywhere; export would convert it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub enum DjUnsafe {
+    /// Neither 44.1 nor 48 kHz.
+    SampleRate,
+    /// Neither 16- nor 24-bit.
+    BitDepth,
+    /// Floating-point samples.
+    Float,
+    /// Not stereo.
+    Channels,
+}
+
+/// What a file is before it is decoded, read from its headers and tags.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct FileInfo {
+    /// The codec; from the file name when the headers cannot be read.
+    pub codec: Codec,
+    /// Sample rate in Hz, when the headers say.
+    pub sample_rate: Option<u32>,
+    /// Channel count, when the headers say.
+    pub channels: Option<u8>,
+    /// Bits per sample of a PCM or lossless stream.
+    pub bits_per_sample: Option<u8>,
+    /// Floating-point samples (WAV format 3).
+    pub float: bool,
+    /// Audio bitrate in kbit/s, for lossy streams.
+    pub bitrate_kbps: Option<u32>,
+    /// Playing time from the headers (the decoder's frame count is authoritative).
+    pub duration: Option<Seconds>,
+    /// Title tag.
+    pub title: Option<String>,
+    /// Artist tag.
+    pub artist: Option<String>,
+    /// Album tag.
+    pub album: Option<String>,
+    /// The first way the format is not DJ-safe, if any.
+    pub dj_unsafe: Option<DjUnsafe>,
+}
+
+/// A file the user added, with the id every later event uses.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEntry {
+    /// Session-wide id.
+    pub file_id: u32,
+    /// Absolute path, NFC-normalised.
+    pub path: String,
+    /// What the headers say.
+    pub info: FileInfo,
 }
 
 /// Error classes as the UI sees them.

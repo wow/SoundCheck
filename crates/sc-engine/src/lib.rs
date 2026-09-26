@@ -9,6 +9,7 @@ pub mod analyze;
 pub mod batch;
 pub mod cancel;
 pub mod decide;
+pub mod expand;
 
 pub use analyze::{AnalyzeReport, Analyzer, CacheStatus, Progress, REPORT_SCHEMA, Timings};
 pub use batch::{
@@ -16,3 +17,4 @@ pub use batch::{
 };
 pub use cancel::CancelToken;
 pub use decide::decide;
+pub use expand::{collect_audio_files, probe_all};

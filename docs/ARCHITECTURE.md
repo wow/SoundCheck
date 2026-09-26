@@ -17,6 +17,10 @@ Dependency direction: `sc-core <- sc-dsp <- sc-analysis`, `sc-core <- sc-io`, al
 
 ## Data flow per file
 ```
+ADD (on drop): collect_audio_files (folders walked in natural order; hidden files, AppleDouble `._*` and symlinked folders skipped;
+  NFC duplicates dropped) -> probe in parallel (lofty headers and tags, cover art not read: codec incl. ALAC vs AAC, rate, depth,
+  float WAV, bitrate, duration, title/artist/album, first DJ-unsafe reason) -> FileEntry rows before any decoding
+
 ANALYSE (streamed; cached)
   decode (delay/padding applied) -> f32 interleaved blocks
     -> ebur128 (M/S/I/LRA/TP; S sampled per 100 ms -> S-P95, S-top30, timeline, PLR)

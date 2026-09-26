@@ -7,7 +7,9 @@
 
 pub mod cache;
 pub mod decode;
+pub mod probe;
 pub mod tags;
 
 pub use cache::Cache;
 pub use decode::{Decoder, read_all};
+pub use probe::probe;

@@ -21,7 +21,7 @@ pub const NEGLIGIBLE_DB: f64 = 0.05;
 pub const TAG_BPM_TOLERANCE: f64 = 0.02;
 
 /// The audio codecs SoundCheck recognises.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub enum Codec {
@@ -42,6 +42,7 @@ pub enum Codec {
     /// Ogg Opus.
     Opus,
     /// Anything else symphonia could open.
+    #[default]
     Other,
 }
 
