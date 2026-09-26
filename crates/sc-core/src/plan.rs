@@ -20,6 +20,30 @@ pub const NEGLIGIBLE_DB: f64 = 0.05;
 /// A file's BPM tag disagrees with the analysis when they differ by more than this fraction.
 pub const TAG_BPM_TOLERANCE: f64 = 0.02;
 
+/// Targets a user may set, LUFS: from quiet broadcast levels to the loudest club masters.
+pub const TARGET_RANGE_LUFS: (f64, f64) = (-30.0, -4.0);
+
+/// Ceilings a user may set, dBTP. Never above full scale: gain only, and a boost stops at it.
+pub const CEILING_RANGE_DBTP: (f64, f64) = (-6.0, 0.0);
+
+/// BPM ranges a DJ app can be set to.
+pub const BPM_LIMITS: (f64, f64) = (40.0, 300.0);
+
+/// Checks a BPM range: both ends inside [`BPM_LIMITS`], low below high.
+///
+/// # Errors
+/// [`crate::Error::InvalidArgument`] naming the problem.
+pub fn check_bpm_range(range: (Bpm, Bpm)) -> crate::Result<()> {
+    let (lo, hi) = (range.0.0, range.1.0);
+    if !(lo.is_finite() && hi.is_finite() && lo >= BPM_LIMITS.0 && hi <= BPM_LIMITS.1 && lo < hi) {
+        return Err(crate::Error::InvalidArgument(format!(
+            "BPM range {lo}-{hi}: both ends must lie in {}-{} and the first below the second",
+            BPM_LIMITS.0, BPM_LIMITS.1
+        )));
+    }
+    Ok(())
+}
+
 /// The audio codecs SoundCheck recognises.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -117,6 +141,27 @@ pub struct DecideSettings {
 }
 
 impl DecideSettings {
+    /// Checks the target, ceiling and BPM range against their limits.
+    ///
+    /// # Errors
+    /// [`crate::Error::InvalidArgument`] naming the first value out of range.
+    pub fn validate(&self) -> crate::Result<()> {
+        let within = |v: f64, (lo, hi): (f64, f64)| v.is_finite() && v >= lo && v <= hi;
+        if !within(self.target.0, TARGET_RANGE_LUFS) {
+            return Err(crate::Error::InvalidArgument(format!(
+                "target {} LUFS: must lie in {} to {} LUFS",
+                self.target.0, TARGET_RANGE_LUFS.0, TARGET_RANGE_LUFS.1
+            )));
+        }
+        if !within(self.ceiling.0, CEILING_RANGE_DBTP) {
+            return Err(crate::Error::InvalidArgument(format!(
+                "ceiling {} dBTP: must lie in {} to {} dBTP",
+                self.ceiling.0, CEILING_RANGE_DBTP.0, CEILING_RANGE_DBTP.1
+            )));
+        }
+        check_bpm_range(self.bpm_range)
+    }
+
     /// The DJ default: S-P95 at -11 LUFS, ceiling -0.5 dBTP, BPM range 70-180.
     #[must_use]
     pub fn dj() -> Self {
@@ -242,6 +287,30 @@ mod tests {
     fn global_gain_step_is_a_quarter_power_of_two() {
         let step = 20.0 * 2f64.powf(0.25).log10();
         assert!((step - GLOBAL_GAIN_STEP_DB).abs() < 1e-12, "{step}");
+    }
+
+    #[test]
+    fn settings_outside_their_limits_are_rejected() {
+        assert!(DecideSettings::dj().validate().is_ok());
+        assert!(DecideSettings::streaming().validate().is_ok());
+        let above_full_scale = DecideSettings {
+            ceiling: DbTp(0.5),
+            ..DecideSettings::dj()
+        };
+        assert!(above_full_scale.validate().is_err());
+        let too_loud = DecideSettings {
+            target: Lufs(-2.0),
+            ..DecideSettings::dj()
+        };
+        assert!(too_loud.validate().is_err());
+        let nan = DecideSettings {
+            target: Lufs(f64::NAN),
+            ..DecideSettings::dj()
+        };
+        assert!(nan.validate().is_err());
+        assert!(check_bpm_range((Bpm(180.0), Bpm(70.0))).is_err());
+        assert!(check_bpm_range((Bpm(20.0), Bpm(70.0))).is_err());
+        assert!(check_bpm_range((Bpm(80.0), Bpm(160.0))).is_ok());
     }
 
     #[test]

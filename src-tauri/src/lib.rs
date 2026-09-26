@@ -7,7 +7,9 @@
 mod shell;
 
 use sc_core::Lufs;
-use sc_core::ipc::{AnalyzeRequest, FileEntry, IpcError, IpcErrorKind, JobEvent, JobId, RowPlan};
+use sc_core::ipc::{
+    AnalyzeRequest, FileEntry, IpcError, IpcErrorKind, JobEvent, JobId, Replan, SessionSnapshot,
+};
 use sc_core::plan::DecideSettings;
 use tauri::State;
 use tauri::ipc::Channel;
@@ -20,6 +22,19 @@ fn app_version() -> String {
     sc_core::VERSION.to_string()
 }
 
+/// Runs `f` on a blocking thread, so the command never holds up the async runtime.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, IpcError> + Send + 'static,
+) -> Result<T, IpcError> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| IpcError {
+            kind: IpcErrorKind::Internal,
+            message: format!("the command failed: {e}"),
+            file_id: None,
+        })?
+}
+
 /// Adds the audio files under the dropped or chosen paths; returns the new rows.
 #[tauri::command]
 async fn expand_paths(
@@ -27,18 +42,16 @@ async fn expand_paths(
     paths: Vec<String>,
 ) -> Result<Vec<FileEntry>, IpcError> {
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || shell.expand(paths))
-        .await
-        .map_err(|e| IpcError {
-            kind: IpcErrorKind::Internal,
-            message: format!("adding files failed: {e}"),
-            file_id: None,
-        })
+    blocking(move || Ok(shell.expand(paths))).await
 }
 
 /// Starts analysing files; events arrive on `on_event`, `finished` last.
 #[tauri::command]
-fn analyze(shell: State<'_, Shell>, req: AnalyzeRequest, on_event: Channel<JobEvent>) -> JobId {
+async fn analyze(
+    shell: State<'_, Shell>,
+    req: AnalyzeRequest,
+    on_event: Channel<JobEvent>,
+) -> Result<JobId, IpcError> {
     shell.start(req, move |event| {
         // A closed channel means the window went away; the job still ends normally.
         let _ = on_event.send(event);
@@ -47,20 +60,32 @@ fn analyze(shell: State<'_, Shell>, req: AnalyzeRequest, on_event: Channel<JobEv
 
 /// Asks a running job to stop.
 #[tauri::command]
-fn cancel_job(shell: State<'_, Shell>, job_id: JobId) -> bool {
-    shell.cancel(job_id)
+async fn cancel_job(shell: State<'_, Shell>, job_id: JobId) -> Result<bool, IpcError> {
+    Ok(shell.cancel(job_id))
 }
 
 /// Replans every analysed row under new loudness settings.
 #[tauri::command]
-fn set_decide_settings(shell: State<'_, Shell>, settings: DecideSettings) -> Vec<RowPlan> {
-    shell.set_decide_settings(settings)
+async fn set_decide_settings(
+    shell: State<'_, Shell>,
+    settings: DecideSettings,
+) -> Result<Replan, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || shell.set_decide_settings(settings)).await
 }
 
 /// The median S-P95 of the analysed rows.
 #[tauri::command]
-fn calibration_target(shell: State<'_, Shell>) -> Option<Lufs> {
-    shell.calibration_target()
+async fn calibration_target(shell: State<'_, Shell>) -> Result<Option<Lufs>, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || Ok(shell.calibration_target())).await
+}
+
+/// Every row the session holds, for a window that reloads; running jobs are cancelled.
+#[tauri::command]
+async fn restore_session(shell: State<'_, Shell>) -> Result<SessionSnapshot, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || Ok(shell.restore())).await
 }
 
 /// Builds and runs the application.
@@ -80,7 +105,8 @@ pub fn run() {
             analyze,
             cancel_job,
             set_decide_settings,
-            calibration_target
+            calibration_target,
+            restore_session
         ])
         .run(tauri::generate_context!())
         .expect("the Tauri runtime failed to start");

@@ -217,6 +217,41 @@ impl RowAnalysis {
     }
 }
 
+/// Every analysed row's plan after a settings change, and the revision they were decided with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct Replan {
+    /// Increases with every settings change in a session.
+    pub revision: u32,
+    /// The plans, by file.
+    pub plans: Vec<RowPlan>,
+}
+
+/// One row as the session holds it, for a window that reloads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRow {
+    /// The file.
+    pub entry: FileEntry,
+    /// Its analysis, when finished.
+    pub row: Option<Box<RowAnalysis>>,
+    /// Its plan, when analysed.
+    pub plan: Option<Plan>,
+}
+
+/// Everything the session holds, in the order the files were added.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSnapshot {
+    /// The settings revision the plans were decided with.
+    pub revision: u32,
+    /// The rows.
+    pub rows: Vec<SessionRow>,
+}
+
 /// A row's plan, sent when the settings change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -276,6 +311,8 @@ pub enum JobEvent {
         row: Box<RowAnalysis>,
         /// What processing would do.
         plan: Plan,
+        /// The settings revision `plan` was decided with; a newer replan wins.
+        revision: u32,
     },
     /// The file could not be analysed; the job goes on.
     Failed {
@@ -464,6 +501,7 @@ mod tests {
             file_id: u32::MAX,
             row: Box::new(row),
             plan,
+            revision: u32::MAX,
         };
         assert!(json_len(&ev) <= MAX_ROW_BYTES, "{} bytes", json_len(&ev));
     }

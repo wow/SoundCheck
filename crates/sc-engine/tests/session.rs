@@ -113,12 +113,14 @@ fn a_job_streams_rows_with_plans_and_ends_with_finished() {
     }));
 
     // Replanning needs no analysis: streaming aligns integrated loudness at -14.
-    let plans = session
+    let replan = session
         .lock()
         .unwrap()
-        .set_settings(DecideSettings::streaming());
-    assert_eq!(plans.len(), 2);
-    let quiet = plans.iter().find(|p| p.file_id == 1).unwrap();
+        .set_settings(DecideSettings::streaming())
+        .unwrap();
+    assert_eq!(replan.revision, 1);
+    assert_eq!(replan.plans.len(), 2);
+    let quiet = replan.plans.iter().find(|p| p.file_id == 1).unwrap();
     let Some(GainPlan::Gain { gain_db, .. }) = quiet.plan.gain else {
         panic!()
     };
@@ -192,6 +194,40 @@ fn a_job_without_its_model_is_aborted_then_finished() {
             ..
         }
     ));
+}
+
+#[test]
+fn invalid_settings_are_refused_and_the_old_ones_kept() {
+    let mut session = Session::new(DecideSettings::dj());
+    let bad = DecideSettings {
+        ceiling: sc_core::DbTp(0.5),
+        ..DecideSettings::dj()
+    };
+    assert!(session.set_settings(bad).is_err());
+    assert_eq!(session.settings(), DecideSettings::dj());
+    assert_eq!(session.snapshot().revision, 0);
+}
+
+#[test]
+fn a_snapshot_lists_rows_in_order_with_their_plans() {
+    let dir = tempfile::tempdir().unwrap();
+    common::tone_wav(dir.path(), "1.wav", 5.0, 0.1);
+    common::tone_wav(dir.path(), "2.wav", 5.0, 0.1);
+    let session = Mutex::new(Session::new(DecideSettings::dj()));
+    let ids = add(&mut session.lock().unwrap(), &[dir.path().to_path_buf()]);
+    run_job(
+        &session,
+        1,
+        &ids[..1],
+        &settings(),
+        &CancelToken::new(),
+        &mut |_| {},
+    );
+    let snap = session.lock().unwrap().snapshot();
+    assert_eq!(snap.rows.len(), 2);
+    assert_eq!(snap.rows[0].entry.file_id, ids[0]);
+    assert!(snap.rows[0].row.is_some() && snap.rows[0].plan.is_some());
+    assert!(snap.rows[1].row.is_none() && snap.rows[1].plan.is_none());
 }
 
 #[test]

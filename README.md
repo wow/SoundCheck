@@ -29,6 +29,8 @@ pnpm install
 ./scripts/fetch-models.sh     # beat-tracking model files (11 MB, checksum-verified) into models/
 ./scripts/verify.sh           # fmt, clippy, tests, typecheck, vitest
 pnpm tauri dev                # run the app
+pnpm dev:mock                 # the UI alone in a browser, with synthetic tracks (open /?demo=1)
+cargo run --release -p sc-cli -- plan <files>            # what processing would do to each file
 cargo run --release -p sc-cli -- analyze <file>          # loudness, BPM, meter and bar 1
 cargo run --release -p sc-cli -- bench <file>            # speed of each analysis stage
 ```
