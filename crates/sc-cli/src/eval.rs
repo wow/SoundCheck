@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use unicode_normalization::UnicodeNormalization;
 
-use crate::analyze::Analyzer;
+use sc_engine::Analyzer;
 
 /// Tolerances of the scores.
 const BPM_TOLERANCE: f64 = 0.02;

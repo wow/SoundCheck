@@ -1,7 +1,7 @@
 //! Headless SoundCheck: the same analysis the app shows, printed as text or JSON.
 
-mod analyze;
 mod eval;
+mod report;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -16,7 +16,9 @@ use sc_core::ipc::IpcError;
 use sc_io::cache::Cache;
 use tracing_subscriber::EnvFilter;
 
-use crate::analyze::{Analyzer, ErrorReport, REPORT_SCHEMA, Timings, write_text};
+use sc_engine::{Analyzer, REPORT_SCHEMA, Timings};
+
+use crate::report::{ErrorReport, write_text};
 
 /// Version with git revision and build date, e.g. `0.1.0 (a1b2c3d4e, 2026-10-01)`.
 const VERSION_LONG: &str = concat!(

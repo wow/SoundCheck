@@ -6,8 +6,8 @@ Status: v0.1 architecture fixed 2026-09-24.
 ```
 src        React 19 + TS (Vite, Tailwind 4, shadcn, zustand, xstate)   -- renders; never holds PCM
 src-tauri  Tauri 2 shell: commands, Channel<JobEvent>, read_peaks         -- thin; calls sc-engine
-crates/sc-cli           headless binary: analyze | cache | process | grid-check | bench | undo -- thin; calls sc-engine (until sc-engine exists, its analyze.rs holds the per-file pipeline)
-crates/sc-engine        run_batch(files, settings, cancel, on_event), cancellation, click player (cpal + rtrb)
+crates/sc-cli           headless binary: analyze | eval | cache | process | grid-check | bench | undo -- thin; calls sc-engine and only prints
+crates/sc-engine        analyze (the per-file pipeline), run_batch(files, settings, cancel, on_event), cancellation, click player (cpal + rtrb)
 crates/sc-analysis      loudness (ebur128 wrap + S-P95/S-top30/PLR + timeline), beats (beat-this, rten), grid solver (Huber LS, comb phase, kick-band anchor, octave order, thresholds, confidence, refit), DJ-safe report
 crates/sc-dsp           gain, TPDF dither, primitives (biquad, kick-band filter, RMS/derivative onset), [v0.2 limiter, Re-Pitch], [v0.3 stretch]
 crates/sc-io            decode (symphonia + opus, LAME delay/padding applied), iff (WAV/RF64/AIFF read+write, verbatim chunk carry), tagcopy (ID3v2/ID3v1/APEv2/Vorbis opaque carry + frame-level append), flac (flacenc + MD5 + SEEKTABLE + block carry), mp3gain (global_gain patch + CRC + undo), transaction (LengthPolicy, tiered verify, backup, journal, sidecar), rekordbox XML + CSV writers, cache, lofty read-only facade

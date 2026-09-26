@@ -3681,7 +3681,7 @@ dependencies = [
  "predicates",
  "sc-analysis",
  "sc-core",
- "sc-dsp",
+ "sc-engine",
  "sc-io",
  "serde",
  "serde_json",
@@ -3710,6 +3710,17 @@ dependencies = [
  "criterion",
  "rubato 5.0.0",
  "sc-core",
+]
+
+[[package]]
+name = "sc-engine"
+version = "0.0.3"
+dependencies = [
+ "sc-analysis",
+ "sc-core",
+ "sc-dsp",
+ "sc-io",
+ "serde",
 ]
 
 [[package]]
