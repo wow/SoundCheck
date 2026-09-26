@@ -16,6 +16,7 @@ sc-core = { path = "crates/sc-core" }
 sc-dsp = { path = "crates/sc-dsp" }
 sc-io = { path = "crates/sc-io" }
 sc-analysis = { path = "crates/sc-analysis" }
+sc-engine = { path = "crates/sc-engine" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
