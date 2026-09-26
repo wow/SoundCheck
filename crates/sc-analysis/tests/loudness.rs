@@ -71,7 +71,8 @@ fn silence_reports_none_everywhere() {
 
 #[test]
 fn block_size_does_not_change_a_single_number() {
-    let buf = testsig::seeded_noise(AudioSpec::CD, 7, 0.25, 12.3);
+    // 12.34 s: not a whole number of 100 ms hops, so the partial tail is chunked too.
+    let buf = testsig::seeded_noise(AudioSpec::CD, 7, 0.25, 12.34);
     let whole = measure(&buf).unwrap();
     for block_frames in [1_usize, 7, 4_096, 44_100] {
         let mut meter = LoudnessMeter::new(buf.spec).unwrap();
@@ -116,4 +117,39 @@ fn a_short_track_has_no_top30() {
     assert_eq!(report.short_term_top30, None);
     let report = measure(&tone(AudioSpec::CD, -20.0, 40.0)).unwrap();
     assert_abs_diff_eq!(report.short_term_top30.unwrap().0, -20.0, epsilon = 0.05);
+}
+
+#[test]
+fn a_burst_between_two_100_ms_hops_keeps_its_momentary_maximum() {
+    // EBU Tech 3341 case 13: a 400 ms burst whose start falls anywhere inside a 100 ms hop must
+    // still read its full momentary loudness. Reading every 10 ms loses at most
+    // 10 log10(395/400) = 0.055 LU; the offsets step through one hop by 5 ms, which includes the
+    // worst case. 22.05 kHz has no whole 10 ms slices and reads the meter directly.
+    for spec in [
+        AudioSpec::CD,
+        AudioSpec::new(48_000, 1),
+        AudioSpec::new(22_050, 2),
+    ] {
+        let rate = spec.sample_rate as usize;
+        let burst = tone(spec, -23.0, 0.4);
+        let max_at = |offset_ms: usize| {
+            let mut signal = AudioBuffer::silence(spec, rate * (1000 + offset_ms) / 1000);
+            signal.data.extend_from_slice(&burst.data);
+            signal.data.extend(std::iter::repeat_n(
+                0.0,
+                rate / 2 * usize::from(spec.channels),
+            ));
+            measure(&signal).unwrap().momentary_max.unwrap().0
+        };
+        let aligned = max_at(0);
+        assert_abs_diff_eq!(aligned, -23.0, epsilon = 0.1);
+        for offset_ms in (5..100).step_by(5) {
+            let max = max_at(offset_ms);
+            assert!(
+                aligned - max <= 0.06 && max <= aligned + 0.01,
+                "{} Hz, burst {offset_ms} ms into a hop: max M {max:.3} against {aligned:.3} LUFS",
+                spec.sample_rate
+            );
+        }
+    }
 }
