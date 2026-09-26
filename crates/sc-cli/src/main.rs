@@ -1,6 +1,7 @@
 //! Headless SoundCheck: the same analysis the app shows, printed as text or JSON.
 
 mod eval;
+mod plan;
 mod report;
 
 use std::io::Write;
@@ -11,7 +12,8 @@ use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use sc_core::analysis::{AnalysisSettings, Model};
 use sc_core::ipc::IpcError;
-use sc_core::{Bpm, Error};
+use sc_core::plan::DecideSettings;
+use sc_core::{Bpm, DbTp, Error, Lufs};
 use sc_engine::{
     AnalyzeReport, Analyzer, BatchFile, BatchSettings, CancelToken, EngineEvent, REPORT_SCHEMA,
     Timings, default_workers, run_batch,
@@ -49,6 +51,14 @@ enum ModelArg {
     Full,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum ModeArg {
+    /// S-P95, the DJ alignment statistic.
+    Dj,
+    /// Integrated loudness, for streaming platforms.
+    Streaming,
+}
+
 #[derive(clap::Args)]
 struct AnalysisArgs {
     /// Loudness only: skip beat tracking and the grid.
@@ -80,6 +90,30 @@ enum Command {
         no_cache: bool,
         /// Files analysed at once (default: a quarter of the logical cores, at most 4). Reports
         /// are printed in the order the files were given.
+        #[arg(long)]
+        jobs: Option<usize>,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+    },
+    /// Analyse files (using the cache) and print what processing would do to each: the gain,
+    /// what would be skipped, and what needs a look first. The app decides every row the same way.
+    Plan {
+        /// Audio files.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Statistic to align: S-P95 for DJ sets, integrated loudness for streaming.
+        #[arg(long, value_enum, default_value = "dj")]
+        mode: ModeArg,
+        /// Target in LUFS (default -11 for dj, -14 for streaming).
+        #[arg(long, allow_hyphen_values = true)]
+        target: Option<f64>,
+        /// True-peak ceiling in dBTP (default -0.5 for dj, -1.0 for streaming).
+        #[arg(long, allow_hyphen_values = true)]
+        ceiling: Option<f64>,
+        /// Print JSON (one document per file) instead of text.
+        #[arg(long)]
+        json: bool,
+        /// Files analysed at once (default: a quarter of the logical cores, at most 4).
         #[arg(long)]
         jobs: Option<usize>,
         #[command(flatten)]
@@ -174,6 +208,37 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Command::Plan {
+            files,
+            mode,
+            target,
+            ceiling,
+            json,
+            jobs,
+            analysis,
+        } => {
+            let mut decide = match mode {
+                ModeArg::Dj => DecideSettings::dj(),
+                ModeArg::Streaming => DecideSettings::streaming(),
+            };
+            if let Some(t) = target {
+                decide.target = Lufs(t);
+            }
+            if let Some(c) = ceiling {
+                decide.ceiling = DbTp(c);
+            }
+            decide.bpm_range = (Bpm(analysis.bpm_range.0), Bpm(analysis.bpm_range.1));
+            let settings = BatchSettings {
+                analysis: settings(&analysis),
+                workers: jobs.unwrap_or_else(default_workers),
+                cache: Some(Cache::open(Cache::default_dir()?)),
+            };
+            let failed = plan::plan_all(&settings, &decide, &files, json)?;
+            if failed > 0 {
+                std::process::exit(EXIT_FAILED);
+            }
+            Ok(())
+        }
         Command::Bench {
             file,
             runs,
@@ -245,6 +310,62 @@ fn analyze_all(
     json: bool,
     evidence: bool,
 ) -> anyhow::Result<usize> {
+    let mut failed = 0;
+    let mut first_error = None;
+    run_in_order(settings, files, &mut |file, outcome| {
+        let printed = print_report(file, outcome, json, evidence, &mut failed);
+        if let Err(err) = printed {
+            first_error.get_or_insert(err);
+        }
+    });
+    first_error.map_or(Ok(failed), Err)
+}
+
+fn print_report(
+    file: &Path,
+    outcome: Result<AnalyzeReport, Error>,
+    json: bool,
+    evidence: bool,
+    failed: &mut usize,
+) -> anyhow::Result<()> {
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    match outcome {
+        Ok(mut report) => {
+            if json {
+                if !evidence {
+                    report.record.evidence = None;
+                }
+                serde_json::to_writer_pretty(&mut out, &report)?;
+                writeln!(out)?;
+            } else {
+                write_text(&report, &mut out)?;
+            }
+        }
+        Err(err) => {
+            *failed += 1;
+            eprintln!("sc-cli: {err}");
+            if json {
+                let report = ErrorReport {
+                    schema: REPORT_SCHEMA,
+                    file: file.display().to_string(),
+                    error: IpcError::from(err),
+                };
+                serde_json::to_writer_pretty(&mut out, &report)?;
+                writeln!(out)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Runs `files` through the engine and hands each outcome to `emit` in the order the files were
+/// given; a model that cannot be loaded stops the run before any file.
+fn run_in_order(
+    settings: &BatchSettings,
+    files: &[PathBuf],
+    emit: &mut dyn FnMut(&Path, Result<AnalyzeReport, Error>),
+) {
     let batch: Vec<BatchFile> = files
         .iter()
         .enumerate()
@@ -254,87 +375,26 @@ fn analyze_all(
             duration_hint: None,
         })
         .collect();
-    let mut printer = InOrder {
-        files,
-        ready: (0..files.len()).map(|_| None).collect(),
-        next: 0,
-        json,
-        evidence,
-        failed: 0,
-        error: None,
-    };
-    if let Err(err) = run_batch(&batch, settings, &CancelToken::new(), &mut |event| {
-        printer.on_event(event);
-    }) {
-        model_error_exit(&err);
-    }
-    match printer.error {
-        Some(err) => Err(err),
-        None => Ok(printer.failed),
-    }
-}
-
-/// Prints each file's outcome once every file before it has been printed.
-struct InOrder<'a> {
-    files: &'a [PathBuf],
-    ready: Vec<Option<Result<AnalyzeReport, Error>>>,
-    next: usize,
-    json: bool,
-    evidence: bool,
-    failed: usize,
-    error: Option<anyhow::Error>,
-}
-
-impl InOrder<'_> {
-    fn on_event(&mut self, event: EngineEvent) {
+    let mut ready: Vec<Option<Result<AnalyzeReport, Error>>> =
+        (0..files.len()).map(|_| None).collect();
+    let mut next = 0;
+    let result = run_batch(&batch, settings, &CancelToken::new(), &mut |event| {
         let (file_id, outcome) = match event {
             EngineEvent::Analysed { file_id, report } => (file_id, Ok(*report)),
             EngineEvent::Failed { file_id, error } => (file_id, Err(error)),
             EngineEvent::Cancelled { file_id } => (file_id, Err(Error::Cancelled)),
             _ => return,
         };
-        if let Some(slot) = self.ready.get_mut(file_id as usize) {
+        if let Some(slot) = ready.get_mut(file_id as usize) {
             *slot = Some(outcome);
         }
-        while let Some(outcome) = self.ready.get_mut(self.next).and_then(Option::take) {
-            let file = &self.files[self.next];
-            self.next += 1;
-            if let Err(err) = self.print(file, outcome) {
-                self.error.get_or_insert(err);
-            }
+        while let Some(outcome) = ready.get_mut(next).and_then(Option::take) {
+            emit(&files[next], outcome);
+            next += 1;
         }
-    }
-
-    fn print(&mut self, file: &Path, outcome: Result<AnalyzeReport, Error>) -> anyhow::Result<()> {
-        let stdout = std::io::stdout();
-        let mut out = stdout.lock();
-        match outcome {
-            Ok(mut report) => {
-                if self.json {
-                    if !self.evidence {
-                        report.record.evidence = None;
-                    }
-                    serde_json::to_writer_pretty(&mut out, &report)?;
-                    writeln!(out)?;
-                } else {
-                    write_text(&report, &mut out)?;
-                }
-            }
-            Err(err) => {
-                self.failed += 1;
-                eprintln!("sc-cli: {err}");
-                if self.json {
-                    let report = ErrorReport {
-                        schema: REPORT_SCHEMA,
-                        file: file.display().to_string(),
-                        error: IpcError::from(err),
-                    };
-                    serde_json::to_writer_pretty(&mut out, &report)?;
-                    writeln!(out)?;
-                }
-            }
-        }
-        Ok(())
+    });
+    if let Err(err) = result {
+        model_error_exit(&err);
     }
 }
 
