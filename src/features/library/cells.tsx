@@ -5,6 +5,7 @@ import {
   actionText,
   displayTitle,
   level,
+  peak,
   reviewText,
   specText,
 } from '@/lib/format';
@@ -128,7 +129,7 @@ export function TpCell({ row, ceiling }: { row: Row; ceiling: number }) {
       className={cn('font-mono text-[13px] font-medium', tp > ceiling ? 'text-err' : 'text-fg-0')}
       title={tp > ceiling ? `Above the ${ceiling.toFixed(1)} dBTP ceiling` : undefined}
     >
-      {level(tp)}
+      {peak(tp)}
     </span>
   );
 }
@@ -181,7 +182,8 @@ export function ActionCell({ row, bpmRange }: { row: Row; bpmRange: [number, num
   if (!row.plan) return <Dash />;
   const action = actionText(row.plan);
   const review = reviewText(row.plan.review, row.analysis, bpmRange);
-  const detail = [action.detail, review].filter(Boolean).join(' · ');
+  // What to check comes first: on a Needs review row it is why the row is there.
+  const detail = [review, action.detail].filter(Boolean).join(' · ');
   return (
     <div className="min-w-0">
       <div
