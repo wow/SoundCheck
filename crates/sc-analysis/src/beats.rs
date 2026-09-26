@@ -6,10 +6,11 @@
 //! grid: the beats are quantised to 20 ms frames and the downbeats are unreliable on odd meters.
 //!
 //! The model files (`mel_spectrogram.onnx`, `beat_this_small.onnx`) are not compiled in. They
-//! are looked up, in order, in `SC_MODEL_DIR`, next to the executable (`models/`, and
+//! are looked up in `SC_MODEL_DIR` alone when it is set, otherwise, in order, next to the
+//! executable (`models/`, and
 //! `../Resources/models` inside an app bundle), `models/` under the working directory (a
-//! development checkout after `scripts/fetch-models.sh`), and the user's application-support
-//! directory.
+//! development checkout after `scripts/fetch-models.sh`), in debug builds the checkout's own
+//! `models/`, and the user's application-support directory.
 //!
 //! Inference runs the mel front end once and the beat model once per 30 s chunk. A tracker can
 //! be tied to a cancel flag, checked before every model run, and [`BeatTracker::track_with`]
@@ -85,13 +86,14 @@ fn to_samples(seconds: &[f32], sample_rate: u32) -> Vec<SampleIndex> {
         .collect()
 }
 
-/// Directories searched for the model files, in order.
+/// Directories searched for the model files, in order. `SC_MODEL_DIR`, when set, is the only
+/// one: an explicit choice is never quietly replaced by another copy.
 #[must_use]
 pub fn model_search_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
     if let Some(dir) = std::env::var_os(MODEL_DIR_ENV) {
-        paths.push(PathBuf::from(dir));
+        return vec![PathBuf::from(dir)];
     }
+    let mut paths = Vec::new();
     if let Ok(exe) = std::env::current_exe()
         && let Some(exe_dir) = exe.parent()
     {
@@ -101,6 +103,10 @@ pub fn model_search_paths() -> Vec<PathBuf> {
     if let Ok(cwd) = std::env::current_dir() {
         paths.push(cwd.join("models"));
     }
+    // Debug builds also look in the checkout's `models/` (after `scripts/fetch-models.sh`), so the
+    // app started with `pnpm tauri dev` from any directory finds them. Release builds never do.
+    #[cfg(debug_assertions)]
+    paths.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models"));
     if let Some(home) = std::env::var_os("HOME") {
         paths.push(
             PathBuf::from(home).join("Library/Application Support/app.soundcheck.desktop/models"),

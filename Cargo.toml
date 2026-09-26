@@ -37,6 +37,8 @@ unicode-normalization = "0.1"
 tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-store = "2"
 
 # test and bench only
 approx = "0.5"

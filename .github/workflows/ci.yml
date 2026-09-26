@@ -116,7 +116,11 @@ jobs:
           key: beat-this-models-089b5092
       - run: ./scripts/fetch-models.sh
       - run: cargo test --workspace --all-features
-      - run: pnpm tauri build --debug --bundles app
+      - run: pnpm tauri build --debug --bundles app --config src-tauri/tauri.bundle.conf.json
+      - name: The app bundle carries the beat-tracking model
+        run: |
+          app=$(find target/debug/bundle/macos -maxdepth 1 -name '*.app' | head -1)
+          ls -l "$app/Contents/Resources/models/mel_spectrogram.onnx" "$app/Contents/Resources/models/beat_this_small.onnx"
 
   coverage:
     name: coverage report
