@@ -22,3 +22,8 @@ sc-analysis = { workspace = true }
 hound = { workspace = true }
 tempfile = { workspace = true }
 serde_json = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "decide"
+harness = false

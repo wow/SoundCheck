@@ -28,7 +28,10 @@ ANALYSE (streamed; cached)
   DJ-safe report, tag inventory (lofty read), cover thumbnail
   -> cache JSON (~/Library/Caches/app.soundcheck.desktop/analysis/<blake3(path)>.json, keyed by size+mtime+settings+version)
 
-DECIDE (pure): AnalysisRecord + Settings{mode: DJ|Streaming, preset, ceiling, batch_mode: Prepare|Library, output} -> Plan { gain_db, short_by_lu, length_policy: Preserve|TrimHead{delta}, tags, xml, skip: Option<SkipReason> }
+DECIDE (pure, about 28 ns per row): decide(AnalysisRecord, Codec, DecideSettings{mode: DJ|Streaming, target, ceiling, bpm_range})
+  -> Plan { measured, gain: Gain{gain_db, short_by_lu, true_peak_after} | GlobalGain{steps, gain_db, residual_lu} (MP3, 1.5051 dB steps) | AtTarget,
+            skip: AnalyseOnly{codec} | Silent, review: [Confidence | CheckGrid | Drifts | OutsideBpmRange | TagBpmDisagrees{tag} | NoGrid], status }
+  turning down is always allowed; a boost stops at the true-peak ceiling and the rest is "short by"; export adds batch_mode, length policy, tags and XML
 
 RENDER (streamed)
   lossless: decode -> [TrimHead] -> gain -> [TPDF if 16-bit] -> iff/flac writer with carried chunks/blocks -> tagcopy append
@@ -41,7 +44,7 @@ RENDER (streamed)
 - `AudioSpec { sample_rate, channels }`, `AudioBuffer { spec, data: Vec<f32> }` interleaved; `SampleIndex(u64)`.
 - `LoudnessReport { integrated, momentary_max, short_term_max, short_term_p95, short_term_top30, lra, true_peak, sample_peak, plr, dual_mono, timeline }`.
 - `Meter { beats_per_bar, unit, grouping: Vec<u8> }` and `Grid { anchor, bpm, meter, first_downbeat_index, segments, residual_p95_ms, residual_max_ms, local_bpm_range, drift_ppm, verdict: Static|StaticWarn|Drifts, confidence: Green|Amber|Red, reasons, alternatives: { octave_up, octave_down, downbeat_shift } }`.
-- `Plan`, `LengthPolicy`, `SkipReason` (`AlreadyAtTarget`, `WouldGetQuieter`, `UnsupportedFormat`, `UnsupportedChannels`, `DrmProtected`, `RekordboxUsbExport`, `SeratoTagsPresentInPlaceCut`, `GainFieldRange`, `Corrupt`, `Cancelled`), `JobEvent`, `IpcError`.
+- `Plan`, `GainPlan`, `ReviewReason`, `DecideSettings`, `Codec` (sc-core `plan`), `LengthPolicy`, `SkipReason` (`AnalyseOnly`, `Silent`; with export: `WouldGetQuieter`, `UnsupportedFormat`, `UnsupportedChannels`, `DrmProtected`, `RekordboxUsbExport`, `SeratoTagsPresentInPlaceCut`, `GainFieldRange`, `Corrupt`, `Cancelled`), `JobEvent`, `IpcError`.
 
 ## Threading and IPC
 - Analysis workers: a fixed set of threads (default a quarter of the logical cores, at most 4; `--jobs` overrides; the beat model already spreads each file over every core, so on an 8-core M1 two workers are the fastest, 54x real time against 40x for one, and each worker adds about 440 MB), each with its own analyzer and beat model, taking files in order; each file runs decode -> loudness -> beats -> solver on one worker. Workers send events over a channel to the caller's thread, which forwards them: `Started`, progress at most every 100 ms, one terminal event per file (analysed, failed, cancelled), and a batch summary (done, total, ETA, x real time) at most every 500 ms. A failing file never stops the batch; a missing model stops it before any file. Records do not depend on the worker count. `analyze --no-grid` skips the model.

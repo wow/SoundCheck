@@ -3716,6 +3716,7 @@ dependencies = [
 name = "sc-engine"
 version = "0.0.3"
 dependencies = [
+ "criterion",
  "hound",
  "sc-analysis",
  "sc-core",
