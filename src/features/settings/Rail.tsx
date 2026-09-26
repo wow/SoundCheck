@@ -110,12 +110,26 @@ export function Rail() {
     <aside className="flex w-[300px] shrink-0 flex-col gap-[22px] overflow-y-auto border-l border-line bg-bg-1 px-[18px] pb-4 pt-[18px]">
       <Section title="Loudness">
         <Segmented label="Loudness mode" value={s.mode} options={MODES} onChange={s.setMode} />
-        <label className="flex flex-col gap-1">
+        <label className="relative flex flex-col gap-1">
           <span className="sr-only">Preset</span>
+          <svg
+            className="pointer-events-none absolute right-2.5 top-[9px]"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--sc-fg-2)"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M6 9l6 6 6-6" />
+          </svg>
           <select
             value={s.preset === 'custom' ? '' : s.preset}
             onChange={(e) => s.setPreset(e.target.value as Exclude<PresetId, 'custom'>)}
-            className="h-8 w-full rounded-[7px] border border-line bg-bg-1 px-2.5 text-[13px] text-fg-0"
+            className="h-8 w-full appearance-none rounded-[7px] border border-line bg-bg-1 pl-2.5 pr-8 text-[13px] text-fg-0"
             aria-label="Preset"
           >
             {s.preset === 'custom' && <option value="">{presetLabel(s)}</option>}

@@ -18,9 +18,17 @@ export function signed(value: number, digits = 1): string {
   return (value < 0 ? MINUS : '+') + text;
 }
 
-/** A LUFS or dBTP value as the table shows it: `-7.8` (hyphen, tabular). */
+/** A LUFS or dBTP value as the table shows it: `-7.8` (hyphen, tabular); never `-0.0`. */
 export function level(value: number | null | undefined, digits = 1): string {
-  return value == null ? '—' : value.toFixed(digits);
+  if (value == null) return '—';
+  const text = value.toFixed(digits);
+  return Number(text) === 0 ? (0).toFixed(digits) : text;
+}
+
+/** A true peak: like [`level`], with `+` above full scale (`+0.6`) so overs stand out. */
+export function peak(value: number | null | undefined): string {
+  const text = level(value);
+  return value != null && Number(text) > 0 ? `+${text}` : text;
 }
 
 export const CODEC_LABEL: Record<Codec, string> = {
@@ -89,6 +97,14 @@ export function actionText(plan: Plan): {
     return { main, detail: `Residual ${signed(gain.residualLu)} LU · MP3 moves in 1.5 dB steps`, tone: 'fg' };
   }
   if (gain.shortByLu > 0) {
+    // The peak already sits at (or above) the ceiling: no boost at all is possible.
+    if (Math.abs(gain.gainDb) < 0.05) {
+      return {
+        main: 'No boost: peak at the ceiling',
+        detail: `Short by ${gain.shortByLu.toFixed(1)} LU`,
+        tone: 'accent',
+      };
+    }
     return {
       main: `Gain ${signed(gain.gainDb)} dB`,
       detail: `Short by ${gain.shortByLu.toFixed(1)} LU: the ceiling is reached`,
