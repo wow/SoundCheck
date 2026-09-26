@@ -68,6 +68,11 @@ export function setDecideSettings(settings: DecideSettings): Promise<Replan> {
   return invoke<Replan>('set_decide_settings', { settings });
 }
 
+/** Empties the track list in the engine (running jobs are cancelled); files are not touched. */
+export function clearSession(): Promise<void> {
+  return invoke<void>('clear_session');
+}
+
 /** Everything the Rust session holds, for a window that reloads; running jobs are cancelled. */
 export function restoreSession(): Promise<SessionSnapshot> {
   return invoke<SessionSnapshot>('restore_session');

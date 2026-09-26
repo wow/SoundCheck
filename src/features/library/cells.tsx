@@ -166,12 +166,15 @@ export function BpmCell({ row }: { row: Row }) {
 
 export function ActionCell({ row, bpmRange }: { row: Row; bpmRange: [number, number] }) {
   if (row.state === 'error') {
+    const missing = row.error?.kind === 'io' && /no such file|not found/i.test(row.error.message);
     return (
       <div className="min-w-0">
         <div className="truncate text-[12.5px] font-medium text-err" title={row.error?.message}>
-          {row.error?.message ?? 'Could not analyse'}
+          {missing ? 'File not found' : (row.error?.message ?? 'Could not analyse')}
         </div>
-        <div className="truncate text-[11px] text-fg-2">Analyse again, or check the file</div>
+        <div className="truncate text-[11px] text-fg-2">
+          {missing ? 'Moved or deleted since it was added' : 'Analyse again, or check the file'}
+        </div>
       </div>
     );
   }

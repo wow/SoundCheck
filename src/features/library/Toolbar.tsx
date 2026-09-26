@@ -3,7 +3,7 @@ import { chooseFiles, chooseFolders } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 import { counts, staleIds, useLibrary, type Filter } from '@/state/library';
 import { useSettings } from '@/state/settings';
-import { addPaths, analyseStale } from '@/features/pipeline/actions';
+import { addPaths, analyseStale, clearList } from '@/features/pipeline/actions';
 
 const CHIPS: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -37,6 +37,7 @@ export function Toolbar({ busy }: { busy: boolean }) {
   const setQuery = useLibrary((s) => s.setQuery);
   const range = useSettings((s) => s.bpmRange);
   const stale = useLibrary((s) => staleIds(s, range).length);
+  const empty = c.all === 0;
   return (
     <header className="flex h-[52px] shrink-0 items-center gap-3 border-b border-line bg-bg-1 px-4">
       <div className="flex items-center gap-2 pr-3">
@@ -81,6 +82,15 @@ export function Toolbar({ busy }: { busy: boolean }) {
         />
         <span className="rounded border border-line px-1 font-mono text-[10px] leading-[15px] text-fg-2">⌘F</span>
       </label>
+      <button
+        type="button"
+        className={cn(button, 'border-transparent text-fg-2 hover:text-fg-0')}
+        disabled={empty}
+        onClick={() => void clearList()}
+        title="Removes every track from this list. The files are not touched."
+      >
+        Clear list
+      </button>
       <button type="button" className={cn(button, 'border-line text-fg-0 hover:bg-bg-2')} onClick={() => void chooseFolders().then(addPaths)}>
         Add folder
       </button>

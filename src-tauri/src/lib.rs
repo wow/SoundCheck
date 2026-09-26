@@ -81,6 +81,17 @@ async fn calibration_target(shell: State<'_, Shell>) -> Result<Option<Lufs>, Ipc
     blocking(move || Ok(shell.calibration_target())).await
 }
 
+/// Empties the track list (running jobs are cancelled); files on disk are not touched.
+#[tauri::command]
+async fn clear_session(shell: State<'_, Shell>) -> Result<(), IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || {
+        shell.clear();
+        Ok(())
+    })
+    .await
+}
+
 /// Every row the session holds, for a window that reloads; running jobs are cancelled.
 #[tauri::command]
 async fn restore_session(shell: State<'_, Shell>) -> Result<SessionSnapshot, IpcError> {
@@ -106,7 +117,8 @@ pub fn run() {
             cancel_job,
             set_decide_settings,
             calibration_target,
-            restore_session
+            restore_session,
+            clear_session
         ])
         .run(tauri::generate_context!())
         .expect("the Tauri runtime failed to start");

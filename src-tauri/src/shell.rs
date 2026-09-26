@@ -136,6 +136,15 @@ impl Shell {
         Ok(self.session().set_settings(settings)?)
     }
 
+    /// Empties the track list: running jobs are cancelled and every file is forgotten, so the
+    /// same files can be added again. The disk cache keeps their analyses.
+    pub fn clear(&self) {
+        for token in self.jobs().values() {
+            token.cancel();
+        }
+        self.session().clear();
+    }
+
     /// Everything the session holds, for a window that reloads. Jobs still running are
     /// cancelled: their events would go to a page that no longer listens.
     #[must_use]
@@ -314,6 +323,20 @@ mod tests {
             analysis,
         };
         assert!(shell.start(req, |_| {}).is_err());
+    }
+
+    #[test]
+    fn a_cleared_list_takes_the_same_files_again() {
+        let dir = tempfile::tempdir().unwrap();
+        tone_wav(dir.path(), "a.wav", 0.1);
+        let shell = Shell::new(None, 1);
+        let first = shell.expand(vec![dir.path().display().to_string()]);
+        assert_eq!(first.len(), 1);
+        shell.clear();
+        assert!(shell.restore().rows.is_empty());
+        let again = shell.expand(vec![dir.path().display().to_string()]);
+        assert_eq!(again.len(), 1);
+        assert_ne!(again[0].file_id, first[0].file_id, "ids are not reused");
     }
 
     #[test]

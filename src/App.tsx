@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useSelector } from '@xstate/react';
-import { restoreSession } from '@/lib/ipc';
 import { listenForDrops } from '@/lib/platform';
 import { useLibrary } from '@/state/library';
-import { useSettings } from '@/state/settings';
 import { EmptyState } from '@/features/library/EmptyState';
+import { startTrackListPersistence } from '@/features/library/remember';
 import { Footer } from '@/features/library/Footer';
 import { Table } from '@/features/library/Table';
 import { SEARCH_ID, Toolbar } from '@/features/library/Toolbar';
@@ -60,16 +59,7 @@ export default function App() {
 
   useKeys();
   useEffect(() => startSettingsSync(), []);
-  // After a reload the engine still holds the rows; show them again.
-  useEffect(() => {
-    restoreSession()
-      .then((snapshot) => {
-        if (snapshot?.rows?.length) {
-          useLibrary.getState().restore(snapshot, useSettings.getState().bpmRange);
-        }
-      })
-      .catch(() => {});
-  }, []);
+  useEffect(() => startTrackListPersistence(), []);
   useEffect(
     () =>
       listenForDrops(

@@ -74,6 +74,8 @@ interface LibraryState {
   /** Rebuilds the table from the engine's session after the window reloaded. */
   restore(snapshot: SessionSnapshot, range: [number, number]): void;
   setNotice(notice: string | null): void;
+  /** Empties the list (the engine forgets it too, through `clearList`). */
+  clear(): void;
   setFilter(filter: Filter): void;
   setQuery(query: string): void;
   select(fileId: number | null): void;
@@ -269,7 +271,9 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
         set({ aborted: event.error });
         break;
       case 'finished': {
-        const ids = job?.fileIds ?? [];
+        // A job that ends after the list was cleared leaves nothing to report.
+        if (!job) break;
+        const ids = job.fileIds;
         // Rows of this job still waiting (it was aborted or cancelled early) no longer are.
         const next = patchRows(
           rows,
@@ -287,7 +291,7 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
             review: mine.filter((r) => r.state === 'needsReview').length,
             failed: mine.filter((r) => r.state === 'error').length,
             cancelled: event.cancelled,
-            seconds: job ? (Date.now() - job.startedAt) / 1000 : 0,
+            seconds: (Date.now() - job.startedAt) / 1000,
           },
         });
         break;
@@ -335,6 +339,9 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
   },
   setNotice(notice) {
     set({ notice });
+  },
+  clear() {
+    set({ rows: {}, order: [], selected: null, job: null, lastBatch: null, aborted: null, filter: 'all', query: '' });
   },
   setFilter(filter) {
     set({ filter });
