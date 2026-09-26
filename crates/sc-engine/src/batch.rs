@@ -117,12 +117,15 @@ pub struct BatchSummary {
     pub was_cancelled: bool,
 }
 
-/// The default worker count: half the logical cores (the performance cores on Apple silicon),
-/// at most [`MAX_DEFAULT_WORKERS`].
+/// The default worker count: a quarter of the logical cores, at most [`MAX_DEFAULT_WORKERS`].
+///
+/// The beat model already spreads each file's inference over every core, so more files at once
+/// mostly add contention: on an 8-core M1, 20 tracks took 120 s with one worker, 88 s with two,
+/// 90 s with three and 94 s with four, while memory grew by about 440 MB per worker.
 #[must_use]
 pub fn default_workers() -> usize {
     std::thread::available_parallelism()
-        .map_or(1, |n| n.get() / 2)
+        .map_or(1, |n| n.get() / 4)
         .clamp(1, MAX_DEFAULT_WORKERS)
 }
 

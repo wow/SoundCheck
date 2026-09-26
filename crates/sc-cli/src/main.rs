@@ -78,8 +78,8 @@ enum Command {
         /// Neither read nor write the analysis cache.
         #[arg(long)]
         no_cache: bool,
-        /// Files analysed at once (default: half the logical cores, at most 4). Reports are
-        /// printed in the order the files were given.
+        /// Files analysed at once (default: a quarter of the logical cores, at most 4). Reports
+        /// are printed in the order the files were given.
         #[arg(long)]
         jobs: Option<usize>,
         #[command(flatten)]
