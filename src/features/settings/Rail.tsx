@@ -107,7 +107,7 @@ export function Rail() {
   const s = useSettings();
   const analysed = useLibrary((l) => Object.values(l.rows).some((r) => r.analysis?.shortTermP95 != null));
   return (
-    <aside className="flex w-[300px] shrink-0 flex-col gap-[22px] overflow-y-auto border-l border-line bg-bg-1 px-[18px] pb-4 pt-[18px]">
+    <aside className="flex w-[272px] shrink-0 flex-col xl:w-[300px] gap-[22px] overflow-y-auto border-l border-line bg-bg-1 px-[18px] pb-4 pt-[18px]">
       <Section title="Loudness">
         <Segmented label="Loudness mode" value={s.mode} options={MODES} onChange={s.setMode} />
         <label className="relative flex flex-col gap-1">

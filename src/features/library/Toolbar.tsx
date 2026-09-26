@@ -3,7 +3,7 @@ import { chooseFiles, chooseFolders } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 import { counts, staleIds, useLibrary, type Filter } from '@/state/library';
 import { useSettings } from '@/state/settings';
-import { addPaths, analyseStale, clearList } from '@/features/pipeline/actions';
+import { addPaths, analyseStale } from '@/features/pipeline/actions';
 
 const CHIPS: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -37,12 +37,11 @@ export function Toolbar({ busy }: { busy: boolean }) {
   const setQuery = useLibrary((s) => s.setQuery);
   const range = useSettings((s) => s.bpmRange);
   const stale = useLibrary((s) => staleIds(s, range).length);
-  const empty = c.all === 0;
   return (
-    <header className="flex h-[52px] shrink-0 items-center gap-3 border-b border-line bg-bg-1 px-4">
+    <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line bg-bg-1 px-4 xl:gap-3">
       <div className="flex items-center gap-2 pr-3">
         <Logo />
-        <span className="text-sm font-semibold tracking-tight">SoundCheck</span>
+        <span className="hidden text-sm font-semibold tracking-tight xl:inline">SoundCheck</span>
       </div>
       <nav aria-label="Filter tracks" className="flex items-center gap-1">
         {CHIPS.map((chip) => (
@@ -52,7 +51,7 @@ export function Toolbar({ busy }: { busy: boolean }) {
             aria-pressed={filter === chip.id}
             onClick={() => setFilter(chip.id)}
             className={cn(
-              'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12.5px] font-medium',
+              'inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-[12.5px] font-medium xl:px-2.5',
               filter === chip.id ? 'bg-bg-3 text-fg-0' : 'text-fg-1 hover:bg-bg-2',
             )}
           >
@@ -70,7 +69,7 @@ export function Toolbar({ busy }: { busy: boolean }) {
         ))}
       </nav>
       <div className="flex-1" />
-      <label className="flex h-[30px] w-56 items-center gap-2 rounded-[7px] border border-line bg-bg-0 px-2.5">
+      <label className="flex h-[30px] w-40 min-w-[120px] shrink items-center gap-2 rounded-[7px] border border-line bg-bg-0 px-2.5 xl:w-56">
         <span className="sr-only">Filter by name</span>
         <input
           id={SEARCH_ID}
@@ -80,17 +79,8 @@ export function Toolbar({ busy }: { busy: boolean }) {
           placeholder="Filter by name"
           className="min-w-0 flex-1 bg-transparent text-[13px] text-fg-0 outline-none placeholder:text-fg-2"
         />
-        <span className="rounded border border-line px-1 font-mono text-[10px] leading-[15px] text-fg-2">⌘F</span>
+        <span className="hidden rounded border border-line px-1 font-mono text-[10px] leading-[15px] text-fg-2 xl:inline">⌘F</span>
       </label>
-      <button
-        type="button"
-        className={cn(button, 'border-transparent text-fg-2 hover:text-fg-0')}
-        disabled={empty}
-        onClick={() => void clearList()}
-        title="Removes every track from this list. The files are not touched."
-      >
-        Clear list
-      </button>
       <button type="button" className={cn(button, 'border-line text-fg-0 hover:bg-bg-2')} onClick={() => void chooseFolders().then(addPaths)}>
         Add folder
       </button>
