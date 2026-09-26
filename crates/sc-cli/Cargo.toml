@@ -16,7 +16,6 @@ path = "src/main.rs"
 [dependencies]
 sc-core = { workspace = true }
 sc-io = { workspace = true }
-sc-analysis = { workspace = true }
 sc-engine = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }

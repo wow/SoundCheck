@@ -9,14 +9,15 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
-use sc_analysis::beats::{BEAT_MODEL_FILE, BEAT_MODEL_FULL_FILE, BeatTracker, find_model_dir};
-use sc_core::Bpm;
 use sc_core::analysis::{AnalysisSettings, Model};
 use sc_core::ipc::IpcError;
+use sc_core::{Bpm, Error};
+use sc_engine::{
+    AnalyzeReport, Analyzer, BatchFile, BatchSettings, CancelToken, EngineEvent, REPORT_SCHEMA,
+    Timings, default_workers, run_batch,
+};
 use sc_io::cache::Cache;
 use tracing_subscriber::EnvFilter;
-
-use sc_engine::{Analyzer, REPORT_SCHEMA, Timings};
 
 use crate::report::{ErrorReport, write_text};
 
@@ -77,6 +78,10 @@ enum Command {
         /// Neither read nor write the analysis cache.
         #[arg(long)]
         no_cache: bool,
+        /// Files analysed at once (default: half the logical cores, at most 4). Reports are
+        /// printed in the order the files were given.
+        #[arg(long)]
+        jobs: Option<usize>,
         #[command(flatten)]
         analysis: AnalysisArgs,
     },
@@ -150,6 +155,7 @@ fn main() -> anyhow::Result<()> {
             json,
             evidence,
             no_cache,
+            jobs,
             analysis,
         } => {
             let cache = if no_cache {
@@ -157,8 +163,12 @@ fn main() -> anyhow::Result<()> {
             } else {
                 Some(Cache::open(Cache::default_dir()?))
             };
-            let mut analyzer = analyzer(&analysis, cache);
-            let failed = analyze_all(&mut analyzer, &files, json, evidence)?;
+            let settings = BatchSettings {
+                analysis: settings(&analysis),
+                workers: jobs.unwrap_or_else(default_workers),
+                cache,
+            };
+            let failed = analyze_all(&settings, &files, json, evidence)?;
             if failed > 0 {
                 std::process::exit(EXIT_FAILED);
             }
@@ -201,57 +211,107 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-/// Builds the analyzer; a missing model stops the run before any file, with the directories
-/// searched and what to do.
-fn analyzer(args: &AnalysisArgs, cache: Option<Cache>) -> Analyzer {
-    let model = match args.model {
-        ModelArg::Small => Model::Small,
-        ModelArg::Full => Model::Full,
-    };
-    let settings = AnalysisSettings {
+/// The analysis settings the flags describe.
+fn settings(args: &AnalysisArgs) -> AnalysisSettings {
+    AnalysisSettings {
         bpm_range: (Bpm(args.bpm_range.0), Bpm(args.bpm_range.1)),
         grid: !args.no_grid,
-        model,
-    };
-    let tracker = if settings.grid {
-        let file = match model {
-            Model::Small => BEAT_MODEL_FILE,
-            Model::Full => BEAT_MODEL_FULL_FILE,
-        };
-        match find_model_dir().and_then(|dir| BeatTracker::load_named(&dir, file)) {
-            Ok(tracker) => Some(tracker),
-            Err(err) => {
-                eprintln!(
-                    "sc-cli: {err}\nrun scripts/fetch-models.sh (or set SC_MODEL_DIR), or pass --no-grid for loudness only"
-                );
-                std::process::exit(EXIT_FAILED);
-            }
-        }
-    } else {
-        None
-    };
-    Analyzer {
-        settings,
-        cache,
-        tracker,
+        model: match args.model {
+            ModelArg::Small => Model::Small,
+            ModelArg::Full => Model::Full,
+        },
     }
 }
 
-/// Analyses every file, printing as it goes; returns how many failed.
+/// Stops the run when the model cannot be loaded, saying what to do.
+fn model_error_exit(err: &Error) -> ! {
+    eprintln!(
+        "sc-cli: {err}\nrun scripts/fetch-models.sh (or set SC_MODEL_DIR), or pass --no-grid for loudness only"
+    );
+    std::process::exit(EXIT_FAILED);
+}
+
+/// Builds one analyzer (bench, eval); a missing model stops the run before any file.
+fn analyzer(args: &AnalysisArgs, cache: Option<Cache>) -> Analyzer {
+    Analyzer::load(settings(args), cache, CancelToken::new())
+        .unwrap_or_else(|err| model_error_exit(&err))
+}
+
+/// Analyses every file on the engine's workers, printing reports in the order the files were
+/// given; returns how many failed.
 fn analyze_all(
-    analyzer: &mut Analyzer,
+    settings: &BatchSettings,
     files: &[PathBuf],
     json: bool,
     evidence: bool,
 ) -> anyhow::Result<usize> {
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    let mut failed = 0;
-    for file in files {
-        match analyzer.analyze(file) {
+    let batch: Vec<BatchFile> = files
+        .iter()
+        .enumerate()
+        .map(|(i, path)| BatchFile {
+            file_id: u32::try_from(i).expect("fewer than 2^32 files on a command line"),
+            path: path.clone(),
+            duration_hint: None,
+        })
+        .collect();
+    let mut printer = InOrder {
+        files,
+        ready: (0..files.len()).map(|_| None).collect(),
+        next: 0,
+        json,
+        evidence,
+        failed: 0,
+        error: None,
+    };
+    if let Err(err) = run_batch(&batch, settings, &CancelToken::new(), &mut |event| {
+        printer.on_event(event);
+    }) {
+        model_error_exit(&err);
+    }
+    match printer.error {
+        Some(err) => Err(err),
+        None => Ok(printer.failed),
+    }
+}
+
+/// Prints each file's outcome once every file before it has been printed.
+struct InOrder<'a> {
+    files: &'a [PathBuf],
+    ready: Vec<Option<Result<AnalyzeReport, Error>>>,
+    next: usize,
+    json: bool,
+    evidence: bool,
+    failed: usize,
+    error: Option<anyhow::Error>,
+}
+
+impl InOrder<'_> {
+    fn on_event(&mut self, event: EngineEvent) {
+        let (file_id, outcome) = match event {
+            EngineEvent::Analysed { file_id, report } => (file_id, Ok(*report)),
+            EngineEvent::Failed { file_id, error } => (file_id, Err(error)),
+            EngineEvent::Cancelled { file_id } => (file_id, Err(Error::Cancelled)),
+            _ => return,
+        };
+        if let Some(slot) = self.ready.get_mut(file_id as usize) {
+            *slot = Some(outcome);
+        }
+        while let Some(outcome) = self.ready.get_mut(self.next).and_then(Option::take) {
+            let file = &self.files[self.next];
+            self.next += 1;
+            if let Err(err) = self.print(file, outcome) {
+                self.error.get_or_insert(err);
+            }
+        }
+    }
+
+    fn print(&mut self, file: &Path, outcome: Result<AnalyzeReport, Error>) -> anyhow::Result<()> {
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        match outcome {
             Ok(mut report) => {
-                if json {
-                    if !evidence {
+                if self.json {
+                    if !self.evidence {
                         report.record.evidence = None;
                     }
                     serde_json::to_writer_pretty(&mut out, &report)?;
@@ -261,9 +321,9 @@ fn analyze_all(
                 }
             }
             Err(err) => {
-                failed += 1;
+                self.failed += 1;
                 eprintln!("sc-cli: {err}");
-                if json {
+                if self.json {
                     let report = ErrorReport {
                         schema: REPORT_SCHEMA,
                         file: file.display().to_string(),
@@ -274,8 +334,8 @@ fn analyze_all(
                 }
             }
         }
+        Ok(())
     }
-    Ok(failed)
 }
 
 /// Picks one stage's time out of [`Timings`].

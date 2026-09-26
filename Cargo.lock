@@ -3659,6 +3659,7 @@ dependencies = [
 name = "sc-analysis"
 version = "0.0.3"
 dependencies = [
+ "anyhow",
  "approx",
  "beat-this",
  "criterion",
@@ -3679,7 +3680,6 @@ dependencies = [
  "clap",
  "hound",
  "predicates",
- "sc-analysis",
  "sc-core",
  "sc-engine",
  "sc-io",
@@ -3716,11 +3716,14 @@ dependencies = [
 name = "sc-engine"
 version = "0.0.3"
 dependencies = [
+ "hound",
  "sc-analysis",
  "sc-core",
  "sc-dsp",
  "sc-io",
  "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
