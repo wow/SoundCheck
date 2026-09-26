@@ -1,5 +1,5 @@
 import { createActor, type Actor } from 'xstate';
-import { analyze, calibrationTarget, cancelJob, expandPaths } from '@/lib/ipc';
+import { analyze, calibrationTarget, cancelJob, clearSession, expandPaths } from '@/lib/ipc';
 import { ask } from '@/lib/platform';
 import { useLibrary, staleIds } from '@/state/library';
 import { analysisSettings, useSettings } from '@/state/settings';
@@ -63,6 +63,13 @@ export async function addPaths(paths: string[]): Promise<void> {
 export function analyseStale(): void {
   const ids = staleIds(useLibrary.getState(), useSettings.getState().bpmRange);
   pipeline().send({ type: 'ANALYSE', fileIds: ids });
+}
+
+/** Empties the track list; the files on disk are not touched and their analyses stay cached. */
+export async function clearList(): Promise<void> {
+  pipeline().send({ type: 'CANCEL' });
+  await clearSession();
+  useLibrary.getState().clear();
 }
 
 /** Stops the running job. */

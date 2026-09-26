@@ -216,6 +216,10 @@ export function installMockBackend(): void {
         return -9.2;
       case 'restore_session':
         return { revision, rows: [] };
+      case 'clear_session':
+        analysed.clear();
+        entries.clear();
+        return null;
       case 'plugin:store|load':
         return 1;
       case 'plugin:store|get':

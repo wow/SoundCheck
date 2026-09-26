@@ -87,6 +87,13 @@ impl Session {
         added
     }
 
+    /// Forgets every file and its analysis (the disk cache keeps the analyses). Ids are never
+    /// reused, so events still in flight from a cancelled job cannot land on a new row.
+    pub fn clear(&mut self) {
+        self.files.clear();
+        self.by_path.clear();
+    }
+
     /// Files in the session.
     #[must_use]
     pub fn len(&self) -> usize {
