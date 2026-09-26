@@ -6,6 +6,7 @@
   "packageManager": "pnpm@11.3.0",
   "scripts": {
     "dev": "vite",
+    "dev:mock": "VITE_MOCK_IPC=1 vite",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",

@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use sc_core::Lufs;
-use sc_core::ipc::{AnalyzeRequest, FileEntry, JobEvent, JobId, RowPlan};
-use sc_core::plan::DecideSettings;
+use sc_core::ipc::{AnalyzeRequest, FileEntry, IpcError, JobEvent, JobId, Replan, SessionSnapshot};
+use sc_core::plan::{DecideSettings, check_bpm_range};
 use sc_engine::{
     BatchSettings, CancelToken, Session, collect_audio_files, default_workers, probe_all, run_job,
 };
@@ -78,11 +78,15 @@ impl Shell {
 
     /// Starts analysing `req.file_ids` on a background thread, sending every event to `send`;
     /// returns at once with the job's id.
+    ///
+    /// # Errors
+    /// An `invalidArgument` error, and no job, when the BPM range is out of its limits.
     pub fn start(
         &self,
         req: AnalyzeRequest,
         mut send: impl FnMut(JobEvent) + Send + 'static,
-    ) -> JobId {
+    ) -> Result<JobId, IpcError> {
+        check_bpm_range(req.analysis.bpm_range)?;
         let job_id = self.session().next_job_id();
         let cancel = CancelToken::new();
         self.jobs().insert(job_id, cancel.clone());
@@ -106,7 +110,7 @@ impl Shell {
                 shell.jobs().remove(&job_id);
             })
             .expect("the OS can start a thread for a job");
-        job_id
+        Ok(job_id)
     }
 
     /// Asks a running job to stop; `false` when no such job is running.
@@ -115,10 +119,22 @@ impl Shell {
         self.jobs().get(&job_id).map(CancelToken::cancel).is_some()
     }
 
-    /// Changes the decide settings; returns every analysed row's new plan.
+    /// Changes the decide settings; returns every analysed row's new plan and its revision.
+    ///
+    /// # Errors
+    /// An `invalidArgument` error when a value is out of its limits; nothing changes then.
+    pub fn set_decide_settings(&self, settings: DecideSettings) -> Result<Replan, IpcError> {
+        Ok(self.session().set_settings(settings)?)
+    }
+
+    /// Everything the session holds, for a window that reloads. Jobs still running are
+    /// cancelled: their events would go to a page that no longer listens.
     #[must_use]
-    pub fn set_decide_settings(&self, settings: DecideSettings) -> Vec<RowPlan> {
-        self.session().set_settings(settings)
+    pub fn restore(&self) -> SessionSnapshot {
+        for token in self.jobs().values() {
+            token.cancel();
+        }
+        self.session().snapshot()
     }
 
     /// The median S-P95 of the analysed rows, for "Calibrate from my library".
@@ -201,7 +217,7 @@ mod tests {
             file_ids: rows.iter().map(|r| r.file_id).collect(),
             analysis: loudness_only(),
         };
-        let job = shell.start(req, move |e| tx.send(e).unwrap());
+        let job = shell.start(req, move |e| tx.send(e).unwrap()).unwrap();
         let events = events_until_finished(&rx);
         assert!(
             matches!(events.last(), Some(JobEvent::Finished { job_id, cancelled: false }) if *job_id == job)
@@ -213,14 +229,20 @@ mod tests {
         assert_eq!(analysed, 2);
         assert!(!shell.cancel(job), "a finished job cannot be cancelled");
 
-        let plans = shell.set_decide_settings(DecideSettings::streaming());
-        assert_eq!(plans.len(), 2);
+        let replan = shell
+            .set_decide_settings(DecideSettings::streaming())
+            .unwrap();
+        assert_eq!(replan.plans.len(), 2);
         assert!(
-            plans
+            replan
+                .plans
                 .iter()
                 .all(|p| matches!(p.plan.gain, Some(GainPlan::Gain { .. })))
         );
         assert!(shell.calibration_target().is_some());
+        let snapshot = shell.restore();
+        assert_eq!(snapshot.rows.len(), 2);
+        assert!(snapshot.rows.iter().all(|r| r.plan.is_some()));
     }
 
     #[test]
@@ -232,40 +254,57 @@ mod tests {
         let shell = Shell::new(None, 1);
         let rows = shell.expand(vec![dir.path().display().to_string()]);
         let (tx, rx) = mpsc::channel();
+        let (gate_tx, gate_rx) = mpsc::channel::<()>();
         let req = AnalyzeRequest {
             file_ids: rows.iter().map(|r| r.file_id).collect(),
             analysis: loudness_only(),
         };
-        let job = shell.start(req, move |e| {
-            let _ = tx.send(e);
-        });
-        // Cancel as soon as the job is known to be running.
-        let first = rx.recv_timeout(Duration::from_secs(30)).unwrap();
-        assert!(matches!(first, JobEvent::Started { .. }), "{first:?}");
-        let cancelled_in_time = shell.cancel(job);
-        let mut events = vec![first];
-        events.extend(events_until_finished(&rx));
-        if cancelled_in_time {
-            assert!(matches!(
-                events.last(),
-                Some(JobEvent::Finished {
-                    cancelled: true,
-                    ..
-                })
-            ));
-        }
-        let terminal = events
-            .iter()
-            .filter(|e| {
-                matches!(
-                    e,
-                    JobEvent::Analysed { .. }
-                        | JobEvent::Cancelled { .. }
-                        | JobEvent::Failed { .. }
-                )
+        // Hold the job at its first event until Cancel has been pressed, so the cancel lands
+        // while at most the first file is in flight.
+        let mut gate = Some(gate_rx);
+        let job = shell
+            .start(req, move |e| {
+                let _ = tx.send(e);
+                if let Some(gate) = gate.take() {
+                    let _ = gate.recv();
+                }
             })
-            .count();
-        assert_eq!(terminal, 6, "every row ends");
+            .unwrap();
+        let started = rx.recv_timeout(Duration::from_secs(30)).unwrap();
+        assert!(matches!(started, JobEvent::Started { .. }), "{started:?}");
+        assert!(shell.cancel(job), "the job is running");
+        gate_tx.send(()).unwrap();
+        let events = events_until_finished(&rx);
+        assert!(matches!(
+            events.last(),
+            Some(JobEvent::Finished {
+                cancelled: true,
+                ..
+            })
+        ));
+        let count = |f: fn(&JobEvent) -> bool| events.iter().filter(|e| f(e)).count();
+        let cancelled = count(|e| matches!(e, JobEvent::Cancelled { .. }));
+        let analysed = count(|e| matches!(e, JobEvent::Analysed { .. }));
+        assert_eq!(cancelled + analysed, 6, "every row ends");
+        assert!(cancelled >= 4, "{cancelled} cancelled");
+    }
+
+    #[test]
+    fn out_of_range_settings_are_refused() {
+        let shell = Shell::new(None, 1);
+        let bad = DecideSettings {
+            ceiling: sc_core::DbTp(0.5),
+            ..DecideSettings::dj()
+        };
+        let err = shell.set_decide_settings(bad).unwrap_err();
+        assert_eq!(err.kind, sc_core::ipc::IpcErrorKind::InvalidArgument);
+        let mut analysis = loudness_only();
+        analysis.bpm_range = (Bpm(180.0), Bpm(70.0));
+        let req = AnalyzeRequest {
+            file_ids: vec![],
+            analysis,
+        };
+        assert!(shell.start(req, |_| {}).is_err());
     }
 
     #[test]

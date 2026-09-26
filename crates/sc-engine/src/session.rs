@@ -10,10 +10,13 @@ use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-use sc_core::Lufs;
 use sc_core::analysis::AnalysisRecord;
-use sc_core::ipc::{FileEntry, FileInfo, IpcError, JobEvent, JobId, RowAnalysis, RowPlan};
+use sc_core::ipc::{
+    FileEntry, FileInfo, IpcError, JobEvent, JobId, Replan, RowAnalysis, RowPlan, SessionRow,
+    SessionSnapshot,
+};
 use sc_core::plan::{DecideSettings, Plan};
+use sc_core::{Lufs, Result};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::analyze::CacheStatus;
@@ -36,6 +39,9 @@ pub struct Session {
     files: BTreeMap<u32, Tracked>,
     by_path: HashMap<String, u32>,
     settings: DecideSettings,
+    /// Increases with every settings change, so the UI keeps the newest plan of a row whose
+    /// analysis and a replan crossed on the way.
+    revision: u32,
 }
 
 impl Session {
@@ -48,6 +54,7 @@ impl Session {
             files: BTreeMap::new(),
             by_path: HashMap::new(),
             settings,
+            revision: 0,
         }
     }
 
@@ -119,10 +126,17 @@ impl Session {
         self.settings
     }
 
-    /// Changes the settings and returns every analysed row's new plan, by file id.
-    pub fn set_settings(&mut self, settings: DecideSettings) -> Vec<RowPlan> {
+    /// Changes the settings and returns every analysed row's new plan under a new revision.
+    ///
+    /// # Errors
+    /// [`sc_core::Error::InvalidArgument`] when a value is outside its limits; the settings stay
+    /// as they were.
+    pub fn set_settings(&mut self, settings: DecideSettings) -> Result<Replan> {
+        settings.validate()?;
         self.settings = settings;
-        self.files
+        self.revision += 1;
+        let plans = self
+            .files
             .values()
             .filter_map(|t| {
                 t.record.as_ref().map(|record| RowPlan {
@@ -130,7 +144,34 @@ impl Session {
                     plan: decide(record, t.entry.info.codec, &settings),
                 })
             })
-            .collect()
+            .collect();
+        Ok(Replan {
+            revision: self.revision,
+            plans,
+        })
+    }
+
+    /// Every row with its analysis and plan, for a window that reloads.
+    #[must_use]
+    pub fn snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            revision: self.revision,
+            rows: self
+                .files
+                .values()
+                .map(|t| SessionRow {
+                    entry: t.entry.clone(),
+                    row: t
+                        .record
+                        .as_ref()
+                        .map(|r| Box::new(RowAnalysis::from_record(r, true))),
+                    plan: t
+                        .record
+                        .as_ref()
+                        .map(|r| decide(r, t.entry.info.codec, &self.settings)),
+                })
+                .collect(),
+        }
     }
 
     /// The plan of one analysed file under the current settings.
@@ -192,6 +233,7 @@ impl Session {
                     file_id,
                     row,
                     plan,
+                    revision: self.revision,
                 }
             }
             EngineEvent::Failed { file_id, error } => JobEvent::Failed {

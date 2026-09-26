@@ -1,69 +1,128 @@
 import { useEffect, useState } from 'react';
-import { appVersion } from '@/lib/ipc';
+import { useSelector } from '@xstate/react';
+import { restoreSession } from '@/lib/ipc';
+import { listenForDrops } from '@/lib/platform';
+import { useLibrary } from '@/state/library';
+import { useSettings } from '@/state/settings';
+import { EmptyState } from '@/features/library/EmptyState';
+import { Footer } from '@/features/library/Footer';
+import { Table } from '@/features/library/Table';
+import { SEARCH_ID, Toolbar } from '@/features/library/Toolbar';
+import { addPaths, pipeline } from '@/features/pipeline/actions';
+import { Rail } from '@/features/settings/Rail';
+import { startSettingsSync } from '@/features/settings/sync';
 
-const PROMISES = [
-  {
-    title: 'Same loudness',
-    body: 'Every track lands on one DJ target, by gain only. If the ceiling would be hit, the row says how short it is.',
-  },
-  {
-    title: 'Fits the grid',
-    body: 'Beat 1 becomes the first sample with an exact BPM, so rekordbox, Serato and Traktor agree with it. 9/8 and 6/8 included.',
-  },
-  {
-    title: 'Nothing lost',
-    body: 'Every tag, cover and cue blob is carried byte for byte and verified after writing. Originals are backed up.',
-  },
-] as const;
+function isTyping(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement;
+}
 
-/** The empty state: the only screen until analysis lands. */
-export default function App() {
-  const [version, setVersion] = useState<string>('');
+/** Keys for the review loop: arrows move, N jumps to the next row that needs a look. */
+function useKeys() {
   useEffect(() => {
-    let cancelled = false;
-    appVersion()
-      .then((v) => {
-        if (!cancelled) setVersion(v);
-      })
-      .catch(() => {
-        if (!cancelled) setVersion('dev');
-      });
-    return () => {
-      cancelled = true;
+    const onKey = (e: KeyboardEvent) => {
+      const lib = useLibrary.getState();
+      if (e.metaKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        document.getElementById(SEARCH_ID)?.focus();
+        return;
+      }
+      if (isTyping(e.target)) {
+        if (e.key === 'Escape' && e.target instanceof HTMLInputElement && e.target.id === SEARCH_ID) {
+          lib.setQuery('');
+          e.target.blur();
+        }
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        lib.moveSelection(e.key === 'ArrowDown' ? 1 : -1);
+      } else if (e.key === 'n' || e.key === 'N') {
+        lib.selectNextReview();
+      } else if (e.key === 'Escape') {
+        lib.setFilter('all');
+        lib.setQuery('');
+      }
     };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
+}
+
+/** The main screen: toolbar, the table (or the drop target), the settings rail and the footer. */
+export default function App() {
+  const hasRows = useLibrary((s) => s.order.length > 0);
+  const aborted = useLibrary((s) => s.aborted);
+  const notice = useLibrary((s) => s.notice);
+  const review = useLibrary((s) => s.order.filter((id) => s.rows[id]?.state === 'needsReview').length);
+  const state = useSelector(pipeline(), (s) => s.value);
+  const [dropping, setDropping] = useState(false);
+
+  useKeys();
+  useEffect(() => startSettingsSync(), []);
+  // After a reload the engine still holds the rows; show them again.
+  useEffect(() => {
+    restoreSession()
+      .then((snapshot) => {
+        if (snapshot?.rows?.length) {
+          useLibrary.getState().restore(snapshot, useSettings.getState().bpmRange);
+        }
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(
+    () =>
+      listenForDrops(
+        (paths) => void addPaths(paths),
+        (hover) => setDropping(hover === 'over'),
+      ),
+    [],
+  );
 
   return (
-    <div className="flex h-full flex-col bg-bg-0 text-fg-0">
-      <header className="flex h-13 shrink-0 items-center gap-2 border-b border-line bg-bg-1 px-4">
-        <span className="inline-flex size-5 items-center justify-center rounded-md bg-accent" aria-hidden="true">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0c0e12" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 12h2l2-6 3 12 3-9 2 6 2-3h4" />
-          </svg>
-        </span>
-        <span className="text-sm font-semibold tracking-tight">SoundCheck</span>
-      </header>
-      <main className="flex flex-1 flex-col items-center justify-center gap-8 p-6">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">Drop a folder or tracks here</h1>
-          <p className="text-fg-2">WAV · AIFF · FLAC · MP3 — M4A, AAC, ALAC, Ogg and Opus are analysed only</p>
+    <div className="relative flex h-full flex-col bg-bg-0 text-fg-0">
+      <Toolbar busy={state !== 'idle'} />
+      <div className="flex min-h-0 flex-1">
+        <main className="flex min-w-0 flex-1 flex-col">
+          {notice && (
+            <div role="alert" className="border-b border-[rgba(251,191,36,.45)] bg-[rgba(251,191,36,.10)] px-4 py-2 text-[12.5px] text-warn">
+              {notice}
+            </div>
+          )}
+          {aborted && (
+            <div role="alert" className="border-b border-[rgba(248,113,113,.45)] bg-[rgba(248,113,113,.10)] px-4 py-2 text-[12.5px] text-err">
+              Analysis could not start: {aborted.message}
+            </div>
+          )}
+          {hasRows ? <Table /> : <EmptyState />}
+          {hasRows && (
+            <div className="flex h-8 shrink-0 items-center gap-4 border-t border-line px-4 text-[11.5px] text-fg-2">
+              <span>
+                <kbd className="font-mono">↑↓</kbd> row
+              </span>
+              <span>
+                <kbd className="font-mono">N</kbd> next needs review
+              </span>
+              <span>
+                <kbd className="font-mono">⌘F</kbd> filter
+              </span>
+              <div className="flex-1" />
+              {review > 0 && (
+                <span className="text-warn">
+                  {review === 1 ? '1 track needs' : `${review} tracks need`} a look before processing
+                </span>
+              )}
+            </div>
+          )}
+        </main>
+        <Rail />
+      </div>
+      <Footer cancelling={state === 'cancelling'} />
+      {dropping && (
+        <div className="pointer-events-none absolute inset-2 flex items-center justify-center rounded-[14px] border-2 border-dashed border-accent bg-[rgba(12,14,18,.75)] text-lg font-semibold">
+          Drop to add
         </div>
-        <ul className="flex gap-4">
-          {PROMISES.map((p) => (
-            <li key={p.title} className="flex w-64 flex-col gap-2 rounded-xl border border-line bg-bg-1 p-4">
-              <h2 className="text-sm font-semibold">{p.title}</h2>
-              <p className="text-fg-1">{p.body}</p>
-            </li>
-          ))}
-        </ul>
-        <p className="text-fg-2">Analysis first. Nothing is written until you press Process.</p>
-      </main>
-      <footer className="flex h-11 shrink-0 items-center border-t border-line bg-bg-1 px-4 text-xs text-fg-2">
-        <span>Open source · MIT OR Apache-2.0</span>
-        <span className="ml-auto font-mono" data-testid="version">
-          {version ? `v${version}` : ''}
-        </span>
-      </footer>
+      )}
     </div>
   );
 }

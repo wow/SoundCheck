@@ -44,7 +44,11 @@ row: RowAnalysis,
 /**
  * What processing would do.
  */
-plan: Plan, } | { "type": "failed", 
+plan: Plan, 
+/**
+ * The settings revision `plan` was decided with; a newer replan wins.
+ */
+revision: number, } | { "type": "failed", 
 /**
  * The job.
  */
