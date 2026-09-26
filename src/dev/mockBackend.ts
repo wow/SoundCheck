@@ -125,7 +125,6 @@ function planFor(s: Synthetic, a: RowAnalysis): Plan {
   const g = a.grid;
   if (g) {
     if (g.confidence !== 'green') review.push({ type: 'confidence' });
-    if (g.verdict === 'staticWarn') review.push({ type: 'checkGrid' });
     if (g.verdict === 'drifts') review.push({ type: 'drifts' });
     if (g.bpm < settings.bpmRange[0] || g.bpm > settings.bpmRange[1]) review.push({ type: 'outsideBpmRange' });
   }

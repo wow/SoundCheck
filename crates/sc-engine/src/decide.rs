@@ -100,7 +100,8 @@ fn gain_plan(desired: f64, true_peak: DbTp, ceiling: DbTp, mp3: bool) -> GainPla
 }
 
 /// What a human should check: an unsure grid, a moving tempo, a BPM the DJ app will not show
-/// as analysed, a contradicting tag, or no grid at all.
+/// as analysed, a contradicting tag, or no grid at all. A grid that fits with elevated residuals
+/// (`StaticWarn`) is not on the list; the table marks it in the BPM column instead.
 fn review_reasons(record: &AnalysisRecord, settings: &DecideSettings) -> Vec<ReviewReason> {
     let mut reasons = Vec::new();
     let Some(grid) = &record.grid else {
@@ -112,10 +113,10 @@ fn review_reasons(record: &AnalysisRecord, settings: &DecideSettings) -> Vec<Rev
     if grid.confidence != Confidence::Green {
         reasons.push(ReviewReason::Confidence);
     }
-    match grid.verdict {
-        Verdict::Static => {}
-        Verdict::StaticWarn => reasons.push(ReviewReason::CheckGrid),
-        Verdict::Drifts => reasons.push(ReviewReason::Drifts),
+    // Elevated residuals alone (StaticWarn) are shown in the BPM column, not queued for review:
+    // the grid fits, and on a real library a third of the tracks land there.
+    if grid.verdict == Verdict::Drifts {
+        reasons.push(ReviewReason::Drifts);
     }
     let (lo, hi) = settings.bpm_range;
     if grid.bpm.0 < lo.0 || grid.bpm.0 > hi.0 {
@@ -413,8 +414,16 @@ mod tests {
         let r = with_grid(base.clone(), 128.0, Confidence::Amber, Verdict::StaticWarn);
         assert_eq!(
             decide(&r, Codec::Flac, &dj).review,
-            vec![ReviewReason::Confidence, ReviewReason::CheckGrid]
+            vec![ReviewReason::Confidence]
         );
+        let r = with_grid(base.clone(), 128.0, Confidence::Green, Verdict::StaticWarn);
+        let p = decide(&r, Codec::Flac, &dj);
+        assert!(
+            p.review.is_empty(),
+            "elevated residuals alone: {:?}",
+            p.review
+        );
+        assert_eq!(p.status, JobStage::Analysed);
         let r = with_grid(base.clone(), 128.0, Confidence::Green, Verdict::Drifts);
         assert_eq!(
             decide(&r, Codec::Flac, &dj).review,

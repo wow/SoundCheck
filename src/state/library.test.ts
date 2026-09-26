@@ -32,7 +32,7 @@ describe('library store', () => {
     const lib = useLibrary.getState();
     lib.add([entry(1, 'Alpha'), entry(2, 'Beta'), entry(3, 'Gamma'), entry(4, 'Delta')]);
     lib.applyEvent(analysed(1));
-    lib.applyEvent(analysed(2, plan({ status: 'needsReview', review: [{ type: 'checkGrid' }] })));
+    lib.applyEvent(analysed(2, plan({ status: 'needsReview', review: [{ type: 'drifts' }] })));
     lib.applyEvent(
       analysed(3, plan({ gain: { type: 'gain', gainDb: 1.2, shortByLu: 1.8, truePeakAfter: -0.5 } })),
     );

@@ -247,8 +247,6 @@ pub enum SkipReason {
 pub enum ReviewReason {
     /// The grid's confidence is amber or red; the grid's own reasons say why.
     Confidence,
-    /// The grid fits, but its residuals are elevated.
-    CheckGrid,
     /// The tempo moves; a static grid will not fit everywhere.
     Drifts,
     /// The BPM lies outside the DJ app's range.

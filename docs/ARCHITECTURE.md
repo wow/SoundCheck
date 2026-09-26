@@ -34,7 +34,7 @@ ANALYSE (streamed; cached)
 
 DECIDE (pure, about 28 ns per row): decide(AnalysisRecord, Codec, DecideSettings{mode: DJ|Streaming, target, ceiling, bpm_range})
   -> Plan { measured, gain: Gain{gain_db, short_by_lu, true_peak_after} | GlobalGain{steps, gain_db, residual_lu} (MP3, 1.5051 dB steps) | AtTarget,
-            skip: AnalyseOnly{codec} | Silent, review: [Confidence | CheckGrid | Drifts | OutsideBpmRange | TagBpmDisagrees{tag} | NoGrid], status }
+            skip: AnalyseOnly{codec} | Silent, review: [Confidence | Drifts | OutsideBpmRange | TagBpmDisagrees{tag} | NoGrid] (a grid that fits with elevated residuals is marked "check" in the BPM column, not queued), status }
   turning down is always allowed; a boost stops at the true-peak ceiling and the rest is "short by"; export adds batch_mode, length policy, tags and XML
 
 RENDER (streamed)

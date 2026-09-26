@@ -200,7 +200,6 @@ fn review(reason: &ReviewReason, record: &AnalysisRecord, settings: &DecideSetti
                 .collect();
             format!("low confidence ({})", why.join(", "))
         }
-        ReviewReason::CheckGrid => "check grid".to_owned(),
         ReviewReason::Drifts => "drifts".to_owned(),
         ReviewReason::OutsideBpmRange => format!(
             "BPM outside {:.0}-{:.0}",
