@@ -3,16 +3,8 @@ import { useShallow } from 'zustand/react/shallow';
 import { cn } from '@/lib/utils';
 import { useLibrary, visibleIds } from '@/state/library';
 import { useSettings } from '@/state/settings';
-import { COLUMNS, NAME_MIN, rowDomId } from './columns';
-import {
-  ActionCell,
-  BpmCell,
-  LoudnessCell,
-  NameCell,
-  SpecCell,
-  StatusPill,
-  TpCell,
-} from './cells';
+import { layoutFor, minWidth, rowDomId, type Layout } from './columns';
+import { ActionCell, BpmCell, LoudnessCell, NameCell, SpecCell, StatusPill, TpCell } from './cells';
 
 /** Row height in px; rows are fixed-height so only the visible ones are rendered. */
 export const ROW_HEIGHT = 44;
@@ -20,17 +12,43 @@ const OVERSCAN = 8;
 /** Rows rendered before the viewport has been measured. */
 const MIN_ROWS = 20;
 
-function Cell({ width, children, className }: { width?: number; children: ReactNode; className?: string }) {
-  const style: CSSProperties = width ? { width, flexShrink: 0 } : { flex: '1 1 0', minWidth: NAME_MIN };
+function Cell({
+  width,
+  nameMin,
+  children,
+  className,
+}: {
+  width?: number;
+  nameMin?: number;
+  children: ReactNode;
+  className?: string;
+}) {
+  const style: CSSProperties = width
+    ? { width, flexShrink: 0 }
+    : { flex: '1 1 0', minWidth: nameMin };
   return (
-    <div role="cell" className={cn('flex items-center overflow-hidden px-2.5', className)} style={style}>
+    <div
+      role="cell"
+      className={cn('flex items-center overflow-hidden px-2.5', className)}
+      style={style}
+    >
       {children}
     </div>
   );
 }
 
-function HeaderCell({ width, children }: { width?: number; children: ReactNode }) {
-  const style: CSSProperties = width ? { width, flexShrink: 0 } : { flex: '1 1 0', minWidth: NAME_MIN };
+function HeaderCell({
+  width,
+  nameMin,
+  children,
+}: {
+  width?: number;
+  nameMin?: number;
+  children: ReactNode;
+}) {
+  const style: CSSProperties = width
+    ? { width, flexShrink: 0 }
+    : { flex: '1 1 0', minWidth: nameMin };
   return (
     <div
       role="columnheader"
@@ -42,7 +60,17 @@ function HeaderCell({ width, children }: { width?: number; children: ReactNode }
   );
 }
 
-function TrackRow({ id, index, top }: { id: number; index: number; top: number }) {
+function TrackRow({
+  id,
+  index,
+  top,
+  layout,
+}: {
+  id: number;
+  index: number;
+  top: number;
+  layout: Layout;
+}) {
   const row = useLibrary((s) => s.rows[id]);
   const selected = useLibrary((s) => s.selected === id);
   const select = useLibrary((s) => s.select);
@@ -66,25 +94,27 @@ function TrackRow({ id, index, top }: { id: number; index: number; top: number }
       )}
       style={{ top, height: ROW_HEIGHT }}
     >
-      <Cell>
-        <NameCell row={row} />
+      <Cell nameMin={layout.nameMin}>
+        <NameCell row={row} flagUnsafe={layout.spec === null} />
       </Cell>
-      <Cell width={COLUMNS.spec}>
-        <SpecCell row={row} />
+      {layout.spec !== null && (
+        <Cell width={layout.spec}>
+          <SpecCell row={row} />
+        </Cell>
+      )}
+      <Cell width={layout.loudness}>
+        <LoudnessCell row={row} target={target} bar={layout.bar} />
       </Cell>
-      <Cell width={COLUMNS.loudness}>
-        <LoudnessCell row={row} target={target} />
-      </Cell>
-      <Cell width={COLUMNS.tp}>
+      <Cell width={layout.tp}>
         <TpCell row={row} ceiling={ceiling} />
       </Cell>
-      <Cell width={COLUMNS.bpm}>
+      <Cell width={layout.bpm}>
         <BpmCell row={row} />
       </Cell>
-      <Cell width={COLUMNS.action}>
+      <Cell width={layout.action}>
         <ActionCell row={row} bpmRange={bpmRange} />
       </Cell>
-      <Cell width={COLUMNS.status}>
+      <Cell width={layout.status}>
         <StatusPill row={row} />
       </Cell>
     </div>
@@ -97,17 +127,27 @@ export function Table() {
   const selected = useLibrary((s) => s.selected);
   const mode = useSettings((s) => s.mode);
   const ref = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
+  const [width, setWidth] = useState(0);
+  const layout = layoutFor(width);
 
   useLayoutEffect(() => {
     const el = ref.current;
-    if (!el) return;
-    const measure = () => setHeight(el.clientHeight);
+    const grid = gridRef.current;
+    if (!el || !grid) return;
+    // Height from the scrolling body; width from the grid, which follows the window even when
+    // the rows inside have reached their minimum width.
+    const measure = () => {
+      setHeight(el.clientHeight);
+      setWidth(grid.clientWidth);
+    };
     measure();
     if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(measure);
     ro.observe(el);
+    ro.observe(grid);
     return () => ro.disconnect();
   }, []);
 
@@ -132,39 +172,60 @@ export function Table() {
 
   return (
     <div
+      ref={gridRef}
       role="grid"
       aria-label="Tracks"
       aria-rowcount={ids.length + 1}
       aria-readonly="true"
       className="flex min-h-0 flex-1 flex-col overflow-x-auto"
     >
-      <div className="flex min-h-0 min-w-[1046px] flex-1 flex-col">
-        <div role="row" aria-rowindex={1} className="flex h-[34px] shrink-0 items-center border-b border-line bg-bg-1">
-          <HeaderCell>Name</HeaderCell>
-          <HeaderCell width={COLUMNS.spec}>Spec</HeaderCell>
-          <HeaderCell width={COLUMNS.loudness}>
-            {mode === 'dj' ? 'Loudness · S-P95' : 'Loudness · Integrated'}
+      <div className="flex min-h-0 flex-1 flex-col" style={{ minWidth: minWidth(layout) }}>
+        <div
+          role="row"
+          aria-rowindex={1}
+          className="flex h-[34px] shrink-0 items-center border-b border-line bg-bg-1"
+        >
+          <HeaderCell nameMin={layout.nameMin}>Name</HeaderCell>
+          {layout.spec !== null && <HeaderCell width={layout.spec}>Spec</HeaderCell>}
+          <HeaderCell width={layout.loudness}>
+            {mode === 'dj'
+              ? layout.compact
+                ? 'S-P95'
+                : 'Loudness · S-P95'
+              : layout.compact
+                ? 'Integrated'
+                : 'Loudness · Integrated'}
           </HeaderCell>
-          <HeaderCell width={COLUMNS.tp}>TP</HeaderCell>
-          <HeaderCell width={COLUMNS.bpm}>BPM</HeaderCell>
-          <HeaderCell width={COLUMNS.action}>Action</HeaderCell>
-          <HeaderCell width={COLUMNS.status}>Status</HeaderCell>
+          <HeaderCell width={layout.tp}>TP</HeaderCell>
+          <HeaderCell width={layout.bpm}>BPM</HeaderCell>
+          <HeaderCell width={layout.action}>Action</HeaderCell>
+          <HeaderCell width={layout.status}>Status</HeaderCell>
         </div>
         <div
           ref={ref}
           role="rowgroup"
           tabIndex={0}
-          aria-activedescendant={selected !== null && ids.includes(selected) ? rowDomId(selected) : undefined}
+          aria-activedescendant={
+            selected !== null && ids.includes(selected) ? rowDomId(selected) : undefined
+          }
           className="relative min-h-0 flex-1 overflow-y-auto focus-visible:outline-offset-[-2px]"
           onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
           data-testid="table-body"
         >
           <div style={{ height: ids.length * ROW_HEIGHT }} />
           {ids.slice(first, last).map((id, k) => (
-            <TrackRow key={id} id={id} index={first + k} top={(first + k) * ROW_HEIGHT} />
+            <TrackRow
+              key={id}
+              id={id}
+              index={first + k}
+              top={(first + k) * ROW_HEIGHT}
+              layout={layout}
+            />
           ))}
           {ids.length === 0 && (
-            <div className="absolute inset-x-0 top-10 text-center text-fg-2">No tracks match this filter.</div>
+            <div className="absolute inset-x-0 top-10 text-center text-fg-2">
+              No tracks match this filter.
+            </div>
           )}
         </div>
       </div>

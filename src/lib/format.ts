@@ -100,8 +100,8 @@ export function actionText(plan: Plan): {
     // The peak already sits at (or above) the ceiling: no boost at all is possible.
     if (Math.abs(gain.gainDb) < 0.05) {
       return {
-        main: 'No boost: peak at the ceiling',
-        detail: `Short by ${gain.shortByLu.toFixed(1)} LU`,
+        main: 'No boost possible',
+        detail: `Peak at the ceiling · short by ${gain.shortByLu.toFixed(1)} LU`,
         tone: 'accent',
       };
     }

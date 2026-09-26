@@ -13,7 +13,11 @@ describe('format', () => {
 
   it('says there is no boost when the peak already sits at the ceiling', () => {
     const a = actionText(plan({ gain: { type: 'gain', gainDb: 0, shortByLu: 2, truePeakAfter: -0.3 } }));
-    expect(a).toMatchObject({ main: 'No boost: peak at the ceiling', detail: 'Short by 2.0 LU', tone: 'accent' });
+    expect(a).toMatchObject({
+      main: 'No boost possible',
+      detail: 'Peak at the ceiling · short by 2.0 LU',
+      tone: 'accent',
+    });
     const b = actionText(plan({ gain: { type: 'gain', gainDb: 1.7, shortByLu: 3.9, truePeakAfter: -0.5 } }));
     expect(b.main).toBe('Gain +1.7 dB');
     expect(b.detail).toBe('Short by 3.9 LU: the ceiling is reached');

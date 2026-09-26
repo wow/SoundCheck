@@ -31,7 +31,13 @@ const RING: Record<Confidence, { stroke: string; fill: string; label: string }> 
 export function ConfidenceRing({ confidence }: { confidence: Confidence }) {
   const r = RING[confidence];
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" role="img" aria-label={`Grid confidence: ${r.label}`}>
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      role="img"
+      aria-label={`Grid confidence: ${r.label}`}
+    >
       <circle cx="7" cy="7" r="5.5" fill={r.fill} stroke={r.stroke} strokeWidth="2" />
     </svg>
   );
@@ -72,11 +78,22 @@ function Dash() {
   return <span className="font-mono text-fg-2">—</span>;
 }
 
-export function NameCell({ row }: { row: Row }) {
+export function NameCell({ row, flagUnsafe = false }: { row: Row; flagUnsafe?: boolean }) {
   const { info, path } = row.entry;
   return (
     <div className="flex min-w-0 items-center gap-2.5">
-      <CodecBadge codec={info.codec} />
+      <span className="relative">
+        <CodecBadge codec={info.codec} />
+        {flagUnsafe && info.djUnsafe && (
+          <span
+            className="absolute -right-1.5 -top-1.5 text-[11px] font-bold text-warn"
+            title={DJ_UNSAFE_TEXT[info.djUnsafe]}
+            aria-label={DJ_UNSAFE_TEXT[info.djUnsafe]}
+          >
+            !
+          </span>
+        )}
+      </span>
       <div className="min-w-0">
         <div className="truncate font-medium" title={path}>
           {displayTitle(info, path)}
@@ -93,7 +110,11 @@ export function SpecCell({ row }: { row: Row }) {
     <span className="flex items-center gap-1 whitespace-nowrap font-mono text-xs font-medium text-fg-1">
       {specText(info)}
       {info.djUnsafe && (
-        <span className="text-warn" title={DJ_UNSAFE_TEXT[info.djUnsafe]} aria-label={DJ_UNSAFE_TEXT[info.djUnsafe]}>
+        <span
+          className="text-warn"
+          title={DJ_UNSAFE_TEXT[info.djUnsafe]}
+          aria-label={DJ_UNSAFE_TEXT[info.djUnsafe]}
+        >
           !
         </span>
       )}
@@ -101,7 +122,15 @@ export function SpecCell({ row }: { row: Row }) {
   );
 }
 
-export function LoudnessCell({ row, target }: { row: Row; target: number }) {
+export function LoudnessCell({
+  row,
+  target,
+  bar = true,
+}: {
+  row: Row;
+  target: number;
+  bar?: boolean;
+}) {
   const measured = row.plan?.measured;
   if (measured == null) return <Dash />;
   const delta = target - measured;
@@ -111,12 +140,17 @@ export function LoudnessCell({ row, target }: { row: Row; target: number }) {
       <span className="font-mono text-[13px] font-medium">{level(measured)}</span>
       <span className="text-fg-2">→</span>
       <span className="font-mono text-[13px] font-medium text-fg-2">{level(target)}</span>
-      <span className="relative inline-block h-1 w-[60px] overflow-hidden rounded-sm bg-bg-3" aria-hidden="true">
+      {bar && (
         <span
-          className={cn('absolute top-0 h-full', isShort(row) ? 'bg-accent' : 'bg-accent-2')}
-          style={delta >= 0 ? { left: 30, width } : { right: 30, width }}
-        />
-      </span>
+          className="relative inline-block h-1 w-[60px] overflow-hidden rounded-sm bg-bg-3"
+          aria-hidden="true"
+        >
+          <span
+            className={cn('absolute top-0 h-full', isShort(row) ? 'bg-accent' : 'bg-accent-2')}
+            style={delta >= 0 ? { left: 30, width } : { right: 30, width }}
+          />
+        </span>
+      )}
     </div>
   );
 }
@@ -148,7 +182,10 @@ export function BpmCell({ row }: { row: Row }) {
       <ConfidenceRing confidence={grid.confidence} />
       <span className="font-mono text-[13px] font-medium">{grid.bpm.toFixed(2)}</span>
       {octave && (
-        <span className="font-mono text-[11px] text-warn" title="Half or double the tempo fits almost as well">
+        <span
+          className="font-mono text-[11px] text-warn"
+          title="Half or double the tempo fits almost as well"
+        >
           ÷2 ×2?
         </span>
       )}

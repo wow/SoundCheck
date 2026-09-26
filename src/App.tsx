@@ -7,7 +7,7 @@ import { startTrackListPersistence } from '@/features/library/remember';
 import { Footer } from '@/features/library/Footer';
 import { Table } from '@/features/library/Table';
 import { SEARCH_ID, Toolbar } from '@/features/library/Toolbar';
-import { addPaths, pipeline } from '@/features/pipeline/actions';
+import { addPaths, clearList, pipeline } from '@/features/pipeline/actions';
 import { Rail } from '@/features/settings/Rail';
 import { startSettingsSync } from '@/features/settings/sync';
 
@@ -102,6 +102,14 @@ export default function App() {
                   {review === 1 ? '1 track needs' : `${review} tracks need`} a look before processing
                 </span>
               )}
+              <button
+                type="button"
+                onClick={() => void clearList()}
+                className="text-fg-2 hover:text-fg-0"
+                title="Removes every track from this list. The files are not touched."
+              >
+                Clear list
+              </button>
             </div>
           )}
         </main>
