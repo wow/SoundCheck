@@ -201,9 +201,9 @@ fn one_and_four_workers_give_identical_records() {
         run(&files, &settings(workers, None), &CancelToken::new())
             .into_iter()
             .filter_map(|e| match e {
-                EngineEvent::Analysed { file_id, report } => {
-                    Some((file_id, serde_json::to_value(&report.record).unwrap()))
-                }
+                EngineEvent::Analysed {
+                    file_id, report, ..
+                } => Some((file_id, serde_json::to_value(&report.record).unwrap())),
                 _ => None,
             })
             .collect::<BTreeMap<_, _>>()

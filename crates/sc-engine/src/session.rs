@@ -2,8 +2,9 @@
 //! the latest analysis of each, and the decide settings. Keeping it here, next to the pipeline,
 //! leaves the Tauri shell a thin wrapper and makes every IPC event testable without a window.
 //!
-//! Records are kept without their grid evidence (the model beats and activations, about 100 KB a
-//! track); the disk cache holds it for the grid view.
+//! Records are kept without their grid evidence (the model beats, activations and onsets, about
+//! 150 KB a track); the disk cache holds it for the grid view. A saved grid edit replaces the
+//! analysed grid before the evidence is dropped, and a confirmed grid needs no review.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -17,18 +18,46 @@ use sc_core::ipc::{
 };
 use sc_core::plan::{DecideSettings, Plan};
 use sc_core::{Lufs, Result};
+use sc_io::edits::EditStore;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::analyze::CacheStatus;
 use crate::batch::{BatchFile, BatchSettings, EngineEvent, run_batch};
 use crate::cancel::CancelToken;
 use crate::decide::decide;
+use crate::edits::{EditState, apply_saved};
 
 /// One file the user added.
 #[derive(Debug, Clone)]
 struct Tracked {
     entry: FileEntry,
     record: Option<AnalysisRecord>,
+    edit: EditState,
+}
+
+impl Tracked {
+    fn plan(&self, settings: &DecideSettings) -> Option<Plan> {
+        let record = self.record.as_ref()?;
+        Some(decide(
+            record,
+            self.entry.info.codec,
+            settings,
+            self.edit.confirmed,
+        ))
+    }
+
+    fn row(&self, cached: bool) -> Option<RowAnalysis> {
+        Some(row_of(self.record.as_ref()?, self.edit, cached))
+    }
+}
+
+/// The table row of `record`, whose grid carries `edit`.
+fn row_of(record: &AnalysisRecord, edit: EditState, cached: bool) -> RowAnalysis {
+    RowAnalysis {
+        edited: edit.edited,
+        confirmed: edit.confirmed,
+        ..RowAnalysis::from_record(record, cached)
+    }
 }
 
 /// Files, analyses and settings of one app session.
@@ -42,6 +71,8 @@ pub struct Session {
     /// Increases with every settings change, so the UI keeps the newest plan of a row whose
     /// analysis and a replan crossed on the way.
     revision: u32,
+    /// Where the user's grid edits are saved; `None` applies none.
+    edits: Option<EditStore>,
 }
 
 impl Session {
@@ -55,7 +86,15 @@ impl Session {
             by_path: HashMap::new(),
             settings,
             revision: 0,
+            edits: None,
         }
+    }
+
+    /// The session whose jobs apply the grid edits saved in `store` to every analysis.
+    #[must_use]
+    pub fn with_edits(mut self, store: EditStore) -> Self {
+        self.edits = Some(store);
+        self
     }
 
     /// Adds probed files, in order, skipping any already in the session (by NFC path); returns
@@ -80,6 +119,7 @@ impl Session {
                 Tracked {
                     entry: entry.clone(),
                     record: None,
+                    edit: EditState::default(),
                 },
             );
             added.push(entry);
@@ -146,9 +186,9 @@ impl Session {
             .files
             .values()
             .filter_map(|t| {
-                t.record.as_ref().map(|record| RowPlan {
+                t.plan(&settings).map(|plan| RowPlan {
                     file_id: t.entry.file_id,
-                    plan: decide(record, t.entry.info.codec, &settings),
+                    plan,
                 })
             })
             .collect();
@@ -168,14 +208,8 @@ impl Session {
                 .values()
                 .map(|t| SessionRow {
                     entry: t.entry.clone(),
-                    row: t
-                        .record
-                        .as_ref()
-                        .map(|r| Box::new(RowAnalysis::from_record(r, true))),
-                    plan: t
-                        .record
-                        .as_ref()
-                        .map(|r| decide(r, t.entry.info.codec, &self.settings)),
+                    row: t.row(true).map(Box::new),
+                    plan: t.plan(&self.settings),
                 })
                 .collect(),
         }
@@ -184,9 +218,7 @@ impl Session {
     /// The plan of one analysed file under the current settings.
     #[must_use]
     pub fn plan(&self, file_id: u32) -> Option<Plan> {
-        let t = self.files.get(&file_id)?;
-        let record = t.record.as_ref()?;
-        Some(decide(record, t.entry.info.codec, &self.settings))
+        self.files.get(&file_id)?.plan(&self.settings)
     }
 
     /// The median S-P95 of the analysed rows: what "Calibrate from my library" sets the DJ target
@@ -220,20 +252,22 @@ impl Session {
                 file_id,
                 fraction,
             },
-            EngineEvent::Analysed { file_id, report } => {
+            EngineEvent::Analysed {
+                file_id,
+                report,
+                edit,
+            } => {
                 let mut record = report.record;
                 record.evidence = None;
-                let row = Box::new(RowAnalysis::from_record(
-                    &record,
-                    report.cache == CacheStatus::Hit,
-                ));
                 let codec = self
                     .files
                     .get(&file_id)
                     .map_or(sc_core::plan::Codec::Other, |t| t.entry.info.codec);
-                let plan = decide(&record, codec, &self.settings);
+                let row = Box::new(row_of(&record, edit, report.cache == CacheStatus::Hit));
+                let plan = decide(&record, codec, &self.settings, edit.confirmed);
                 if let Some(t) = self.files.get_mut(&file_id) {
                     t.record = Some(record);
+                    t.edit = edit;
                 }
                 JobEvent::Analysed {
                     job_id,
@@ -278,8 +312,15 @@ pub fn run_job(
     send: &mut dyn FnMut(JobEvent),
 ) {
     let lock = || session.lock().unwrap_or_else(PoisonError::into_inner);
-    let files = lock().batch(file_ids);
-    let result = run_batch(&files, settings, cancel, &mut |event| {
+    let (files, edits) = {
+        let s = lock();
+        (s.batch(file_ids), s.edits.clone())
+    };
+    let result = run_batch(&files, settings, cancel, &mut |mut event| {
+        // The saved edit is read and refitted before the session is locked.
+        if let (EngineEvent::Analysed { report, edit, .. }, Some(store)) = (&mut event, &edits) {
+            *edit = apply_saved(&mut report.record, store);
+        }
         let ipc = lock().on_engine_event(job_id, event);
         send(ipc);
     });

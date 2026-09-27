@@ -13,6 +13,7 @@ use sc_engine::{
     BatchSettings, CancelToken, Session, collect_audio_files, default_workers, probe_all, run_job,
 };
 use sc_io::cache::Cache;
+use sc_io::edits::EditStore;
 
 /// State shared by every command.
 #[derive(Clone)]
@@ -29,12 +30,18 @@ struct Inner {
 
 impl Shell {
     /// A shell with an empty session deciding with the DJ defaults (the UI sends its persisted
-    /// settings at start), analysing on `workers` threads with `cache`.
+    /// settings at start), analysing on `workers` threads with `cache` and applying the grid
+    /// edits saved in `edits`.
     #[must_use]
-    pub fn new(cache: Option<Cache>, workers: usize) -> Self {
+    pub fn new(cache: Option<Cache>, edits: Option<EditStore>, workers: usize) -> Self {
+        let session = Session::new(DecideSettings::dj());
+        let session = match edits {
+            Some(store) => session.with_edits(store),
+            None => session,
+        };
         Self {
             inner: Arc::new(Inner {
-                session: Mutex::new(Session::new(DecideSettings::dj())),
+                session: Mutex::new(session),
                 jobs: Mutex::new(HashMap::new()),
                 cache,
                 workers,
@@ -42,11 +49,13 @@ impl Shell {
         }
     }
 
-    /// The shell the app runs: the user's analysis cache and the default worker count.
+    /// The shell the app runs: the user's analysis cache and saved grid edits, and the default
+    /// worker count.
     #[must_use]
     pub fn for_app() -> Self {
         Self::new(
             Cache::default_dir().ok().map(Cache::open),
+            EditStore::default_dir().ok().map(EditStore::open),
             default_workers(),
         )
     }
@@ -219,7 +228,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         tone_wav(dir.path(), "a.wav", 0.1);
         tone_wav(dir.path(), "b.wav", 0.3);
-        let shell = Shell::new(None, 2);
+        let shell = Shell::new(None, None, 2);
         let rows = shell.expand(vec![dir.path().display().to_string()]);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].info.sample_rate, Some(44_100));
@@ -269,7 +278,7 @@ mod tests {
         for i in 0..6 {
             tone_wav(dir.path(), &format!("{i}.wav"), 0.1);
         }
-        let shell = Shell::new(None, 1);
+        let shell = Shell::new(None, None, 1);
         let rows = shell.expand(vec![dir.path().display().to_string()]);
         let (tx, rx) = mpsc::channel();
         let (gate_tx, gate_rx) = mpsc::channel::<()>();
@@ -309,7 +318,7 @@ mod tests {
 
     #[test]
     fn out_of_range_settings_are_refused() {
-        let shell = Shell::new(None, 1);
+        let shell = Shell::new(None, None, 1);
         let bad = DecideSettings {
             ceiling: sc_core::DbTp(0.5),
             ..DecideSettings::dj()
@@ -329,7 +338,7 @@ mod tests {
     fn a_cleared_list_takes_the_same_files_again() {
         let dir = tempfile::tempdir().unwrap();
         tone_wav(dir.path(), "a.wav", 0.1);
-        let shell = Shell::new(None, 1);
+        let shell = Shell::new(None, None, 1);
         let first = shell.expand(vec![dir.path().display().to_string()]);
         assert_eq!(first.len(), 1);
         shell.clear();
@@ -341,6 +350,6 @@ mod tests {
 
     #[test]
     fn cancelling_an_unknown_job_says_so() {
-        assert!(!Shell::new(None, 1).cancel(42));
+        assert!(!Shell::new(None, None, 1).cancel(42));
     }
 }

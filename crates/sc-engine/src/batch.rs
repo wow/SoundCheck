@@ -20,6 +20,7 @@ use sc_io::cache::Cache;
 
 use crate::analyze::{AnalyzeReport, Analyzer, Progress, Timings};
 use crate::cancel::CancelToken;
+use crate::edits::EditState;
 
 /// Shortest gap between two progress events of one file.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -74,6 +75,9 @@ pub enum EngineEvent {
         file_id: u32,
         /// The report.
         report: Box<AnalyzeReport>,
+        /// What a saved grid edit did to the report's grid (none from the batch itself; the
+        /// app's job applies the user's edits before the session stores the row).
+        edit: EditState,
     },
     /// Terminal: the file could not be analysed; the batch goes on.
     Failed {
@@ -225,6 +229,7 @@ fn work(
             Ok(Ok(report)) => EngineEvent::Analysed {
                 file_id,
                 report: Box::new(report),
+                edit: EditState::default(),
             },
             Ok(Err(Error::Cancelled)) => EngineEvent::Cancelled { file_id },
             Ok(Err(error)) => EngineEvent::Failed { file_id, error },

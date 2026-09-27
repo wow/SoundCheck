@@ -1,6 +1,7 @@
 //! Headless SoundCheck: the same analysis the app shows, printed as text or JSON.
 
 mod eval;
+mod labels;
 mod plan;
 mod report;
 
@@ -19,6 +20,7 @@ use sc_engine::{
     Timings, default_workers, run_batch,
 };
 use sc_io::cache::Cache;
+use sc_io::edits::EditStore;
 use tracing_subscriber::EnvFilter;
 
 use crate::report::{ErrorReport, write_text};
@@ -113,6 +115,22 @@ enum Command {
         /// Print JSON (one document per file) instead of text.
         #[arg(long)]
         json: bool,
+        /// Files analysed at once (default: a quarter of the logical cores, at most 4).
+        #[arg(long)]
+        jobs: Option<usize>,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+    },
+    /// Print evaluation labels (CSV: `file`, `bpm`, `bar1_s`, `meter`, `grouping`, `confirmed`)
+    /// from each file's grid as the app shows it, with the edits saved there applied; the
+    /// analysis cache is used.
+    Labels {
+        /// Audio files.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Only files whose grid was confirmed in the app; the others are listed as comments.
+        #[arg(long)]
+        confirmed_only: bool,
         /// Files analysed at once (default: a quarter of the logical cores, at most 4).
         #[arg(long)]
         jobs: Option<usize>,
@@ -217,26 +235,21 @@ fn main() -> anyhow::Result<()> {
             jobs,
             analysis,
         } => {
-            let mut decide = match mode {
-                ModeArg::Dj => DecideSettings::dj(),
-                ModeArg::Streaming => DecideSettings::streaming(),
-            };
-            if let Some(t) = target {
-                decide.target = Lufs(t);
-            }
-            if let Some(c) = ceiling {
-                decide.ceiling = DbTp(c);
-            }
-            decide.bpm_range = (Bpm(analysis.bpm_range.0), Bpm(analysis.bpm_range.1));
-            let settings = BatchSettings {
-                analysis: settings(&analysis),
-                workers: jobs.unwrap_or_else(default_workers),
-                cache: Some(Cache::open(Cache::default_dir()?)),
-            };
-            let failed = plan::plan_all(&settings, &decide, &files, json)?;
-            if failed > 0 {
-                std::process::exit(EXIT_FAILED);
-            }
+            let decide = decide_settings(mode, target, ceiling, &analysis);
+            let edits = EditStore::open(EditStore::default_dir()?);
+            let batch = cached_batch(&analysis, jobs)?;
+            exit_if_failed(plan::plan_all(&batch, &decide, Some(&edits), &files, json)?);
+            Ok(())
+        }
+        Command::Labels {
+            files,
+            confirmed_only,
+            jobs,
+            analysis,
+        } => {
+            let edits = EditStore::open(EditStore::default_dir()?);
+            let batch = cached_batch(&analysis, jobs)?;
+            exit_if_failed(labels::labels_all(&batch, &edits, &files, confirmed_only)?);
             Ok(())
         }
         Command::Bench {
@@ -273,6 +286,43 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Cache { action } => cache_command(action),
+    }
+}
+
+/// A batch on the engine's workers (`--jobs`), reading and filling the analysis cache.
+fn cached_batch(analysis: &AnalysisArgs, jobs: Option<usize>) -> anyhow::Result<BatchSettings> {
+    Ok(BatchSettings {
+        analysis: settings(analysis),
+        workers: jobs.unwrap_or_else(default_workers),
+        cache: Some(Cache::open(Cache::default_dir()?)),
+    })
+}
+
+/// The decide settings `plan`'s flags describe; the BPM range is the analysis's.
+fn decide_settings(
+    mode: ModeArg,
+    target: Option<f64>,
+    ceiling: Option<f64>,
+    analysis: &AnalysisArgs,
+) -> DecideSettings {
+    let mut decide = match mode {
+        ModeArg::Dj => DecideSettings::dj(),
+        ModeArg::Streaming => DecideSettings::streaming(),
+    };
+    if let Some(t) = target {
+        decide.target = Lufs(t);
+    }
+    if let Some(c) = ceiling {
+        decide.ceiling = DbTp(c);
+    }
+    decide.bpm_range = (Bpm(analysis.bpm_range.0), Bpm(analysis.bpm_range.1));
+    decide
+}
+
+/// Exits with [`EXIT_FAILED`] when any file failed.
+fn exit_if_failed(failed: usize) {
+    if failed > 0 {
+        std::process::exit(EXIT_FAILED);
     }
 }
 
@@ -380,7 +430,9 @@ fn run_in_order(
     let mut next = 0;
     let result = run_batch(&batch, settings, &CancelToken::new(), &mut |event| {
         let (file_id, outcome) = match event {
-            EngineEvent::Analysed { file_id, report } => (file_id, Ok(*report)),
+            EngineEvent::Analysed {
+                file_id, report, ..
+            } => (file_id, Ok(*report)),
             EngineEvent::Failed { file_id, error } => (file_id, Err(error)),
             EngineEvent::Cancelled { file_id } => (file_id, Err(Error::Cancelled)),
             _ => return,

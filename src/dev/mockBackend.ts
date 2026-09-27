@@ -115,6 +115,8 @@ function analysisFor(s: Synthetic): RowAnalysis {
     gridSkipped: s.bpm === null ? 'no beats found' : null,
     tagBpm: null,
     cached: false,
+    edited: false,
+    confirmed: false,
   };
 }
 

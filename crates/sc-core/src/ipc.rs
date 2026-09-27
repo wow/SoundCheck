@@ -179,6 +179,10 @@ pub struct RowAnalysis {
     pub tag_bpm: Option<Bpm>,
     /// Served from the analysis cache.
     pub cached: bool,
+    /// The grid is the user's edit of the analysed one.
+    pub edited: bool,
+    /// The user confirmed the grid by ear; it needs no review.
+    pub confirmed: bool,
 }
 
 impl RowAnalysis {
@@ -213,6 +217,8 @@ impl RowAnalysis {
             grid_skipped: record.grid_skipped.clone(),
             tag_bpm: record.tags.bpm,
             cached,
+            edited: false,
+            confirmed: false,
         }
     }
 }
@@ -457,6 +463,7 @@ mod tests {
                 Reason::Short,
                 Reason::Drifts,
                 Reason::NoKick,
+                Reason::Manual,
             ],
             verdict: Verdict::Drifts,
             octave_up: Some(Bpm(246.913_578)),
@@ -478,6 +485,8 @@ mod tests {
             grid_skipped: None,
             tag_bpm: Some(Bpm(123.45)),
             cached: false,
+            edited: true,
+            confirmed: true,
         };
         let plan = Plan {
             measured: Some(Lufs(-10.123_456_7)),

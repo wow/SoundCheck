@@ -18,9 +18,15 @@ use sc_core::{Confidence, DbTp, Verdict};
 /// What the grid solver writes when it looked for beats and found none.
 const NO_BEATS: &str = "no beats found";
 
-/// The plan for `record`, whose audio is `codec`, under `settings`.
+/// The plan for `record`, whose audio is `codec`, under `settings`. A grid the user confirmed by
+/// ear (`grid_confirmed`) needs no review whatever its flags; the row still shows them.
 #[must_use]
-pub fn decide(record: &AnalysisRecord, codec: Codec, settings: &DecideSettings) -> Plan {
+pub fn decide(
+    record: &AnalysisRecord,
+    codec: Codec,
+    settings: &DecideSettings,
+    grid_confirmed: bool,
+) -> Plan {
     let loudness = &record.loudness;
     let measured = match settings.mode {
         LoudnessMode::Dj => loudness.short_term_p95,
@@ -42,7 +48,11 @@ pub fn decide(record: &AnalysisRecord, codec: Codec, settings: &DecideSettings) 
         )),
         _ => None,
     };
-    let review = review_reasons(record, settings);
+    let review = if grid_confirmed {
+        Vec::new()
+    } else {
+        review_reasons(record, settings)
+    };
     let status = if skip.is_some() {
         JobStage::Skipped
     } else if review.is_empty() {
@@ -202,13 +212,18 @@ mod tests {
         plan.gain.expect("a gain plan")
     }
 
+    /// The plan of a row whose grid the user has not confirmed.
+    fn unconfirmed(record: &AnalysisRecord, codec: Codec, settings: &DecideSettings) -> Plan {
+        decide(record, codec, settings, false)
+    }
+
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-9
     }
 
     #[test]
     fn loud_tracks_turn_down_whatever_their_peak() {
-        let p = decide(
+        let p = unconfirmed(
             &record(Some(-7.8), Some(-9.0), 1.2),
             Codec::Flac,
             &DecideSettings::dj(),
@@ -231,7 +246,7 @@ mod tests {
 
     #[test]
     fn a_boost_within_headroom_reaches_the_target() {
-        let p = decide(
+        let p = unconfirmed(
             &record(Some(-14.6), None, -5.0),
             Codec::Aiff,
             &DecideSettings::dj(),
@@ -251,7 +266,7 @@ mod tests {
     #[test]
     fn the_ceiling_caps_a_boost_and_the_rest_is_short() {
         // Wants +3.6 dB, has 3.2 dB of headroom under -0.5 dBTP.
-        let p = decide(
+        let p = unconfirmed(
             &record(Some(-14.6), None, -3.7),
             Codec::Aiff,
             &DecideSettings::dj(),
@@ -271,7 +286,7 @@ mod tests {
 
     #[test]
     fn a_peak_already_over_the_ceiling_gets_no_boost() {
-        let p = decide(
+        let p = unconfirmed(
             &record(Some(-12.0), None, 0.3),
             Codec::Wav,
             &DecideSettings::dj(),
@@ -290,7 +305,7 @@ mod tests {
 
     #[test]
     fn within_five_hundredths_is_at_target() {
-        let p = decide(
+        let p = unconfirmed(
             &record(Some(-11.04), None, -3.0),
             Codec::Flac,
             &DecideSettings::dj(),
@@ -300,7 +315,7 @@ mod tests {
 
     #[test]
     fn streaming_aligns_integrated_loudness() {
-        let p = decide(
+        let p = unconfirmed(
             &record(Some(-7.0), Some(-10.0), -1.5),
             Codec::Flac,
             &DecideSettings::streaming(),
@@ -315,7 +330,7 @@ mod tests {
     #[test]
     fn mp3_moves_in_whole_global_gain_steps() {
         // Down 2.2 dB: one step (1.505), residual -0.695.
-        let p = decide(
+        let p = unconfirmed(
             &record(Some(-8.8), None, -1.0),
             Codec::Mp3,
             &DecideSettings::dj(),
@@ -336,7 +351,7 @@ mod tests {
             "{residual_lu}"
         );
         // Up 2.2 dB: rounds to one step up, which fits under the ceiling.
-        let p = decide(
+        let p = unconfirmed(
             &record(Some(-13.2), None, -3.0),
             Codec::Mp3,
             &DecideSettings::dj(),
@@ -357,7 +372,7 @@ mod tests {
     #[test]
     fn mp3_boost_steps_stop_under_the_ceiling() {
         // Wants +4.5 dB (three steps) with 2.0 dB of headroom: one step fits.
-        let p = decide(
+        let p = unconfirmed(
             &record(Some(-15.5), None, -2.5),
             Codec::Mp3,
             &DecideSettings::dj(),
@@ -376,7 +391,7 @@ mod tests {
 
     #[test]
     fn analyse_only_codecs_and_silence_are_skipped() {
-        let p = decide(
+        let p = unconfirmed(
             &record(Some(-10.2), None, -0.2),
             Codec::Alac,
             &DecideSettings::dj(),
@@ -385,7 +400,7 @@ mod tests {
         assert_eq!(p.gain, None);
         assert_eq!(p.status, JobStage::Skipped);
         assert_eq!(p.measured, Some(Lufs(-10.2)), "the numbers stay visible");
-        let p = decide(
+        let p = unconfirmed(
             &record(None, None, -80.0),
             Codec::Flac,
             &DecideSettings::dj(),
@@ -402,7 +417,7 @@ mod tests {
             Confidence::Green,
             Verdict::Static,
         );
-        let p = decide(&r, Codec::Flac, &DecideSettings::dj());
+        let p = unconfirmed(&r, Codec::Flac, &DecideSettings::dj());
         assert!(p.review.is_empty(), "{:?}", p.review);
         assert_eq!(p.status, JobStage::Analysed);
     }
@@ -413,11 +428,11 @@ mod tests {
         let dj = DecideSettings::dj();
         let r = with_grid(base.clone(), 128.0, Confidence::Amber, Verdict::StaticWarn);
         assert_eq!(
-            decide(&r, Codec::Flac, &dj).review,
+            unconfirmed(&r, Codec::Flac, &dj).review,
             vec![ReviewReason::Confidence]
         );
         let r = with_grid(base.clone(), 128.0, Confidence::Green, Verdict::StaticWarn);
-        let p = decide(&r, Codec::Flac, &dj);
+        let p = unconfirmed(&r, Codec::Flac, &dj);
         assert!(
             p.review.is_empty(),
             "elevated residuals alone: {:?}",
@@ -426,27 +441,61 @@ mod tests {
         assert_eq!(p.status, JobStage::Analysed);
         let r = with_grid(base.clone(), 128.0, Confidence::Green, Verdict::Drifts);
         assert_eq!(
-            decide(&r, Codec::Flac, &dj).review,
+            unconfirmed(&r, Codec::Flac, &dj).review,
             vec![ReviewReason::Drifts]
         );
         let r = with_grid(base.clone(), 187.0, Confidence::Green, Verdict::Static);
         assert_eq!(
-            decide(&r, Codec::Flac, &dj).review,
+            unconfirmed(&r, Codec::Flac, &dj).review,
             vec![ReviewReason::OutsideBpmRange]
         );
         let mut r = with_grid(base.clone(), 128.0, Confidence::Green, Verdict::Static);
         r.tags.bpm = Some(Bpm(132.0));
         assert_eq!(
-            decide(&r, Codec::Flac, &dj).review,
+            unconfirmed(&r, Codec::Flac, &dj).review,
             vec![ReviewReason::TagBpmDisagrees { tag: Bpm(132.0) }]
         );
         r.tags.bpm = Some(Bpm(128.0 * 1.019));
-        assert!(decide(&r, Codec::Flac, &dj).review.is_empty(), "within 2 %");
+        assert!(
+            unconfirmed(&r, Codec::Flac, &dj).review.is_empty(),
+            "within 2 %"
+        );
         let mut r = base;
         r.grid_skipped = Some(NO_BEATS.into());
-        let p = decide(&r, Codec::Flac, &dj);
+        let p = unconfirmed(&r, Codec::Flac, &dj);
         assert_eq!(p.review, vec![ReviewReason::NoGrid]);
         assert_eq!(p.status, JobStage::NeedsReview);
+    }
+
+    #[test]
+    fn a_confirmed_grid_leaves_review_whatever_its_flags() {
+        let base = record(Some(-9.0), None, -1.0);
+        let dj = DecideSettings::dj();
+        let mut rows = vec![
+            with_grid(base.clone(), 128.0, Confidence::Red, Verdict::Drifts),
+            with_grid(base.clone(), 187.0, Confidence::Amber, Verdict::StaticWarn),
+        ];
+        rows[1].tags.bpm = Some(Bpm(93.5));
+        let mut no_beats = base;
+        no_beats.grid_skipped = Some(NO_BEATS.into());
+        rows.push(no_beats);
+        for r in &rows {
+            assert_eq!(
+                unconfirmed(r, Codec::Flac, &dj).status,
+                JobStage::NeedsReview
+            );
+            let p = decide(r, Codec::Flac, &dj, true);
+            assert!(p.review.is_empty(), "{:?}", p.review);
+            assert_eq!(p.status, JobStage::Analysed);
+            assert_eq!(
+                p.gain,
+                unconfirmed(r, Codec::Flac, &dj).gain,
+                "loudness unchanged"
+            );
+        }
+        // A confirmed grid does not rescue a file that is skipped.
+        let p = decide(&rows[0], Codec::Alac, &dj, true);
+        assert_eq!(p.status, JobStage::Skipped);
     }
 
     #[test]
@@ -454,7 +503,7 @@ mod tests {
         let mut r = record(Some(-9.0), None, -1.0);
         r.grid_skipped = Some("shorter than 10 s".into());
         assert!(
-            decide(&r, Codec::Flac, &DecideSettings::dj())
+            unconfirmed(&r, Codec::Flac, &DecideSettings::dj())
                 .review
                 .is_empty()
         );

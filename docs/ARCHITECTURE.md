@@ -35,9 +35,14 @@ ANALYSE (streamed; cached)
   -> cache JSON (~/Library/Caches/app.soundcheck.desktop/analysis/<blake3(path)>.json, keyed by size+mtime+settings+version;
      numbers round-trip exactly; a record older than schema 2 is still served, without its evidence)
 
-DECIDE (pure, about 28 ns per row): decide(AnalysisRecord, Codec, DecideSettings{mode: DJ|Streaming, target, ceiling, bpm_range})
+EDITS (where a record becomes a row: a job before the session stores it, `sc-cli plan` and `labels`): a grid edit saved for the file's audio
+  (same decoded length, rate and integrated loudness, so tag writes keep it) replaces the grid: refit(evidence, the edit's own BPM range,
+  overrides) -> the grid the user saw, even after the range setting changed; the row carries edited/confirmed, and confirmed only while
+  that grid still matches the one saved with the confirmation (1 sample, 0.005 BPM, same meter)
+
+DECIDE (pure, about 28 ns per row): decide(AnalysisRecord, Codec, DecideSettings{mode: DJ|Streaming, target, ceiling, bpm_range}, grid_confirmed)
   -> Plan { measured, gain: Gain{gain_db, short_by_lu, true_peak_after} | GlobalGain{steps, gain_db, residual_lu} (MP3, 1.5051 dB steps) | AtTarget,
-            skip: AnalyseOnly{codec} | Silent, review: [Confidence | Drifts | OutsideBpmRange | TagBpmDisagrees{tag} | NoGrid] (a grid that fits with elevated residuals is marked "check" in the BPM column, not queued), status }
+            skip: AnalyseOnly{codec} | Silent, review: [Confidence | Drifts | OutsideBpmRange | TagBpmDisagrees{tag} | NoGrid] (a grid that fits with elevated residuals is marked "check" in the BPM column, not queued; a grid the user confirmed has none), status }
   turning down is always allowed; a boost stops at the true-peak ceiling and the rest is "short by"; export adds batch_mode, length policy, tags and XML
 
 RENDER (streamed)
@@ -63,7 +68,7 @@ RENDER (streamed)
 - Tauri commands (bodies in `src-tauri/src/shell.rs`, plain Rust over `sc_engine::Session`): `expand_paths(paths) -> FileEntry[]` (walk and probe, on a blocking thread), `analyze({fileIds, analysis}, onEvent: Channel<JobEvent>) -> JobId` (returns at once; the job runs `run_job` on its own thread), `cancel_job(jobId)`, `set_decide_settings(settings) -> Replan{revision, plans}` (refused with `invalidArgument` outside the limits: target -30..-4 LUFS, ceiling -6..0 dBTP, BPM range 40..300), `calibration_target() -> Lufs?`, `restore_session() -> SessionSnapshot` (the rows the engine holds, for a window that reloads; running jobs are cancelled), `clear_session()` (Clear list: cancels running jobs and forgets the files; ids are never reused), `app_version`. Every command is async; the heavier ones run on a blocking thread. Each `analysed` event carries the settings revision its plan was decided with, so the UI keeps the newest plan when a replan and an analysis cross. Events per job: `started`, `progress` (at most every 100 ms per file), one of `analysed` (row + plan, under 2 KB) / `failed` / `cancelled`, `batch` (at most every 500 ms), `aborted` when the job cannot start, `finished` last. Plugins: dialog (open files and folders), store (settings), opener.
 
 ## Storage
-- Cache: central JSON per file (above). Sidecar `<file>.soundcheck.json` only for written outputs. Backups under `~/Music/SoundCheck Backups/<relative path>` with `journal.jsonl`. Settings (`settings.json`) and the track list's file paths (`library.json`, re-added on launch and served from the cache) via `tauri-plugin-store`, each with a `schema` field.
+- Cache: central JSON per file (above). Grid edits: one JSON per file under `~/Library/Application Support/app.soundcheck.desktop/grid-edits/<blake3(path)>.json` (`sc_io::edits`; `SC_EDITS_DIR` overrides it) with the overrides, the BPM range they were made under, the audio's identity, the grid they gave and whether it was confirmed; written with fsync then renamed; user work, so not in the purgeable cache. Sidecar `<file>.soundcheck.json` only for written outputs. Backups under `~/Music/SoundCheck Backups/<relative path>` with `journal.jsonl`. Settings (`settings.json`) and the track list's file paths (`library.json`, re-added on launch and served from the cache) via `tauri-plugin-store`, each with a `schema` field.
 
 ## Verification tiers
 WAV/AIFF: tee-hash of PCM as written + header/chunk table re-read. FLAC: full re-decode compared to the tee hash (+ `flac -t` in CI). MP3: frame re-walk, decode first/last 32 frames, `Track.delay/padding/num_frames` unchanged. Library mode additionally asserts identical frame count. Full re-measure (I/TP) via `sc-cli --verify=full` and nightly CI.

@@ -15,6 +15,7 @@ sc-dsp = { workspace = true }
 sc-io = { workspace = true }
 sc-analysis = { workspace = true }
 serde = { workspace = true }
+tracing = { workspace = true }
 unicode-normalization = { workspace = true }
 
 [dev-dependencies]
