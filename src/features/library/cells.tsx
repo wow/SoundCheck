@@ -43,10 +43,15 @@ export function ConfidenceRing({ confidence }: { confidence: Confidence }) {
   );
 }
 
-export function MeterBadge({ meter }: { meter: string }) {
+/** The meter (`9/8 · 2+2+2+3`); `short` shows only the time signature, the rest on hover. */
+export function MeterBadge({ meter, short = false }: { meter: string; short?: boolean }) {
+  const shown = short ? (meter.split(' · ')[0] ?? meter) : meter;
   return (
-    <span className="inline-flex h-5 items-center whitespace-nowrap rounded-[5px] border border-[rgba(79,209,197,.35)] bg-[rgba(79,209,197,.10)] px-[7px] font-mono text-[10.5px] font-medium text-accent-2">
-      {meter}
+    <span
+      className="inline-flex h-5 items-center whitespace-nowrap rounded-[5px] border border-[rgba(79,209,197,.35)] bg-[rgba(79,209,197,.10)] px-[7px] font-mono text-[10.5px] font-medium text-accent-2"
+      title={shown !== meter ? meter : undefined}
+    >
+      {shown}
     </span>
   );
 }
@@ -122,21 +127,27 @@ export function SpecCell({ row }: { row: Row }) {
   );
 }
 
+/**
+ * Measured loudness → target, with the delta bar in the wide layout. Given `tpCeiling` (the
+ * narrow layout, which has no TP column) the true peak goes on a second line.
+ */
 export function LoudnessCell({
   row,
   target,
   bar = true,
+  tpCeiling,
 }: {
   row: Row;
   target: number;
   bar?: boolean;
+  tpCeiling?: number;
 }) {
   const measured = row.plan?.measured;
   if (measured == null) return <Dash />;
   const delta = target - measured;
   const width = Math.min(Math.abs(delta) * 4, 28);
-  return (
-    <div className="flex items-center gap-2">
+  const levels = (
+    <div className="flex items-center gap-1.5">
       <span className="font-mono text-[13px] font-medium">{level(measured)}</span>
       <span className="text-fg-2">→</span>
       <span className="font-mono text-[13px] font-medium text-fg-2">{level(target)}</span>
@@ -149,6 +160,21 @@ export function LoudnessCell({
             className={cn('absolute top-0 h-full', isShort(row) ? 'bg-accent' : 'bg-accent-2')}
             style={delta >= 0 ? { left: 30, width } : { right: 30, width }}
           />
+        </span>
+      )}
+    </div>
+  );
+  if (tpCeiling === undefined) return levels;
+  const tp = row.analysis?.truePeak;
+  return (
+    <div className="flex min-w-0 flex-col">
+      {levels}
+      {tp != null && (
+        <span
+          className={cn('font-mono text-[11px]', tp > tpCeiling ? 'text-err' : 'text-fg-2')}
+          title={tp > tpCeiling ? `Above the ${tpCeiling.toFixed(1)} dBTP ceiling` : undefined}
+        >
+          TP {peak(tp)}
         </span>
       )}
     </div>
@@ -168,7 +194,18 @@ export function TpCell({ row, ceiling }: { row: Row; ceiling: number }) {
   );
 }
 
-export function BpmCell({ row }: { row: Row }) {
+/**
+ * The tempo with its confidence (or ✓ when confirmed by ear), an edited mark, and the flags: an
+ * octave in doubt, a meter other than 4/4, a grid worth a listen. `compact` shortens the meter
+ * to its time signature; `stacked` (the narrow layout) puts the flags on a second line.
+ */
+export function BpmCell({
+  row,
+  variant = 'wide',
+}: {
+  row: Row;
+  variant?: 'wide' | 'compact' | 'stacked';
+}) {
   const grid = row.analysis?.grid;
   if (!grid) {
     if (row.analysis?.gridSkipped === 'no beats found') {
@@ -177,7 +214,29 @@ export function BpmCell({ row }: { row: Row }) {
     return <Dash />;
   }
   const octave = grid.reasons.includes('octaveMargin') && !row.analysis?.confirmed;
-  return (
+  const flags = (
+    <>
+      {octave && (
+        <span
+          className="font-mono text-[11px] text-warn"
+          title="Half or double the tempo fits almost as well"
+        >
+          ÷2 ×2?
+        </span>
+      )}
+      {!grid.fourFour && <MeterBadge meter={grid.meter} short={variant !== 'wide'} />}
+      {grid.verdict === 'staticWarn' && (
+        <span
+          className="text-[11px] text-fg-2"
+          title={`The grid fits, but some beats land up to ${Math.round(grid.residualMaxMs)} ms off it; worth a listen`}
+        >
+          check
+        </span>
+      )}
+    </>
+  );
+  const flagged = octave || !grid.fourFour || grid.verdict === 'staticWarn';
+  const tempo = (
     <div className="flex items-center gap-1.5 whitespace-nowrap">
       {row.analysis?.confirmed ? (
         <span
@@ -200,23 +259,14 @@ export function BpmCell({ row }: { row: Row }) {
           title="Edited in the grid view"
         />
       )}
-      {octave && (
-        <span
-          className="font-mono text-[11px] text-warn"
-          title="Half or double the tempo fits almost as well"
-        >
-          ÷2 ×2?
-        </span>
-      )}
-      {!grid.fourFour && <MeterBadge meter={grid.meter} />}
-      {grid.verdict === 'staticWarn' && (
-        <span
-          className="text-[11px] text-fg-2"
-          title={`The grid fits, but some beats land up to ${Math.round(grid.residualMaxMs)} ms off it; worth a listen`}
-        >
-          check
-        </span>
-      )}
+      {variant !== 'stacked' && flags}
+    </div>
+  );
+  if (variant !== 'stacked' || !flagged) return tempo;
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      {tempo}
+      <div className="flex items-center gap-1.5 whitespace-nowrap">{flags}</div>
     </div>
   );
 }

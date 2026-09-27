@@ -27,7 +27,15 @@ export function overflowReport(root: Element = document.body): Overflow[] {
     // Its own children past its edge (the row, not every ancestor around it), or content wider
     // than a box that clips it (text included) or a leaf's text.
     const edge = el.getBoundingClientRect().left + el.clientLeft + el.clientWidth;
-    const spills = [...el.children].some((c) => c.getBoundingClientRect().right > edge + 1);
+    // Positioned children (a badge's mark, a popover) overhang on purpose.
+    const spills = [...el.children].some((c) => {
+      const position = view.getComputedStyle(c).position;
+      return (
+        position !== 'absolute' &&
+        position !== 'fixed' &&
+        c.getBoundingClientRect().right > edge + 1
+      );
+    });
     const clips = style.overflowX !== 'visible';
     const wider = (clips || el.children.length === 0) && el.scrollWidth > el.clientWidth + 1;
     if (!spills && !wider) continue;

@@ -1,16 +1,22 @@
-import { COMPACT, COMPACT_BELOW, WIDE, layoutFor, minWidth } from './columns';
+import { COMPACT, COMPACT_BELOW, NARROW, NARROW_BELOW, WIDE, layoutFor, minWidth } from './columns';
 
 describe('table layout', () => {
-  it('switches to the compact layout when the wide one no longer fits', () => {
+  it('goes wide, compact, then narrow as the table narrows', () => {
     expect(layoutFor(0)).toBe(WIDE);
     expect(layoutFor(1200)).toBe(WIDE);
     expect(layoutFor(COMPACT_BELOW - 1)).toBe(COMPACT);
-    expect(layoutFor(820)).toBe(COMPACT);
+    expect(layoutFor(NARROW_BELOW)).toBe(COMPACT);
+    expect(layoutFor(NARROW_BELOW - 1)).toBe(NARROW);
+    expect(layoutFor(700)).toBe(NARROW);
   });
 
-  it('the compact layout fits the table beside the rail in the smallest window', () => {
-    // Window at its 1100 px minimum, the rail at 272 px.
-    expect(minWidth(COMPACT)).toBeLessThanOrEqual(1100 - 272);
+  it('each layout fits where it is used', () => {
+    expect(minWidth(WIDE)).toBeLessThan(COMPACT_BELOW);
+    expect(minWidth(COMPACT)).toBeLessThan(NARROW_BELOW);
+    // The narrow table fills a 720 px window: less a scrollbar, and some slack.
+    expect(minWidth(NARROW)).toBeLessThanOrEqual(704);
     expect(COMPACT.spec).toBeNull();
+    expect(NARROW.tp).toBeNull();
+    expect(NARROW.stacked).toBe(true);
   });
 });
