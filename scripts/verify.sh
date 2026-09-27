@@ -23,6 +23,7 @@ HAS_CARGO=1; [ -f Cargo.toml ] && HAS_CARGO=0
 HAS_FE=1;    [ -f package.json ] && HAS_FE=0
 HAS_FE_DEPS=1; [ -d node_modules ] && HAS_FE_DEPS=0
 
+run_step file-size     0            ./scripts/check-file-size.sh
 run_step cargo-fmt     "$HAS_CARGO" cargo fmt --all -- --check
 run_step cargo-clippy  "$HAS_CARGO" cargo clippy --workspace --all-targets -- -D warnings
 run_step cargo-test    "$HAS_CARGO" cargo test --workspace

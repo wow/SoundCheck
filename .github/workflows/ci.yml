@@ -25,6 +25,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { components: "rustfmt, clippy" }
       - uses: Swatinem/rust-cache@v2
+      - name: source files stay under 700 lines
+        run: ./scripts/check-file-size.sh
       - name: fmt
         run: cargo fmt --all --check
       - name: clippy
