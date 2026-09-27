@@ -126,6 +126,7 @@ function SettingsButton() {
       className={cn(button, 'border-line text-fg-0 hover:bg-bg-2', open && 'bg-bg-3')}
     >
       <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />
+      <span className="sr-only">Settings: </span>
       <span>
         {name} · <span className="font-mono tabular-nums">{target}</span> LUFS
       </span>

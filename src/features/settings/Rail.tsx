@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import type { LoudnessMode } from '@/lib/ipc';
 import { useLibrary } from '@/state/library';
@@ -47,7 +47,9 @@ function Segmented<T extends string>({
 
 /**
  * A number field that commits on Enter or blur, so the table replans once per edit rather than
- * per keystroke.
+ * per keystroke; also when it goes away while typed in (the settings drawer closing), since a
+ * field removed while focused never gets its blur. Esc drops what was typed; with nothing
+ * typed it is left to the drawer, which closes.
  */
 function NumberField({
   label,
@@ -65,13 +67,24 @@ function NumberField({
   digits?: number;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const cancelled = useRef(false);
   const commit = () => {
-    if (draft !== null) {
-      const v = Number(draft.replace('−', '-'));
-      if (Number.isFinite(v)) onCommit(v);
-    }
+    if (draft !== null && !cancelled.current) commitText(draft, onCommit);
+    cancelled.current = false;
     setDraft(null);
   };
+  // What is typed and where it goes, for the unmount below.
+  const latest = useRef({ draft, onCommit });
+  useEffect(() => {
+    latest.current = { draft, onCommit };
+  });
+  useEffect(
+    () => () => {
+      const { draft: typed, onCommit: save } = latest.current;
+      if (typed !== null) commitText(typed, save);
+    },
+    [],
+  );
   return (
     <label className="flex flex-col gap-1" style={{ width }}>
       <span className="text-[11px] text-fg-2">{label}</span>
@@ -80,11 +93,18 @@ function NumberField({
           type="text"
           inputMode="decimal"
           value={draft ?? value.toFixed(digits)}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            cancelled.current = false;
+            setDraft(e.target.value);
+          }}
           onBlur={commit}
           onKeyDown={(e) => {
             if (e.key === 'Enter') e.currentTarget.blur();
-            if (e.key === 'Escape') {
+            if (e.key === 'Escape' && draft !== null) {
+              // The first Esc drops the typing (and the blur after it saves nothing); the
+              // drawer only closes on the next.
+              e.stopPropagation();
+              cancelled.current = true;
               setDraft(null);
               e.currentTarget.blur();
             }
@@ -95,6 +115,11 @@ function NumberField({
       </span>
     </label>
   );
+}
+
+function commitText(text: string, onCommit: (v: number) => void): void {
+  const v = Number(text.replace('−', '-'));
+  if (Number.isFinite(v)) onCommit(v);
 }
 
 const MODES: { id: LoudnessMode; label: string }[] = [

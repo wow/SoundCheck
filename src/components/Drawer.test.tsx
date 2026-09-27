@@ -53,4 +53,61 @@ describe('the drawer', () => {
     fireEvent.mouseDown(backdrop);
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+
+  it('from the panel itself, Tab and Shift+Tab go into its controls', () => {
+    render(<Harness onWindowEscape={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const dialog = screen.getByRole('dialog');
+    dialog.focus();
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+    expect(screen.getByLabelText('Target')).toHaveFocus();
+    dialog.focus();
+    fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(screen.getByRole('button', { name: 'DJ' })).toHaveFocus();
+  });
+
+  it('gives focus to returnFocus() when the element that had it is gone', () => {
+    function Gone() {
+      const [open, setOpen] = useState(false);
+      const [opener, setOpener] = useState(true);
+      return (
+        <>
+          {opener && (
+            <button type="button" onClick={() => setOpen(true)}>
+              Opener
+            </button>
+          )}
+          <button type="button" id="rail">
+            Rail
+          </button>
+          {open && (
+            <Drawer
+              label="Settings"
+              onClose={() => setOpen(false)}
+              returnFocus={() => document.getElementById('rail')}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  // The window widens: the opener goes, and the drawer with it.
+                  setOpener(false);
+                  setOpen(false);
+                }}
+              >
+                Widen
+              </button>
+            </Drawer>
+          )}
+        </>
+      );
+    }
+    render(<Gone />);
+    const opener = screen.getByRole('button', { name: 'Opener' });
+    opener.focus();
+    fireEvent.click(opener);
+    expect(screen.getByRole('button', { name: 'Widen' })).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Widen' }));
+    expect(screen.queryByRole('button', { name: 'Opener' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Rail' })).toHaveFocus();
+  });
 });

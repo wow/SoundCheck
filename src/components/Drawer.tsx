@@ -6,24 +6,35 @@ const FOCUSABLE =
 /**
  * A rail shown over the right side of the window when it does not fit beside the content (a
  * window narrower than 1000 px). Focus moves in when it opens, stays inside while it is open,
- * and goes back where it was when it closes; `Esc` or a press outside closes it. It slides in
- * over 150 ms, not at all under reduced motion.
+ * and goes back where it was when it closes, or to `returnFocus()` when that is gone (the
+ * button that opened it disappears when the window widens); `Esc` or a press outside closes it.
+ * It slides in over 150 ms, not at all under reduced motion.
  */
 export function Drawer({
   label,
   onClose,
+  returnFocus,
   children,
 }: {
   label: string;
   onClose: () => void;
+  returnFocus?: () => HTMLElement | null;
   children: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  const fallback = useRef(returnFocus);
+  useEffect(() => {
+    fallback.current = returnFocus;
+  });
   useEffect(() => {
     const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const first = panel.current?.querySelector<HTMLElement>(FOCUSABLE);
     (first ?? panel.current)?.focus();
-    return () => before?.focus();
+    return () => {
+      // Nothing focused before (the page itself) counts as gone too.
+      const kept = before && before !== document.body && before.isConnected;
+      (kept ? before : (fallback.current?.() ?? null))?.focus();
+    };
   }, []);
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -35,12 +46,17 @@ export function Drawer({
       const items = [...(panel.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])];
       const first = items[0];
       const last = items[items.length - 1];
+      const at = items.indexOf(document.activeElement as HTMLElement);
       if (!first || !last) {
         e.preventDefault();
-      } else if (e.shiftKey && document.activeElement === first) {
+      } else if (at < 0) {
+        // Focus on the panel itself (a click on its background): into its controls.
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && at === 0) {
         e.preventDefault();
         last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
+      } else if (!e.shiftKey && at === items.length - 1) {
         e.preventDefault();
         first.focus();
       }

@@ -136,6 +136,9 @@ function Library() {
               <span>
                 <kbd className="font-mono">⌘F</kbd> filter
               </span>
+              <span>
+                <kbd className="font-mono">⌘,</kbd> settings
+              </span>
               <div className="flex-1" />
               {review > 0 && (
                 <span className="text-warn">
@@ -156,7 +159,11 @@ function Library() {
         {!narrow && <Rail />}
       </div>
       {narrow && settingsOpen && (
-        <Drawer label="Settings" onClose={() => setSettingsOpen(false)}>
+        <Drawer
+          label="Settings"
+          onClose={() => setSettingsOpen(false)}
+          returnFocus={() => document.querySelector<HTMLElement>('[data-settings-rail] button')}
+        >
           <Settings />
         </Drawer>
       )}
