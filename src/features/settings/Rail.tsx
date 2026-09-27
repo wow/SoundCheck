@@ -102,12 +102,27 @@ const MODES: { id: LoudnessMode; label: string }[] = [
   { id: 'streaming', label: 'Streaming' },
 ];
 
-/** The right rail: what the batch is levelled to, and the DJ app's BPM range. */
+/** The right rail beside the table: the settings, in a window wide enough for them. */
 export function Rail() {
+  return (
+    <aside
+      data-settings-rail
+      className="flex w-[272px] shrink-0 flex-col xl:w-[300px] overflow-y-auto border-l border-line bg-bg-1"
+    >
+      <Settings />
+    </aside>
+  );
+}
+
+/**
+ * What the batch is levelled to, and the DJ app's BPM range: in the rail, or in the settings
+ * drawer of a narrow window.
+ */
+export function Settings() {
   const s = useSettings();
   const analysed = useLibrary((l) => Object.values(l.rows).some((r) => r.analysis?.shortTermP95 != null));
   return (
-    <aside className="flex w-[272px] shrink-0 flex-col xl:w-[300px] gap-[22px] overflow-y-auto border-l border-line bg-bg-1 px-[18px] pb-4 pt-[18px]">
+    <div className="flex min-h-full flex-col gap-[22px] px-[18px] pb-4 pt-[18px]">
       <Section title="Loudness">
         <Segmented label="Loudness mode" value={s.mode} options={MODES} onChange={s.setMode} />
         <label className="relative flex flex-col gap-1">
@@ -184,6 +199,6 @@ export function Rail() {
       <p className="flex items-center gap-2 text-[11.5px] text-fg-2">
         Originals untouched. Nothing is written in this version.
       </p>
-    </aside>
+    </div>
   );
 }

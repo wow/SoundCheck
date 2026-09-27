@@ -1,8 +1,11 @@
+import { SlidersHorizontal } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
+import { NARROW, useMediaQuery } from '@/lib/media';
 import { chooseFiles, chooseFolders } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 import { counts, staleIds, useLibrary, type Filter } from '@/state/library';
-import { useSettings } from '@/state/settings';
+import { usePanels } from '@/state/panels';
+import { presetLabel, useSettings } from '@/state/settings';
 import { addPaths, analyseStale } from '@/features/pipeline/actions';
 
 const CHIPS: { id: Filter; label: string }[] = [
@@ -96,6 +99,36 @@ export function Toolbar({ busy }: { busy: boolean }) {
       >
         Analyse{!busy && stale > 0 ? ` ${stale}` : ''}
       </button>
+      <SettingsButton />
     </header>
+  );
+}
+
+/**
+ * In a narrow window, where the settings rail is a drawer: the button that opens it, showing
+ * the setting that matters most, what the batch is levelled to (`DJ · −11 LUFS`).
+ */
+function SettingsButton() {
+  const narrow = useMediaQuery(NARROW);
+  const open = usePanels((p) => p.settings);
+  const setOpen = usePanels((p) => p.setSettings);
+  const settings = useSettings();
+  if (!narrow) return null;
+  const name = settings.mode === 'dj' ? 'DJ' : presetLabel(settings);
+  const target = settings.target.toFixed(1).replace('-', '\u2212');
+  return (
+    <button
+      type="button"
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      onClick={() => setOpen(!open)}
+      title="Settings · ⌘,"
+      className={cn(button, 'border-line text-fg-0 hover:bg-bg-2', open && 'bg-bg-3')}
+    >
+      <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />
+      <span>
+        {name} · <span className="font-mono tabular-nums">{target}</span> LUFS
+      </span>
+    </button>
   );
 }

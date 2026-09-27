@@ -9,7 +9,10 @@ import { Footer } from '@/features/library/Footer';
 import { Table } from '@/features/library/Table';
 import { SEARCH_ID, Toolbar } from '@/features/library/Toolbar';
 import { addPaths, clearList, pipeline } from '@/features/pipeline/actions';
-import { Rail } from '@/features/settings/Rail';
+import { Rail, Settings } from '@/features/settings/Rail';
+import { Drawer } from '@/components/Drawer';
+import { NARROW, useMediaQuery } from '@/lib/media';
+import { usePanels } from '@/state/panels';
 import { openInGridView } from '@/features/grid/actions';
 import { GridView } from '@/features/grid/GridView';
 import { useTrack } from '@/features/grid/store';
@@ -22,6 +25,16 @@ function useKeys() {
     const onKey = (e: KeyboardEvent) => {
       // The grid view handles its own keys while it is open.
       if (useTrack.getState().fileId !== null) return;
+      const panels = usePanels.getState();
+      if (e.metaKey && e.key === ',') {
+        // Settings: the drawer in a narrow window, else the rail's first control.
+        e.preventDefault();
+        if (window.matchMedia?.(NARROW).matches) panels.setSettings(!panels.settings);
+        else document.querySelector<HTMLElement>('[data-settings-rail] button')?.focus();
+        return;
+      }
+      // The settings drawer, while open, has the keys to itself.
+      if (panels.settings) return;
       const lib = useLibrary.getState();
       if (e.metaKey && e.key.toLowerCase() === 'f') {
         e.preventDefault();
@@ -76,6 +89,13 @@ function Library() {
   const review = useLibrary((s) => s.order.filter((id) => s.rows[id]?.state === 'needsReview').length);
   const state = useSelector(pipeline(), (s) => s.value);
   const [dropping, setDropping] = useState(false);
+  const narrow = useMediaQuery(NARROW);
+  const settingsOpen = usePanels((p) => p.settings);
+  const setSettingsOpen = usePanels((p) => p.setSettings);
+  // Widened past the narrow layout: the rail is back beside the table, so no drawer.
+  useEffect(() => {
+    if (!narrow) setSettingsOpen(false);
+  }, [narrow, setSettingsOpen]);
 
   useEffect(
     () =>
@@ -133,8 +153,13 @@ function Library() {
             </div>
           )}
         </main>
-        <Rail />
+        {!narrow && <Rail />}
       </div>
+      {narrow && settingsOpen && (
+        <Drawer label="Settings" onClose={() => setSettingsOpen(false)}>
+          <Settings />
+        </Drawer>
+      )}
       <Footer cancelling={state === 'cancelling'} />
       {dropping && (
         <div className="pointer-events-none absolute inset-2 flex items-center justify-center rounded-[14px] border-2 border-dashed border-accent bg-[rgba(12,14,18,.75)] text-lg font-semibold">
