@@ -47,7 +47,8 @@ const LIBRARY: Synthetic[] = [
   { title: 'Float Bounce', artist: 'Mock Artist E', codec: 'wav', rate: 44100, bits: 32, kbps: null, float: true, sp95: -8.1, integrated: -9.6, tp: 0.3, bpm: 87, confidence: 'amber', verdict: 'staticWarn', reasons: ['octaveMargin'] },
   { title: 'Lossless Import', artist: 'Mock Artist F', codec: 'alac', rate: 44100, bits: 16, kbps: null, sp95: -10.2, integrated: -11.5, tp: -0.2, bpm: 124 },
   { title: 'Already There', artist: 'Mock Artist G', codec: 'flac', rate: 48000, bits: 24, kbps: null, sp95: -11.02, integrated: -12.3, tp: -0.6, bpm: 120 },
-  { title: 'Six Eight Waltz', artist: 'Mock Artist H', codec: 'flac', rate: 44100, bits: 16, kbps: null, sp95: -9.5, integrated: -11.2, tp: -1.1, bpm: 138.41, meter: '6/8 · 3+3' },
+  // Every BPM flag at once (octave in doubt, a meter, worth a listen): the widest BPM cell.
+  { title: 'Six Eight Waltz', artist: 'Mock Artist H', codec: 'flac', rate: 44100, bits: 16, kbps: null, sp95: -9.5, integrated: -11.2, tp: -1.1, bpm: 138.41, meter: '6/8 · 3+3', confidence: 'amber', verdict: 'staticWarn', reasons: ['octaveMargin'] },
   { title: 'Broken Download', artist: 'Mock Artist I', codec: 'mp3', rate: 44100, bits: null, kbps: 256, sp95: null, integrated: null, tp: 0, bpm: null, fails: true },
   { title: 'Big Room', artist: 'Mock Artist J', codec: 'wav', rate: 44100, bits: 24, kbps: null, sp95: -6.1, integrated: -7.4, tp: 0.4, bpm: 128 },
   { title: 'Downtempo', artist: 'Mock Artist K', codec: 'flac', rate: 44100, bits: 16, kbps: null, sp95: -12.2, integrated: -14.0, tp: -2.9, bpm: 92 },

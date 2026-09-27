@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { analysed, analysis, entry, plan } from '@/test/fixtures';
 import { useLibrary } from '@/state/library';
 import { useSettings } from '@/state/settings';
@@ -45,6 +45,21 @@ describe('Table', () => {
     expect(screen.getByText('9/8 · 2+2+2+3')).toBeInTheDocument();
     expect(screen.getByText('Needs review')).toBeInTheDocument();
     expect(screen.getByText(/Drifts: max 31 ms, \+180 ppm/)).toBeInTheDocument();
+  });
+
+  it('in a narrow table puts the true peak under the loudness, cells lined up with the header', () => {
+    // The table's own width decides its layout: 700 px is the narrow one.
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(700);
+    const lib = useLibrary.getState();
+    lib.add([entry(1, 'Skalonga')]);
+    lib.applyEvent(analysed(1, plan({ measured: -8.4 }), analysis()));
+    render(<Table />);
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers).toEqual(['Name', 'S-P95 · TP', 'BPM', 'Action', 'Status']);
+    const row = screen.getAllByRole('row')[1] as HTMLElement;
+    expect(within(row).getAllByRole('cell')).toHaveLength(headers.length);
+    expect(within(row).getByText('TP -0.3')).toBeInTheDocument();
+    width.mockRestore();
   });
 
   it('names the statistic in the loudness header', () => {

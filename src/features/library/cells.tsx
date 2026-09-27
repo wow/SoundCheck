@@ -1,3 +1,4 @@
+import { Ear } from 'lucide-react';
 import type { Codec, Confidence } from '@/lib/ipc';
 import {
   CODEC_LABEL,
@@ -197,7 +198,9 @@ export function TpCell({ row, ceiling }: { row: Row; ceiling: number }) {
 /**
  * The tempo with its confidence (or ✓ when confirmed by ear), an edited mark, and the flags: an
  * octave in doubt, a meter other than 4/4, a grid worth a listen. `compact` shortens the meter
- * to its time signature; `stacked` (the narrow layout) puts the flags on a second line.
+ * to its time signature. The flags go on a second line in the narrow layout (`stacked`), and in
+ * any layout when there are two or more of them, which do not fit beside the tempo; stacked,
+ * "check" is an ear so all three fit the line.
  */
 export function BpmCell({
   row,
@@ -214,6 +217,9 @@ export function BpmCell({
     return <Dash />;
   }
   const octave = grid.reasons.includes('octaveMargin') && !row.analysis?.confirmed;
+  const count = [octave, !grid.fourFour, grid.verdict === 'staticWarn'].filter(Boolean).length;
+  const stack = variant === 'stacked' || count >= 2;
+  const checkText = `The grid fits, but some beats land up to ${Math.round(grid.residualMaxMs)} ms off it; worth a listen`;
   const flags = (
     <>
       {octave && (
@@ -225,17 +231,19 @@ export function BpmCell({
         </span>
       )}
       {!grid.fourFour && <MeterBadge meter={grid.meter} short={variant !== 'wide'} />}
-      {grid.verdict === 'staticWarn' && (
-        <span
-          className="text-[11px] text-fg-2"
-          title={`The grid fits, but some beats land up to ${Math.round(grid.residualMaxMs)} ms off it; worth a listen`}
-        >
-          check
-        </span>
-      )}
+      {grid.verdict === 'staticWarn' &&
+        (stack ? (
+          // An ear rather than the word, so all three flags fit the second line.
+          <span role="img" aria-label={checkText} title={checkText} className="text-fg-2">
+            <Ear className="size-3" aria-hidden="true" />
+          </span>
+        ) : (
+          <span className="text-[11px] text-fg-2" title={checkText}>
+            check
+          </span>
+        ))}
     </>
   );
-  const flagged = octave || !grid.fourFour || grid.verdict === 'staticWarn';
   const tempo = (
     <div className="flex items-center gap-1.5 whitespace-nowrap">
       {row.analysis?.confirmed ? (
@@ -259,10 +267,10 @@ export function BpmCell({
           title="Edited in the grid view"
         />
       )}
-      {variant !== 'stacked' && flags}
+      {!stack && flags}
     </div>
   );
-  if (variant !== 'stacked' || !flagged) return tempo;
+  if (!stack || count === 0) return tempo;
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       {tempo}

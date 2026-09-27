@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Search, SlidersHorizontal } from 'lucide-react';
+import { ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { NARROW, useMediaQuery } from '@/lib/media';
 import { chooseFiles, chooseFolders } from '@/lib/platform';
@@ -64,6 +64,7 @@ export function Toolbar({ busy }: { busy: boolean }) {
               aria-pressed={filter === chip.id}
               onClick={() => setFilter(chip.id)}
               title={narrow && chip.short ? chip.label : undefined}
+              aria-label={narrow && chip.short ? `${chip.label} ${c[chip.id]}` : undefined}
               className={cn(
                 'inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md text-[12.5px] font-medium',
                 narrow ? 'px-1.5' : 'px-2 xl:px-2.5',
@@ -127,6 +128,8 @@ export function Toolbar({ busy }: { busy: boolean }) {
 function NameFilter({ narrow, open }: { narrow: boolean; open: boolean }) {
   const query = useLibrary((s) => s.query);
   const setQuery = useLibrary((s) => s.setQuery);
+  const filter = useLibrary((s) => s.filter);
+  const setFilter = useLibrary((s) => s.setFilter);
   const setSearch = usePanels((p) => p.setSearch);
   const input = useRef<HTMLInputElement>(null);
   const wasOpen = useRef(open);
@@ -135,6 +138,12 @@ function NameFilter({ narrow, open }: { narrow: boolean; open: boolean }) {
     if (narrow && open && !wasOpen.current) input.current?.focus();
     wasOpen.current = open;
   }, [narrow, open]);
+  useEffect(() => {
+    // Emptied elsewhere (Esc on the table, Clear list) while not being typed in: fold.
+    if (query === '' && document.activeElement !== input.current) setSearch(false);
+  }, [query, setSearch]);
+  // Where the field has taken the chips' place, the chip still filtering says so.
+  const chip = narrow && filter !== 'all' ? CHIPS.find((x) => x.id === filter) : undefined;
   if (!open) {
     return (
       <button
@@ -156,12 +165,25 @@ function NameFilter({ narrow, open }: { narrow: boolean; open: boolean }) {
       )}
     >
       <span className="sr-only">Filter by name</span>
+      {chip && (
+        <button
+          type="button"
+          onClick={() => setFilter('all')}
+          aria-label={`Show all tracks, not only ${chip.label}`}
+          title={`Only ${chip.label}. Show all tracks`}
+          className="inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded bg-bg-3 px-1.5 text-[11.5px] text-fg-1 hover:text-fg-0"
+        >
+          in {chip.short ?? chip.label}
+          <X className="size-3" aria-hidden="true" />
+        </button>
+      )}
       <input
         ref={input}
         id={SEARCH_ID}
         type="search"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
+        onFocus={() => setSearch(true)}
         onBlur={() => {
           if (useLibrary.getState().query === '') setSearch(false);
         }}
@@ -175,10 +197,15 @@ function NameFilter({ narrow, open }: { narrow: boolean; open: boolean }) {
   );
 }
 
-/** Add folder and Add tracks as one menu, in a narrow window. */
+/**
+ * Add folder and Add tracks as one menu, in a narrow window. It follows the menu button
+ * pattern: arrows move between the items, which are not Tab stops; Esc or a choice closes it
+ * and gives focus back to the button; Tab or a press outside closes it.
+ */
 function AddMenu() {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
     box.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
@@ -188,13 +215,18 @@ function AddMenu() {
     document.addEventListener('pointerdown', onDown);
     return () => document.removeEventListener('pointerdown', onDown);
   }, [open]);
-  const choose = (pick: () => Promise<string[]>) => {
+  const closeToButton = () => {
     setOpen(false);
+    trigger.current?.focus();
+  };
+  const choose = (pick: () => Promise<string[]>) => {
+    closeToButton();
     void pick().then(addPaths);
   };
   return (
     <div ref={box} className="relative">
       <button
+        ref={trigger}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -209,9 +241,13 @@ function AddMenu() {
           role="menu"
           aria-label="Add"
           className="absolute right-0 top-[34px] z-30 flex w-44 flex-col rounded-lg border border-line bg-bg-2 p-1 shadow-[0_8px_24px_rgba(0,0,0,.45)]"
+          onBlur={(e) => {
+            if (!(e.relatedTarget instanceof Node && box.current?.contains(e.relatedTarget))) setOpen(false);
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Escape') setOpen(false);
-            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            if (e.key === 'Escape') closeToButton();
+            else if (e.key === 'Tab') setOpen(false);
+            else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
               e.preventDefault();
               const items = [...(box.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
               const at = items.indexOf(document.activeElement as HTMLElement);
@@ -220,10 +256,22 @@ function AddMenu() {
             e.stopPropagation();
           }}
         >
-          <button type="button" role="menuitem" className={MENU_ITEM} onClick={() => choose(chooseFolders)}>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            className={MENU_ITEM}
+            onClick={() => choose(chooseFolders)}
+          >
             Add folder…
           </button>
-          <button type="button" role="menuitem" className={MENU_ITEM} onClick={() => choose(chooseFiles)}>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            className={MENU_ITEM}
+            onClick={() => choose(chooseFiles)}
+          >
             Add tracks…
           </button>
         </div>

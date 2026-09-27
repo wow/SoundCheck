@@ -49,7 +49,7 @@ export const COMPACT: Layout = {
   bpm: 176,
   action: 200,
   status: 112,
-  nameMin: 150,
+  nameMin: 140,
   bar: false,
 };
 
@@ -71,9 +71,13 @@ export const NARROW: Layout = {
   bar: false,
 };
 
-/** Table widths below which the compact and the narrow layouts are used. */
+/**
+ * Table widths below which the compact and the narrow layouts are used: each layout's minimum
+ * plus room for a scrollbar. The compact one must still be chosen for the table beside the rail
+ * in an 1100 px window (828 px).
+ */
 export const COMPACT_BELOW = minWidth(WIDE) + 20;
-export const NARROW_BELOW = minWidth(COMPACT) + 20;
+export const NARROW_BELOW = minWidth(COMPACT) + 12;
 
 /** The layout for a table `width` px wide; unknown widths (0) get the wide one. */
 export function layoutFor(width: number): Layout {
