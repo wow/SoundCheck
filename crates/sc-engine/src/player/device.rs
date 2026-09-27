@@ -8,7 +8,7 @@
 //! pauses when headphones are pulled) and the next `play` opens the default device again. A
 //! momentary overload is counted as an underrun and playback goes on.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -28,7 +28,11 @@ const DEVICE_CHANGED: &str = "Output device changed. Press Space to resume.";
 
 /// What the controlling thread asks for.
 enum Command {
-    Load { track: Arc<Track>, gain: DbFs },
+    Load {
+        track: Arc<Track>,
+        gain: DbFs,
+        load: u64,
+    },
     Play(Option<u64>),
     Pause,
     Seek(u64),
@@ -45,6 +49,10 @@ pub struct Status {
     pub state: Option<PlayerState>,
     /// Why output stopped, when the device failed.
     pub error: Option<String>,
+    /// The number [`Player::load`] returned for the track this status describes (0 before the
+    /// first load). Right after a load, the status still describes the track before until the
+    /// player's thread has taken the new one.
+    pub load: u64,
 }
 
 /// The click audition player on the default output device.
@@ -52,6 +60,8 @@ pub struct Player {
     commands: Option<mpsc::Sender<Command>>,
     status: Arc<Mutex<Status>>,
     thread: Option<JoinHandle<()>>,
+    /// Loads so far.
+    loads: AtomicU64,
 }
 
 impl Player {
@@ -71,6 +81,7 @@ impl Player {
             commands: Some(tx),
             status,
             thread: Some(thread),
+            loads: AtomicU64::new(0),
         })
     }
 
@@ -82,9 +93,12 @@ impl Player {
     }
 
     /// Loads `track` to play at `gain` (the planned gain, dB), paused at its start with the
-    /// click off.
-    pub fn load(&self, track: Arc<Track>, gain: DbFs) {
-        self.send(Command::Load { track, gain });
+    /// click off. Returns the load's number, which [`Status::load`] carries once the player's
+    /// thread has taken the track.
+    pub fn load(&self, track: Arc<Track>, gain: DbFs) -> u64 {
+        let load = self.loads.fetch_add(1, Ordering::AcqRel) + 1;
+        self.send(Command::Load { track, gain, load });
+        load
     }
 
     /// Plays from source frame `from`, or from where it stopped.
@@ -163,8 +177,17 @@ struct Open {
 fn run(commands: &mpsc::Receiver<Command>, status: &Mutex<Status>) {
     let mut loaded: Option<Loaded> = None;
     let mut error: Option<String> = None;
+    let mut load = 0;
     loop {
         match commands.recv_timeout(TICK) {
+            Ok(Command::Load {
+                track,
+                gain,
+                load: number,
+            }) => {
+                load = number;
+                handle(Command::Load { track, gain, load }, &mut loaded, &mut error);
+            }
             Ok(command) => handle(command, &mut loaded, &mut error),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
@@ -193,13 +216,14 @@ fn run(commands: &mpsc::Receiver<Command>, status: &Mutex<Status>) {
         *status.lock().unwrap_or_else(PoisonError::into_inner) = Status {
             state,
             error: error.clone(),
+            load,
         };
     }
 }
 
 fn handle(command: Command, loaded: &mut Option<Loaded>, error: &mut Option<String>) {
     match command {
-        Command::Load { track, gain } => {
+        Command::Load { track, gain, .. } => {
             *loaded = Some(Loaded {
                 track,
                 gain,

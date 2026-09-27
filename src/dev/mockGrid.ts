@@ -39,6 +39,17 @@ interface Open {
 }
 
 let open: Open | null = null;
+/**
+ * Decoding as the engine does it: frames decoded so far, reported every 100 ms, then `ready`.
+ * Bins past it read as not decoded, and `read_peaks` answers after a few milliseconds, so the
+ * tiles race decoding as they do in the app.
+ */
+const decode = {
+  frames: 0,
+  timer: null as ReturnType<typeof setInterval> | null,
+};
+const DECODE_STEPS = 15;
+const NOT_DECODED = -32768;
 const saved = new Map<number, { edit: GridEdit; confirmed: boolean }>();
 const player = {
   playing: false,
@@ -110,13 +121,20 @@ function playerEvent() {
 /** Min/max bins shaped by the kicks: a sharp attack decaying over 90 ms above a quiet bed. */
 function peaks(spb: number, firstBin: number, bins: number): ArrayBuffer {
   const out = new Int16Array(2 * bins);
+  const total = SECONDS * RATE;
+  const decoded = decode.frames;
   const kicks = open?.kicks ?? new Float64Array(0);
   // The last kick at or before the bin (-1 before the first: a quiet intro).
   let k = -1;
   for (let i = 0; i < bins; i++) {
     const from = (firstBin + i) * spb;
     const to = from + spb;
-    if (from >= SECONDS * RATE) break;
+    if (from >= total) break;
+    if (to > decoded && decoded < total) {
+      out[2 * i] = NOT_DECODED;
+      out[2 * i + 1] = NOT_DECODED;
+      continue;
+    }
     while (k + 1 < kicks.length && (kicks[k + 1] ?? Infinity) <= from) k++;
     const prev = k >= 0 ? kicks[k] : undefined;
     const inside = (kicks[k + 1] ?? Infinity) < to;
@@ -250,9 +268,21 @@ export function gridCommand(
         anchor: null,
         downbeatShift: 0,
       };
-      player.position = 0;
-      setTimeout(() => send({ type: 'decoded', frames: 60 * RATE }), 150);
-      setTimeout(() => send({ type: 'ready', frames: SECONDS * RATE }), 450);
+      // Loading a track stops the player at its start, as the engine does.
+      if (player.timer) clearInterval(player.timer);
+      Object.assign(player, { playing: false, position: 0, timer: null, from: 0, startedAt: 0 });
+      if (decode.timer) clearInterval(decode.timer);
+      decode.frames = 0;
+      decode.timer = setInterval(() => {
+        decode.frames = Math.min(SECONDS * RATE, decode.frames + (SECONDS * RATE) / DECODE_STEPS);
+        if (decode.frames < SECONDS * RATE) {
+          send({ type: 'decoded', frames: decode.frames });
+        } else {
+          if (decode.timer) clearInterval(decode.timer);
+          decode.timer = null;
+          send({ type: 'ready', frames: decode.frames });
+        }
+      }, 100);
       const gain = row.plan.gain;
       const opened: TrackOpened = {
         entry: row.entry,
@@ -277,11 +307,17 @@ export function gridCommand(
     }
     case 'track_close':
       if (player.timer) clearInterval(player.timer);
+      if (decode.timer) clearInterval(decode.timer);
+      decode.timer = null;
       player.playing = false;
       open = null;
       return null;
-    case 'read_peaks':
-      return peaks(a.samplesPerBin as number, a.firstBin as number, a.bins as number);
+    case 'read_peaks': {
+      // Read now, answered 5-30 ms later: an answer can land after the next decode report.
+      const bytes = peaks(a.samplesPerBin as number, a.firstBin as number, a.bins as number);
+      const delay = 5 + (((a.firstBin as number) * 7 + (a.samplesPerBin as number)) % 26);
+      return new Promise((resolve) => setTimeout(() => resolve(bytes), delay));
+    }
     case 'track_cover':
       return new ArrayBuffer(0);
     case 'track_onsets':

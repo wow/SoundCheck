@@ -43,6 +43,47 @@ describe('waveform tiles', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it('fetches again a partial tile whose answer was in flight during a refresh', async () => {
+    // Decoding reaches bin 100 before the request is read and ends while the answer travels:
+    // the refresh cannot see the tile is partial yet, and there is no later refresh.
+    let answer: (data: Int16Array) => void = () => {};
+    const fetch = vi
+      .fn<(spb: number, first: number, bins: number) => Promise<Int16Array>>()
+      .mockImplementationOnce(() => new Promise((r) => (answer = r)))
+      .mockImplementation(async (_spb, first) => tileOf(first));
+    const loaded = vi.fn();
+    const tiles = new PeakTiles(fetch, loaded);
+    tiles.bin(64, 0);
+    tiles.refreshPartial();
+    answer(tileOf(0, 100));
+    await vi.waitFor(() => expect(loaded).toHaveBeenCalledTimes(1));
+    expect(tiles.bin(64, 10)).toEqual([-10, 10]);
+    await vi.waitFor(() => expect(tiles.bin(64, 500)).toEqual([-500, 500]));
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks again for a tile whose refresh failed, keeping what it had', async () => {
+    let decoded = 100;
+    let fail = false;
+    const fetch = vi.fn(async (_spb: number, first: number) => {
+      if (fail) throw new Error('not open');
+      return tileOf(first, decoded);
+    });
+    const tiles = new PeakTiles(fetch, () => {});
+    tiles.bin(64, 0);
+    await vi.waitFor(() => expect(tiles.bin(64, 10)).toEqual([-10, 10]));
+    decoded = TILE_BINS;
+    fail = true;
+    tiles.refreshPartial();
+    tiles.bin(64, 0);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await Promise.resolve();
+    expect(tiles.bin(64, 10)).toEqual([-10, 10]);
+    fail = false;
+    tiles.bin(64, 0);
+    await vi.waitFor(() => expect(tiles.bin(64, 500)).toEqual([-500, 500]));
+  });
+
   it('keeps at most its capacity, dropping the least recently used tile', async () => {
     const fetch = vi.fn(async (_spb: number, first: number) => tileOf(first));
     const tiles = new PeakTiles(fetch, () => {}, 2);

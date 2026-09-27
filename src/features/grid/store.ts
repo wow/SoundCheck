@@ -330,6 +330,8 @@ export const useTrack = create<TrackState>()((set, get) => {
           set({ decoded: event.frames, decodeDone: true, error: event.error.message });
           break;
         case 'player':
+          // A track still opening is paused at its start: a report now is of the track before.
+          if (get().phase !== 'open') break;
           set({
             player: {
               playing: event.playing,

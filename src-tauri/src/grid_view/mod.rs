@@ -127,9 +127,13 @@ impl Shell {
             })
             .map_err(IpcError::from)?,
         );
-        self.load_player(&track, gain, shown.grid.clone())?;
+        let cover = tags::cover(&path).map(|c| c.mime.to_owned());
+        // Held from loading the player until the track is in place: a refit or save of the
+        // track before (which set the player's grid under this lock) cannot land in between.
+        let mut view = self.view();
+        let load = self.load_player(&track, gain, shown.grid.clone())?;
         let stop = Arc::new(AtomicBool::new(false));
-        self.report_player(Arc::clone(&stop), send);
+        self.report_player(Arc::clone(&stop), load, send);
 
         let opened = TrackOpened {
             entry,
@@ -142,9 +146,9 @@ impl Shell {
             edit,
             confirmed: state.confirmed,
             timeline: record.loudness.timeline.clone(),
-            cover: tags::cover(&path).map(|c| c.mime.to_owned()),
+            cover,
         };
-        *self.view() = Some(OpenTrack {
+        *view = Some(OpenTrack {
             file_id,
             record,
             track,
@@ -182,27 +186,29 @@ impl Shell {
     }
 
     /// Loads `track` into the click player (started on first use), paused at its start.
+    /// Loads `track` into the player (started on first use); returns the load's number.
     fn load_player(
         &self,
         track: &Arc<Track>,
         gain: DbFs,
         grid: Option<Grid>,
-    ) -> Result<(), IpcError> {
+    ) -> Result<u64, IpcError> {
         let mut player = self.player();
-        if player.is_none() {
-            *player = Some(Player::new()?);
-        }
-        if let Some(p) = player.as_ref() {
-            p.load(Arc::clone(track), gain);
-            p.set_grid(grid.map(Arc::new));
-            p.set_click(true);
-        }
-        Ok(())
+        let p = match player.as_mut() {
+            Some(p) => p,
+            None => player.insert(Player::new()?),
+        };
+        let load = p.load(Arc::clone(track), gain);
+        p.set_grid(grid.map(Arc::new));
+        p.set_click(true);
+        Ok(load)
     }
 
     /// Sends the player's position at 30 Hz while it plays (and once when it stops), and a
-    /// device error once, until `stop` is set.
-    fn report_player(&self, stop: Arc<AtomicBool>, send: Send) {
+    /// device error once, until `stop` is set. Only the state of load `load` is sent: until the
+    /// player has taken the track, its status still describes the track before (maybe playing,
+    /// far into it), which is not this track's.
+    fn report_player(&self, stop: Arc<AtomicBool>, load: u64, send: Send) {
         let shell = self.clone();
         let spawned = std::thread::Builder::new()
             .name("sc-player-state".into())
@@ -210,7 +216,7 @@ impl Shell {
                 let (mut was_playing, mut last_error) = (false, None);
                 while !stop.load(Ordering::Acquire) {
                     let status = shell.player().as_ref().map(Player::status);
-                    if let Some(status) = status {
+                    if let Some(status) = status.filter(|s| s.load == load) {
                         if let Some(state) = status.state
                             && (state.playing || was_playing)
                         {
@@ -233,6 +239,14 @@ impl Shell {
             });
         if let Err(e) = spawned {
             tracing::warn!(error = %e, "cannot report the player's position");
+        }
+    }
+
+    /// The grid the click follows. Called with the view lock held (lock order: view, then
+    /// player), so it applies to the track that is open.
+    fn set_player_grid(&self, grid: Option<Grid>) {
+        if let Some(p) = self.player().as_ref() {
+            p.set_grid(grid.map(Arc::new));
         }
     }
 
@@ -311,6 +325,8 @@ impl Shell {
         edit.validate()?;
         let (header, residuals) = self.with_open(file_id, |open| {
             let solved = refit_record(&open.record, open.bpm_range, edit);
+            // The click follows the edit, set while this track is surely the open one.
+            self.set_player_grid(solved.as_ref().map(|s| s.grid.clone()));
             Ok(match solved {
                 Some(s) => (
                     GridFitHeader {
@@ -336,9 +352,6 @@ impl Shell {
                 ),
             })
         })?;
-        if let Some(p) = self.player().as_ref() {
-            p.set_grid(header.grid.clone().map(Arc::new));
-        }
         let json = serde_json::to_vec(&header)
             .map_err(|e| IpcError::from(Error::Internal(e.to_string())))?;
         let mut bytes = Vec::with_capacity(4 + json.len() + 4 * residuals.len());
@@ -367,11 +380,9 @@ impl Shell {
             let state = save_edit(store, &open.record, open.bpm_range, edit, confirm)?;
             let mut shown = open.record.clone();
             apply_saved(&mut shown, store);
+            self.set_player_grid(shown.grid.clone());
             Ok((shown.grid, state))
         })?;
-        if let Some(p) = self.player().as_ref() {
-            p.set_grid(grid.clone().map(Arc::new));
-        }
         self.session()
             .set_grid(file_id, grid, state)
             .ok_or_else(|| not_open(file_id))
