@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { Grid } from '@/lib/ipc';
+import type { Grid, TrackOpened } from '@/lib/ipc';
 import {
   OVERVIEW_H,
   RULER_H,
@@ -137,12 +137,14 @@ export function GridCanvas() {
     const observer = new ResizeObserver(resize);
     observer.observe(el);
 
-    // A newly opened track: fresh tiles, and the view at beat zoom with bar 1 near the left.
-    let openedFor: number | null = null;
+    // A newly opened track (the same file opened again too): fresh tiles, the view at beat zoom
+    // with bar 1 near the left, and no pointer position left over from the track before.
+    let openedFor: TrackOpened | null = null;
     const onTrack = () => {
       const t = useTrack.getState();
-      if (t.opened && t.fileId !== openedFor) {
-        openedFor = t.fileId;
+      if (t.opened && t.opened !== openedFor) {
+        openedFor = t.opened;
+        useView.getState().setHover(null);
         tiles.current = new PeakTiles(
           (spb, first, n) => useTrack.getState().readBins(spb, first, n),
           schedule,
@@ -166,14 +168,18 @@ export function GridCanvas() {
       requestFrame();
     };
     const unTrack = useTrack.subscribe((t, prev) => {
-      if (t.decoded !== prev.decoded) tiles.current?.refreshPartial();
+      // Also when decoding ends at the count last reported: tiles asked for since may be partial.
+      if (t.decoded !== prev.decoded || t.decodeDone !== prev.decodeDone) {
+        tiles.current?.refreshPartial();
+      }
       if (t.player !== prev.player) onPlayer();
       if (
         t.opened !== prev.opened ||
         t.fileId !== prev.fileId ||
         t.grid !== prev.grid ||
         t.fit !== prev.fit ||
-        t.decoded !== prev.decoded
+        t.decoded !== prev.decoded ||
+        t.decodeDone !== prev.decodeDone
       ) {
         onTrack();
       }
@@ -291,6 +297,7 @@ export function GridCanvas() {
       observer.disconnect();
       unTrack();
       unView();
+      useView.getState().setHover(null);
       if (pending.current !== null) cancelAnimationFrame(pending.current);
       pending.current = null;
       overlay.removeEventListener('wheel', onWheel);

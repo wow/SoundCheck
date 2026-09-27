@@ -232,13 +232,20 @@ describe('grid view store', () => {
     expect(useTrack.getState()).toMatchObject({ confirmed: true, saving: false });
   });
 
-  it('drops the events of a closed track', async () => {
+  it('drops the events of a closed track, and player reports while opening', async () => {
     let send: (e: TrackEvent) => void = () => {};
-    vi.mocked(trackOpen).mockImplementationOnce(async (_fileId, onEvent) => {
+    const answer = deferred<TrackOpened>();
+    vi.mocked(trackOpen).mockImplementationOnce((_fileId, onEvent) => {
       send = onEvent;
-      return opened();
+      return answer.promise;
     });
-    await useTrack.getState().open(1);
+    const opening = useTrack.getState().open(1);
+    // While opening, the player's report can only be of the track before.
+    await vi.waitFor(() => expect(vi.mocked(trackOpen)).toHaveBeenCalled());
+    send({ type: 'player', playing: true, position: 2_736_000, underruns: 0 });
+    expect(useTrack.getState().player).toMatchObject({ playing: false, position: 0 });
+    answer.resolve(opened());
+    await opening;
     send({ type: 'decoded', frames: 10 });
     expect(useTrack.getState().decoded).toBe(10);
     await useTrack.getState().close();

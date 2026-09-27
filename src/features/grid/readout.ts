@@ -13,19 +13,20 @@ export function playText(t: Pick<TrackState, 'opened' | 'grid' | 'player'>): {
 } {
   const rate = t.opened?.sampleRate ?? 44_100;
   const at = t.player.position;
-  const line = t.grid && at > 0 ? nearestLine(t.grid, rate, at) : null;
+  const line = t.grid ? nearestLine(t.grid, rate, at) : null;
   return { clock: clockText(at, rate), bar: line ? `${line.bar}.${line.pulse}` : '–' };
 }
 
 /**
  * Time, bar and beat (or pulse and group), residual and short-term loudness at the pointer, or
- * at the playhead when the pointer is away; null when there is nothing to read.
+ * at the playhead when the pointer is away (the start of a track just opened); null before the
+ * track is open.
  */
 export function readoutText(
   t: Pick<TrackState, 'opened' | 'grid' | 'fit' | 'player'>,
   hover: number | null,
 ): string | null {
-  const at = hover ?? (t.player.position > 0 ? t.player.position : null);
+  const at = hover ?? t.player.position;
   if (!t.opened || at === null) return null;
   const rate = t.opened.sampleRate;
   const parts = [clockText(at, rate)];

@@ -20,7 +20,7 @@ interface Tile {
   index: number;
   data: Int16Array | null;
   partial: boolean;
-  /** Partial and refreshed since it loaded: fetched again when next drawn. */
+  /** Partial and refreshed since it was asked for: fetched again when next drawn. */
   stale: boolean;
   loading: boolean;
   used: number;
@@ -29,6 +29,8 @@ interface Tile {
 export class PeakTiles {
   private tiles = new Map<string, Tile>();
   private clock = 0;
+  /** Bumped by every refresh: an answer asked for before the latest one may be out of date. */
+  private generation = 0;
 
   constructor(
     private readonly fetchBins: FetchBins,
@@ -67,8 +69,12 @@ export class PeakTiles {
     return [min, max];
   }
 
-  /** Marks tiles with undecoded bins to be fetched again. */
+  /**
+   * Marks tiles with undecoded bins to be fetched again. A tile whose answer is still on its way
+   * is judged when it lands: if it has undecoded bins, it is fetched again too.
+   */
   refreshPartial(): void {
+    this.generation++;
     for (const tile of this.tiles.values()) if (tile.partial) tile.stale = true;
   }
 
@@ -81,6 +87,7 @@ export class PeakTiles {
   }
 
   private load(key: string, tile: Tile): void {
+    const asked = this.generation;
     tile.loading = true;
     tile.stale = false;
     this.fetchBins(tile.samplesPerBin, tile.index * TILE_BINS, TILE_BINS).then(
@@ -89,12 +96,16 @@ export class PeakTiles {
         if (this.tiles.get(key) !== tile) return;
         tile.data = data;
         tile.partial = data.includes(NOT_DECODED);
+        tile.stale = tile.partial && asked !== this.generation;
         this.onLoad();
       },
       () => {
         tile.loading = false;
-        // A tile that never loaded is asked for again next time; one with bins keeps them.
-        if (tile.data === null && this.tiles.get(key) === tile) this.tiles.delete(key);
+        if (this.tiles.get(key) !== tile) return;
+        // Asked for again when next drawn: a tile that never loaded from scratch, one with bins
+        // keeping them meanwhile.
+        if (tile.data === null) this.tiles.delete(key);
+        else tile.stale = true;
       },
     );
   }
