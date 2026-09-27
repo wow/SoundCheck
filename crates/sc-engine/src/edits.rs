@@ -7,7 +7,8 @@
 //! after the range setting changes. A confirmation counts only while that grid is still the one
 //! the user confirmed: a new beat model or solver that moves it sends the row back to review.
 
-use sc_analysis::refit::{self, Context};
+use sc_analysis::grid::Solved;
+use sc_analysis::refit::{self, Context, timed};
 use sc_core::analysis::{AnalysisRecord, Grid, GridEdit};
 use sc_core::{Bpm, Result};
 use sc_io::edits::{AudioIdentity, EDIT_SCHEMA, EditStore, GridPin, SavedEdit};
@@ -54,6 +55,39 @@ fn same_grid(pin: Option<&GridPin>, grid: Option<&Grid>) -> bool {
         (None, None) => true,
         _ => false,
     }
+}
+
+/// The grid `edit` gives on `record` (evidence included) under `bpm_range`, with its per-line
+/// residuals; `None` without evidence or when the edit gives no grid.
+#[must_use]
+pub fn refit_record(
+    record: &AnalysisRecord,
+    bpm_range: (Bpm, Bpm),
+    edit: &GridEdit,
+) -> Option<Solved> {
+    let evidence = record.evidence.as_ref()?;
+    let ctx = Context {
+        bpm_range,
+        tags: &record.tags,
+        sample_rate: record.spec.sample_rate,
+    };
+    refit::refit(evidence, &ctx, edit)
+}
+
+/// The attacks a dragged bar 1 snaps to, in seconds: the kick-band onsets, or the broadband ones
+/// when the kick band is nearly silent (the solver's own choice). Empty without evidence.
+#[must_use]
+pub fn snap_onsets(record: &AnalysisRecord) -> Vec<f64> {
+    let Some(ev) = &record.evidence else {
+        return Vec::new();
+    };
+    let kick = timed(&ev.kick_onsets);
+    let onsets = if kick.len() * 4 >= ev.beats_s.len() || ev.broadband_onsets.frames.is_empty() {
+        kick
+    } else {
+        timed(&ev.broadband_onsets)
+    };
+    onsets.iter().map(|o| o.time_s).collect()
 }
 
 /// An edit that gives no grid for a file that has one (or a file without evidence).

@@ -4,8 +4,12 @@
 //! type here has a byte budget that tests enforce. `#[ts(export)]` writes the TypeScript bindings
 //! into `src/lib/ipc/generated/` when `cargo test -p sc-core` runs.
 
+mod track;
+
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+pub use track::{GridFitHeader, RowUpdate, TrackEvent, TrackOpened};
 
 use crate::analysis::{AnalysisRecord, AnalysisSettings, Confidence, Reason, Verdict};
 use crate::plan::{Codec, Plan};
@@ -513,6 +517,54 @@ mod tests {
             revision: u32::MAX,
         };
         assert!(json_len(&ev) <= MAX_ROW_BYTES, "{} bytes", json_len(&ev));
+    }
+
+    #[test]
+    fn a_worst_case_refit_header_stays_within_4_kb() {
+        use crate::analysis::{Alternatives, Grid, Meter};
+        let grid = Grid {
+            anchor: crate::SampleIndex(u64::MAX),
+            bpm: Bpm(123.456_789_012),
+            meter: Meter::ten_eight(),
+            meter_runner_up: Some(Meter::nine_eight_long_first()),
+            first_downbeat_index: u32::MAX,
+            phrase_len_bars: 8,
+            segments: Vec::new(),
+            residual_p95_ms: 12.345_678,
+            residual_max_ms: 45.678_9,
+            local_bpm_range: 0.123_456_7,
+            drift_ppm: -1_083.697_9,
+            verdict: Verdict::Drifts,
+            confidence: Confidence::Red,
+            reasons: vec![
+                Reason::Residuals,
+                Reason::Coverage,
+                Reason::Recall,
+                Reason::OctaveMargin,
+                Reason::DownbeatMargin,
+                Reason::MeterMargin,
+                Reason::TagDisagrees,
+                Reason::OutsideRange,
+                Reason::Short,
+                Reason::Drifts,
+                Reason::NoKick,
+                Reason::Manual,
+            ],
+            alternatives: Alternatives {
+                octave_up: Some(Bpm(246.913_578_024)),
+                octave_down: Some(Bpm(61.728_394_506)),
+                downbeat_shift_beats: vec![-4, -3, -2, -1, 1, 2, 3, 4, 5],
+            },
+        };
+        let header = GridFitHeader {
+            grid: Some(grid),
+            first_line: i64::MIN,
+            lines: u32::MAX,
+            worst_line: Some(i64::MAX),
+            matched: u32::MAX,
+            attacks: u32::MAX,
+        };
+        assert!(json_len(&header) <= 4096, "{} bytes", json_len(&header));
     }
 
     #[test]
