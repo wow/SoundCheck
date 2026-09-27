@@ -1,5 +1,5 @@
 //! `sc-cli plan`: what processing would do to each file, decided exactly as the app's table
-//! decides it (`sc_engine::decide`).
+//! decides it (`sc_engine::decide`), with the grid edits saved in the app applied.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,8 @@ use sc_core::ipc::{IpcError, JobStage};
 use sc_core::plan::{
     Codec, DecideSettings, GainPlan, LoudnessMode, Plan, ReviewReason, SkipReason,
 };
-use sc_engine::{BatchSettings, REPORT_SCHEMA, decide};
+use sc_engine::{BatchSettings, EditState, REPORT_SCHEMA, apply_saved, decide};
+use sc_io::edits::EditStore;
 use serde::Serialize;
 
 use crate::report::ErrorReport;
@@ -22,6 +23,10 @@ struct PlanReport<'a> {
     schema: u32,
     file: String,
     plan: &'a Plan,
+    /// The grid is the user's edit of the analysed one.
+    grid_edited: bool,
+    /// The user confirmed the grid in the app.
+    grid_confirmed: bool,
 }
 
 /// Row counts, as the app's filter chips show them.
@@ -46,10 +51,12 @@ impl Counts {
     }
 }
 
-/// Plans every file, printing in the order given; returns how many failed.
+/// Plans every file with the edits saved in `edits`, printing in the order given; returns how
+/// many failed.
 pub fn plan_all(
     settings: &BatchSettings,
     decide_settings: &DecideSettings,
+    edits: Option<&EditStore>,
     files: &[PathBuf],
     json: bool,
 ) -> anyhow::Result<usize> {
@@ -58,10 +65,14 @@ pub fn plan_all(
     let mut first_error = None;
     crate::run_in_order(settings, files, &mut |file, outcome| {
         let printed = match outcome {
-            Ok(report) => {
-                let plan = decide(&report.record, Codec::from_path(file), decide_settings);
+            Ok(mut report) => {
+                let edit = edits
+                    .map(|store| apply_saved(&mut report.record, store))
+                    .unwrap_or_default();
+                let codec = Codec::from_path(file);
+                let plan = decide(&report.record, codec, decide_settings, edit.confirmed);
                 counts.add(&plan);
-                print_plan(file, &report.record, &plan, decide_settings, json)
+                print_plan(file, &report.record, &plan, edit, decide_settings, json)
             }
             Err(err) => {
                 failed += 1;
@@ -92,6 +103,7 @@ fn print_plan(
     file: &Path,
     record: &AnalysisRecord,
     plan: &Plan,
+    edit: EditState,
     settings: &DecideSettings,
     json: bool,
 ) -> anyhow::Result<()> {
@@ -102,6 +114,8 @@ fn print_plan(
             schema: REPORT_SCHEMA,
             file: file.display().to_string(),
             plan,
+            grid_edited: edit.edited,
+            grid_confirmed: edit.confirmed,
         };
         serde_json::to_writer_pretty(&mut out, &doc)?;
         writeln!(out)?;
@@ -133,6 +147,12 @@ fn print_plan(
             .map(|r| review(r, record, settings))
             .collect();
         write!(out, ": {}", reasons.join(", "))?;
+    }
+    match (edit.edited, edit.confirmed) {
+        (true, true) => write!(out, "  (grid edited and confirmed)")?,
+        (true, false) => write!(out, "  (grid edited)")?,
+        (false, true) => write!(out, "  (grid confirmed)")?,
+        (false, false) => {}
     }
     writeln!(out)?;
     Ok(())

@@ -32,6 +32,7 @@ fn plan(dir: &Path, args: &[&str]) -> (bool, String) {
     let output = Command::cargo_bin("sc-cli")
         .expect("binary")
         .env("SC_CACHE_DIR", dir.join("cache"))
+        .env("SC_EDITS_DIR", dir.join("edits"))
         .arg("plan")
         .args(args)
         .arg("--no-grid")

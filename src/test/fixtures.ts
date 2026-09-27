@@ -48,6 +48,8 @@ export function analysis(overrides: Partial<RowAnalysis> = {}): RowAnalysis {
     gridSkipped: null,
     tagBpm: null,
     cached: false,
+    edited: false,
+    confirmed: false,
     ...overrides,
   };
 }

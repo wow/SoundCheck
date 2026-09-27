@@ -90,7 +90,7 @@ fn replan(c: &mut Criterion) {
     c.bench_function("decide 1000 rows", |b| {
         b.iter(|| {
             rows.iter()
-                .map(|(r, codec)| decide(r, *codec, &settings))
+                .map(|(r, codec)| decide(r, *codec, &settings, false))
                 .filter(|p| !p.review.is_empty())
                 .count()
         });

@@ -53,4 +53,12 @@ tagBpm: Bpm | null,
 /**
  * Served from the analysis cache.
  */
-cached: boolean, };
+cached: boolean, 
+/**
+ * The grid is the user's edit of the analysed one.
+ */
+edited: boolean, 
+/**
+ * The user confirmed the grid by ear; it needs no review.
+ */
+confirmed: boolean, };

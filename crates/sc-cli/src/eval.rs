@@ -8,8 +8,9 @@
 //!
 //! - BPM within 0.02, exactly or after one octave flip (x2 or /2);
 //! - meter and grouping identical;
-//! - bar 1 within 15 ms, compared modulo the labelled bar length (bar 1 of a lead-in may be a
-//!   whole bar apart and still be the same downbeat);
+//! - bar 1 within 15 ms, compared modulo the bar length (bar 1 of a lead-in may be a whole bar
+//!   apart and still be the same downbeat): the label's meter at the label's tempo, falling back
+//!   to ours for whichever the label leaves blank;
 //! - integrated loudness within 0.1 LU of ffmpeg.
 
 use std::collections::BTreeMap;
@@ -251,9 +252,11 @@ pub fn run(analyzer: &mut Analyzer, labels: &[Label], dir: &Path) -> (Vec<Scored
             row.meter_ok = Some(row.meter.as_deref() == Some(expected.as_str()));
             tally(&mut summary.meter, row.meter_ok);
         }
-        if let (Some(bar1), Some(label_bpm)) = (label.bar1_s, label.bpm) {
-            let beats_per_bar = f64::from(grid.meter.beats_per_bar.max(1));
-            let bar = beats_per_bar * 60.0 / label_bpm;
+        if let Some(bar1) = label.bar1_s {
+            // The bar is the label's when it names a meter and a tempo, else ours.
+            let beats_per_bar = label_beats_per_bar(label)
+                .unwrap_or_else(|| f64::from(grid.meter.beats_per_bar.max(1)));
+            let bar = beats_per_bar * 60.0 / label.bpm.unwrap_or(bpm);
             let ours = grid.anchor.to_seconds(record.spec.sample_rate).0;
             let d = ours - bar1;
             let wrapped = d - bar * (d / bar).round();
@@ -264,6 +267,16 @@ pub fn run(analyzer: &mut Analyzer, labels: &[Label], dir: &Path) -> (Vec<Scored
         rows.push(row);
     }
     (rows, summary)
+}
+
+/// Pulses per bar of a label: the sum of its grouping, else its meter's numerator.
+fn label_beats_per_bar(label: &Label) -> Option<f64> {
+    if let Some(grouping) = &label.grouping {
+        return Some(grouping.iter().map(|&g| f64::from(g)).sum());
+    }
+    let meter = label.meter.as_deref()?;
+    let (n, _) = meter.split_once('/')?;
+    n.trim().parse::<f64>().ok().filter(|n| *n > 0.0)
 }
 
 fn tally(count: &mut (usize, usize), ok: Option<bool>) {
@@ -382,6 +395,10 @@ mod tests {
             Some("9/8 · 2+2+2+3")
         );
         assert!(parse_labels("bpm\n120\n").is_err());
+        assert_eq!(label_beats_per_bar(&labels[1]), Some(9.0));
+        assert_eq!(label_beats_per_bar(&labels[0]), Some(4.0));
+        let unlabelled = Label::default();
+        assert_eq!(label_beats_per_bar(&unlabelled), None);
         assert!(parse_labels("file,bpm\nx.flac,fast\n").is_err());
     }
 }

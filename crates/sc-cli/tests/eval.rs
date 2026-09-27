@@ -107,6 +107,32 @@ fn a_labelled_click_track_scores_bpm_meter_and_bar_one() {
 }
 
 #[test]
+fn bar_one_is_scored_without_a_labelled_bpm_and_at_the_label_s_meter() {
+    let Some(_) = models() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let clicks = testsig::click_track(AudioSpec::CD, sc_core::Bpm(120.0), 120, 15.0);
+    write_wav(&dir.path().join("click.wav"), &clicks, 0.5, 0.5);
+    // Bar 1 labelled two bars in, without a tempo: the same downbeat at our tempo.
+    let (ok, out) = run_eval(
+        dir.path(),
+        "file,bpm,bar1_s,meter,grouping\nclick.wav,,4.500,4/4,\n",
+        &[],
+    );
+    assert!(ok, "{out}");
+    assert!(out.contains("bar 1 within 15 ms: 1/1"), "{out}");
+    assert!(out.contains("bpm within 0.02: 0/0"), "{out}");
+    // Labelled as 2/4 at 120: 1.5 s is a bar line of that meter (bars of 1 s from 0.5 s), though
+    // half a 4/4 bar from ours.
+    let (ok, out) = run_eval(
+        dir.path(),
+        "file,bpm,bar1_s,meter,grouping\nclick.wav,120.00,1.500,2/4,\n",
+        &[],
+    );
+    assert!(ok, "{out}");
+    assert!(out.contains("bar 1 within 15 ms: 1/1"), "{out}");
+}
+
+#[test]
 fn a_labels_file_without_a_file_column_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
     let (ok, out) = run_eval(dir.path(), "bpm\n120\n", &["--no-grid"]);
