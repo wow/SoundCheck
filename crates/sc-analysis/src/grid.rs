@@ -118,6 +118,9 @@ pub struct SolveSettings {
     pub fixed_period: Option<f64>,
     /// A tempo set by the user; skips the octave choice.
     pub bpm_override: Option<f64>,
+    /// A beat period chosen by the user (a tapped lattice), in seconds; replaces the octave
+    /// choice but is snapped like it.
+    pub tempo_period: Option<f64>,
     /// A bar line placed by the user, in seconds: bar 1 is the line of its lattice at or after
     /// the first beat (to within half a period); a line placed there is kept exactly.
     pub anchor_override_s: Option<f64>,
@@ -139,6 +142,7 @@ impl Default for SolveSettings {
             meter_margin: 1.0,
             fixed_period: None,
             bpm_override: None,
+            tempo_period: None,
             anchor_override_s: None,
             octave_shift: 0,
             downbeat_shift: 0,
@@ -200,11 +204,26 @@ pub fn solve_detailed(
     let (coverage, recall) = (tempo.coverage, tempo.recall);
     let phase = phase_from_onsets(tempo.period, tempo.phase, tempo.alt_phase, span, onsets);
 
-    let (octave, bpm) = choose_tempo(&tempo, phase, settings, onsets, span);
+    let TempoChoice { base, chosen, bpm } = choose_tempo(&tempo, phase, settings, onsets, span);
     let period = 60.0 / bpm;
+    let bar = usize::from(settings.meter.beats_per_bar.max(1));
+    // A slower lattice the user chose (half tempo, a slower tap) runs through the bar 1 of the
+    // tempo it came from, not through whichever beat the model's phase falls on.
+    let mut octave = chosen;
+    if octave.period > base.period * 1.01 && settings.anchor_override_s.is_none() {
+        let db = downbeat_phase(
+            base.period,
+            base.phase,
+            bar,
+            span,
+            ev.downbeats_s,
+            ev.downbeat_logits,
+            onsets,
+        );
+        octave.phase = first_downbeat(base.period, base.phase, bar, db.r, span.0);
+    }
 
     // Bar 1.
-    let bar = usize::from(settings.meter.beats_per_bar.max(1));
     let (anchor_s, downbeat) = if let Some(anchor) = settings.anchor_override_s {
         let bar_len = period * count_f64(bar);
         (
@@ -268,16 +287,29 @@ pub fn solve_detailed(
     Some(Solved { grid, lines })
 }
 
-/// The grid's beat period and phase and its BPM: the user's tempo, the meter's fixed pulse or
-/// the octave choice, then the user's octave steps, then the round-BPM snap.
+/// The tempo the solver settled on before the user's changes (`base`: their typed tempo, the
+/// meter's fixed pulse or the octave choice), the one the grid uses (`chosen`: a tapped lattice
+/// or the user's octave steps applied), and its BPM after the round-BPM snap.
+struct TempoChoice {
+    base: Octave,
+    chosen: Octave,
+    bpm: f64,
+}
+
 fn choose_tempo(
     tempo: &Tempo,
     phase: f64,
     settings: &SolveSettings,
     onsets: &[TimedOnset],
     span: (f64, f64),
-) -> (Octave, f64) {
-    let octave = match settings.bpm_override {
+) -> TempoChoice {
+    let user = |period| Octave {
+        period,
+        phase,
+        rule: OctaveRule::Range,
+        margin: 1.0,
+    };
+    let base = match settings.bpm_override {
         Some(bpm) if bpm > 0.0 => Octave {
             period: 60.0 / bpm,
             phase,
@@ -285,31 +317,30 @@ fn choose_tempo(
             margin: 1.0,
         },
         _ => match settings.fixed_period {
-            Some(period) if period > 0.0 => Octave {
-                period,
-                phase,
-                rule: OctaveRule::Range,
-                margin: 1.0,
-            },
+            Some(period) if period > 0.0 => user(period),
             _ => choose_octave(tempo, phase, settings, onsets, span),
         },
     };
-    let octave = if settings.octave_shift != 0 && octave.rule != OctaveRule::Override {
-        shift_octave(octave, settings.octave_shift, onsets, span)
-    } else {
-        octave
+    let chosen = match settings.tempo_period {
+        Some(period) if period > 0.0 && base.rule != OctaveRule::Override => user(period),
+        _ => base,
     };
-    let sigma_period = tempo.sigma_period * octave.period / tempo.period;
-    let fitted_bpm = 60.0 / octave.period;
-    let bpm = if octave.rule == OctaveRule::Override {
+    let chosen = if settings.octave_shift != 0 && chosen.rule != OctaveRule::Override {
+        shift_octave(chosen, settings.octave_shift)
+    } else {
+        chosen
+    };
+    let sigma_period = tempo.sigma_period * chosen.period / tempo.period;
+    let fitted_bpm = 60.0 / chosen.period;
+    let bpm = if chosen.rule == OctaveRule::Override {
         fitted_bpm
     } else {
         snap_bpm(
             fitted_bpm,
-            60.0 * sigma_period / (octave.period * octave.period),
+            60.0 * sigma_period / (chosen.period * chosen.period),
         )
     };
-    (octave, bpm)
+    TempoChoice { base, chosen, bpm }
 }
 
 /// A grid from a typed tempo and a placed bar line alone, for tracks in which the model found
@@ -387,8 +418,14 @@ fn first_bar_line(t: f64, bar_len: f64, start: f64) -> f64 {
 /// the judged span.
 fn line_residuals(fit: &Fitness, anchor: f64, period: f64, span: (f64, f64)) -> LineResiduals {
     let window = MATCH_WINDOW_S.min(period / 4.0);
-    let first = (-anchor / period).ceil();
-    let last = ((span.1 + window - anchor) / period).floor();
+    let (lo, hi) = fit
+        .pairs
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+            (lo.min(p.0), hi.max(p.0))
+        });
+    let first = (-anchor / period).ceil().min(lo);
+    let last = ((span.1 + window - anchor) / period).floor().max(hi);
     let len = if last >= first {
         line_count(last - first + 1.0)
     } else {
@@ -415,27 +452,13 @@ fn line_residuals(fit: &Fitness, anchor: f64, period: f64, span: (f64, f64)) -> 
     }
 }
 
-/// The octave `steps` away from `o`: doubling halves the period; halving doubles it and keeps
-/// the parity of the slower lattice that lands on more attacks. The user chose it, so the
-/// octave is no longer in doubt.
-fn shift_octave(o: Octave, steps: i8, onsets: &[TimedOnset], span: (f64, f64)) -> Octave {
-    let times: Vec<f64> = onsets.iter().map(|x| x.time_s).collect();
-    let (mut period, mut phase) = (o.period, o.phase);
-    for _ in 0..steps.unsigned_abs() {
-        if steps > 0 {
-            period /= 2.0;
-        } else {
-            let on = slot_hits(&times, period * 2.0, phase, span, INLIER_S);
-            let off = slot_hits(&times, period * 2.0, phase + period, span, INLIER_S);
-            if off > on {
-                phase += period;
-            }
-            period *= 2.0;
-        }
-    }
+/// The octave `steps` away from `o`: each step up halves the period, each step down doubles
+/// it. The user chose it, so the octave is no longer in doubt; a slower lattice is moved onto
+/// bar 1 by the caller.
+fn shift_octave(o: Octave, steps: i8) -> Octave {
     Octave {
-        period,
-        phase,
+        period: o.period * 2f64.powi(-i32::from(steps)),
+        phase: o.phase,
         rule: o.rule,
         margin: 1.0,
     }

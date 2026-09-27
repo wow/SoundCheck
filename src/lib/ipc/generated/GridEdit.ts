@@ -30,6 +30,8 @@ octave: number,
  */
 anchor: SampleIndex | null, 
 /**
- * Which beat of the solved bar is beat 1 (0 = as solved), when no anchor is placed.
+ * Which beat of the bar the solver finds with the other overrides is beat 1 (0 = as
+ * solved), when no anchor is placed. It is relative: a later meter or tempo change moves
+ * the bar it counts from, so an editor that wants bar 1 to stay put places `anchor`.
  */
 downbeatShift: number, };

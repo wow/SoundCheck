@@ -113,6 +113,33 @@ fn four_four(bpm: f64) -> GridEvidence {
     evidence(&[1, 1, 1, 1], 60.0 / bpm, 64, 1)
 }
 
+/// `ev` without its first `beats` model beats and the attacks before the next one: the track
+/// then starts on another beat than bar 1.
+fn without_first_beats(mut ev: GridEvidence, beats: usize) -> GridEvidence {
+    let start = ev.beats_s[beats] - 0.01;
+    ev.beats_s.drain(..beats);
+    ev.downbeats_s.retain(|&d| d >= start);
+    let cut = (f64::from(start) * f64::from(ANALYSIS_RATE)) as u32;
+    for list in [&mut ev.kick_onsets, &mut ev.broadband_onsets] {
+        let keep = list
+            .frames
+            .iter()
+            .position(|&f| f >= cut)
+            .unwrap_or(list.frames.len());
+        list.frames.drain(..keep);
+        list.rise_db.drain(..keep);
+        list.level_db.drain(..keep);
+    }
+    ev
+}
+
+/// Whether `t` lies on one of `grid`'s bar lines, within 1 ms.
+fn on_bar_line(grid: &Grid, t: f64) -> bool {
+    let bar = f64::from(grid.meter.beats_per_bar) * 60.0 / grid.bpm.0;
+    let off = (t - anchor_s(grid)).rem_euclid(bar);
+    off.min(bar - off) <= 0.001
+}
+
 fn fit(ev: &GridEvidence, edit: &GridEdit) -> Solved {
     let tags = TagHints::default();
     let ctx = Context {
@@ -181,6 +208,108 @@ fn x2_and_half_double_and_halve_the_tempo_on_the_same_bar_lines() {
             "{bpm}: /2 bar 1 off by {off}"
         );
     }
+}
+
+#[test]
+fn slower_lattices_keep_bar_one_whichever_beat_the_track_starts_on() {
+    for bpm in [124.0, 127.98, 174.0] {
+        for dropped in 0..4 {
+            let ev = without_first_beats(four_four(bpm), dropped);
+            let base = fit(&ev, &GridEdit::default()).grid;
+            assert!(
+                on_bar_line(&base, FIRST),
+                "{bpm}/{dropped}: the analysis keeps bar 1 ({:.4})",
+                anchor_s(&base)
+            );
+            let halved = fit(
+                &ev,
+                &GridEdit {
+                    octave: -1,
+                    ..GridEdit::default()
+                },
+            )
+            .grid;
+            assert!(
+                on_bar_line(&base, anchor_s(&halved)),
+                "{bpm}/{dropped}: /2 puts bar 1 at {:.4}",
+                anchor_s(&halved)
+            );
+            let tapped = fit(
+                &ev,
+                &GridEdit {
+                    tempo_hint: Some(Bpm(base.bpm.0 / 2.0 * 1.01)),
+                    ..GridEdit::default()
+                },
+            )
+            .grid;
+            assert!(
+                (tapped.bpm.0 - base.bpm.0 / 2.0).abs() < 0.005,
+                "{}",
+                tapped.bpm.0
+            );
+            assert!(
+                on_bar_line(&base, anchor_s(&tapped)),
+                "{bpm}/{dropped}: a half-tempo tap puts bar 1 at {:.4}",
+                anchor_s(&tapped)
+            );
+        }
+    }
+}
+
+#[test]
+fn edits_outside_the_limits_give_no_grid() {
+    let ev = four_four(124.0);
+    let tags = TagHints::default();
+    let ctx = Context {
+        bpm_range: (Bpm(70.0), Bpm(180.0)),
+        tags: &tags,
+        sample_rate: SR,
+    };
+    for edit in [
+        GridEdit {
+            bpm: Some(Bpm(1e7)),
+            ..GridEdit::default()
+        },
+        GridEdit {
+            bpm: Some(Bpm(f64::NAN)),
+            ..GridEdit::default()
+        },
+        GridEdit {
+            tempo_hint: Some(Bpm(0.5)),
+            ..GridEdit::default()
+        },
+        GridEdit {
+            octave: 12,
+            ..GridEdit::default()
+        },
+        GridEdit {
+            anchor: Some(SampleIndex(u64::MAX)),
+            ..GridEdit::default()
+        },
+        GridEdit {
+            meter: Some(Meter {
+                beats_per_bar: 9,
+                unit: BeatUnit::Eighth,
+                grouping: vec![2, 2],
+            }),
+            ..GridEdit::default()
+        },
+    ] {
+        assert!(refit(&ev, &ctx, &edit).is_none(), "{edit:?}");
+    }
+    // Two octaves down (31 BPM) is still a tempo; three (15.5 BPM) are not, and neither are
+    // three up from 174 (1392 BPM).
+    let steps = |octave| GridEdit {
+        octave,
+        ..GridEdit::default()
+    };
+    assert!((fit(&ev, &steps(-2)).grid.bpm.0 - 31.0).abs() < 1e-9);
+    assert!(refit(&ev, &ctx, &steps(-3)).is_none());
+    assert!(refit(&four_four(174.0), &ctx, &steps(3)).is_none());
+    assert!(
+        refit(&ev, &ctx, &steps(3)).is_some(),
+        "992 BPM is inside the limits"
+    );
 }
 
 #[test]
@@ -447,6 +576,35 @@ fn the_residual_lane_has_one_value_per_line_with_gaps_and_the_worst_line() {
     // One late attack does not move the smoothed curve's worst point far from zero, but the
     // worst line is still reported.
     assert!(lines.worst_line.is_some());
+}
+
+#[test]
+fn every_matched_attack_and_the_worst_line_are_inside_the_lane() {
+    let mut ev = four_four(120.0);
+    // An attack 20 ms after the last beat's line, on a grid that drifts late towards the end.
+    let last = *ev.kick_onsets.frames.last().unwrap();
+    ev.kick_onsets
+        .frames
+        .push(last + (0.52 * f64::from(ANALYSIS_RATE)) as u32);
+    ev.kick_onsets.rise_db.push(25.0);
+    ev.kick_onsets.level_db.push(-3.0);
+    let solved = fit(
+        &ev,
+        &GridEdit {
+            bpm: Some(Bpm(120.02)),
+            ..GridEdit::default()
+        },
+    );
+    let lines = &solved.lines;
+    let finite = lines.residuals_ms.iter().filter(|r| r.is_finite()).count();
+    assert_eq!(finite, lines.matched as usize);
+    let worst = lines.worst_line.expect("a worst line");
+    let end = lines.first_line + i64::try_from(lines.residuals_ms.len()).unwrap();
+    assert!(
+        (lines.first_line..end).contains(&worst),
+        "{worst} not in {}..{end}",
+        lines.first_line
+    );
 }
 
 #[test]

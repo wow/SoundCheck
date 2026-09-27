@@ -19,7 +19,9 @@
 //! grid only from a typed BPM and a placed bar line ([`grid::manual`]). A refit takes well under
 //! 5 ms on a six-minute track (`benches/grid.rs`), so the grid view recomputes on every edit.
 
-use sc_core::analysis::{BeatUnit, GridEdit, GridEvidence, Meter, OnsetList, TagHints};
+use sc_core::analysis::{
+    BeatUnit, EDIT_BPM_LIMITS, GridEdit, GridEvidence, Meter, OnsetList, TagHints,
+};
 use sc_core::{Bpm, SampleIndex};
 
 use crate::grid::{self, BeatFit, Evidence, SolveSettings, Solved, TimedOnset};
@@ -41,10 +43,30 @@ pub struct Context<'a> {
     pub sample_rate: u32,
 }
 
+/// Longest time a placed bar line may lie from the start of the file.
+const MAX_ANCHOR_S: f64 = 24.0 * 3600.0;
+
 /// The grid for `evidence` under `edit`, with its per-line residuals; `None` when the model
-/// found too few beats and the edit does not give both a BPM and a bar line.
+/// found too few beats and the edit does not give both a BPM and a bar line, and when the edit
+/// is outside its limits ([`GridEdit::validate`], a bar line within 24 hours) or would give a
+/// tempo outside [`EDIT_BPM_LIMITS`].
 #[must_use]
 pub fn refit(evidence: &GridEvidence, ctx: &Context<'_>, edit: &GridEdit) -> Option<Solved> {
+    if edit.is_empty() {
+        return solve(evidence, ctx, edit);
+    }
+    edit.validate().ok()?;
+    if edit
+        .anchor
+        .is_some_and(|a| a.to_seconds(ctx.sample_rate).0 > MAX_ANCHOR_S)
+    {
+        return None;
+    }
+    let (lo, hi) = EDIT_BPM_LIMITS;
+    solve(evidence, ctx, edit).filter(|s| (lo..=hi).contains(&s.grid.bpm.0))
+}
+
+fn solve(evidence: &GridEvidence, ctx: &Context<'_>, edit: &GridEdit) -> Option<Solved> {
     let beats_s: Vec<f64> = evidence.beats_s.iter().map(|&b| f64::from(b)).collect();
     let downbeats_s: Vec<f64> = evidence.downbeats_s.iter().map(|&b| f64::from(b)).collect();
     let kick = timed(&evidence.kick_onsets);
@@ -102,13 +124,13 @@ pub fn refit(evidence: &GridEvidence, ctx: &Context<'_>, edit: &GridEdit) -> Opt
             (estimate.meter.unit == BeatUnit::Eighth).then_some(estimate.unit_period),
         ),
     };
-    let (fixed_period, bpm_override) = match (edit.bpm, edit.tempo_hint) {
-        (Some(bpm), _) => (fixed_period, Some(bpm.0)),
+    let (tempo_period, bpm_override) = match (edit.bpm, edit.tempo_hint) {
+        (Some(bpm), _) => (None, Some(bpm.0)),
         (None, Some(tap)) => match tapped_period(tap.0, &fit, &kick) {
             Some(period) => (Some(period), None),
-            None => (fixed_period, Some(tap.0)),
+            None => (None, Some(tap.0)),
         },
-        (None, None) => (fixed_period, None),
+        (None, None) => (None, None),
     };
     let settings = SolveSettings {
         bpm_range: (ctx.bpm_range.0.0, ctx.bpm_range.1.0),
@@ -118,6 +140,7 @@ pub fn refit(evidence: &GridEvidence, ctx: &Context<'_>, edit: &GridEdit) -> Opt
         meter_margin,
         fixed_period,
         bpm_override,
+        tempo_period,
         anchor_override_s: anchor_s,
         octave_shift: edit.octave,
         downbeat_shift: edit.downbeat_shift,

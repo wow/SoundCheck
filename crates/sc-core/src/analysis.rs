@@ -459,15 +459,61 @@ pub struct GridEdit {
     /// A bar line placed by the user, at the native rate; any bar line may be given, bar 1 is
     /// the first one at or after the first beat.
     pub anchor: Option<SampleIndex>,
-    /// Which beat of the solved bar is beat 1 (0 = as solved), when no anchor is placed.
+    /// Which beat of the bar the solver finds with the other overrides is beat 1 (0 = as
+    /// solved), when no anchor is placed. It is relative: a later meter or tempo change moves
+    /// the bar it counts from, so an editor that wants bar 1 to stay put places `anchor`.
     pub downbeat_shift: u8,
 }
+
+/// Tempos an edit may set or produce, in BPM at the meter's unit: wide enough for any pulse a
+/// DJ counts, narrow enough that a grid never has more than about 17 lines per second.
+pub const EDIT_BPM_LIMITS: (f64, f64) = (20.0, 1000.0);
+
+/// The most octave steps an edit may take from the chosen tempo.
+pub const EDIT_OCTAVE_LIMIT: i8 = 3;
+
+/// The most pulses a bar of an edited meter may have.
+pub const EDIT_MAX_PULSES: u8 = 32;
 
 impl GridEdit {
     /// No override is set.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self == &Self::default()
+    }
+
+    /// Checks the overrides against [`EDIT_BPM_LIMITS`], [`EDIT_OCTAVE_LIMIT`] and a meter of
+    /// 1 to [`EDIT_MAX_PULSES`] pulses whose groups sum to the bar.
+    ///
+    /// # Errors
+    /// [`crate::Error::InvalidArgument`] naming the first value out of its limits.
+    pub fn validate(&self) -> crate::Result<()> {
+        let invalid = |what: String| Err(crate::Error::InvalidArgument(what));
+        let (lo, hi) = EDIT_BPM_LIMITS;
+        for (name, bpm) in [("BPM", self.bpm), ("tapped BPM", self.tempo_hint)] {
+            if let Some(Bpm(b)) = bpm
+                && !(lo..=hi).contains(&b)
+            {
+                return invalid(format!("{name} {b} is outside {lo}-{hi}"));
+            }
+        }
+        if self.octave.unsigned_abs() > EDIT_OCTAVE_LIMIT.unsigned_abs() {
+            return invalid(format!(
+                "{} octave steps (at most {EDIT_OCTAVE_LIMIT})",
+                self.octave
+            ));
+        }
+        if let Some(m) = &self.meter {
+            let sum: u32 = m.grouping.iter().map(|&g| u32::from(g)).sum();
+            if m.beats_per_bar == 0
+                || m.beats_per_bar > EDIT_MAX_PULSES
+                || m.grouping.contains(&0)
+                || sum != u32::from(m.beats_per_bar)
+            {
+                return invalid(format!("meter {m:?}"));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -656,6 +702,50 @@ mod tests {
         let json = serde_json::to_string(&record).unwrap();
         let back: AnalysisRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(back.evidence, record.evidence, "every f32 bit survives");
+    }
+
+    #[test]
+    fn grid_edits_are_checked_against_their_limits() {
+        assert!(GridEdit::default().validate().is_ok());
+        let ok = GridEdit {
+            bpm: Some(Bpm(399.0)),
+            octave: -3,
+            meter: Some(Meter::ten_eight()),
+            ..GridEdit::default()
+        };
+        assert!(ok.validate().is_ok());
+        for bad in [
+            GridEdit {
+                bpm: Some(Bpm(f64::INFINITY)),
+                ..GridEdit::default()
+            },
+            GridEdit {
+                tempo_hint: Some(Bpm(1000.5)),
+                ..GridEdit::default()
+            },
+            GridEdit {
+                octave: 4,
+                ..GridEdit::default()
+            },
+            GridEdit {
+                meter: Some(Meter {
+                    beats_per_bar: 0,
+                    unit: BeatUnit::Quarter,
+                    grouping: vec![],
+                }),
+                ..GridEdit::default()
+            },
+            GridEdit {
+                meter: Some(Meter {
+                    beats_per_bar: 4,
+                    unit: BeatUnit::Quarter,
+                    grouping: vec![1, 0, 3],
+                }),
+                ..GridEdit::default()
+            },
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?}");
+        }
     }
 
     #[test]
