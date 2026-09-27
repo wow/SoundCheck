@@ -27,6 +27,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: source files stay under 700 lines
         run: ./scripts/check-file-size.sh
+      - name: unit tests live in their own files
+        run: ./scripts/check-test-files.sh
       - name: fmt
         run: cargo fmt --all --check
       - name: clippy
