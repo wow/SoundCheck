@@ -430,7 +430,9 @@ fn run_in_order(
     let mut next = 0;
     let result = run_batch(&batch, settings, &CancelToken::new(), &mut |event| {
         let (file_id, outcome) = match event {
-            EngineEvent::Analysed { file_id, report } => (file_id, Ok(*report)),
+            EngineEvent::Analysed {
+                file_id, report, ..
+            } => (file_id, Ok(*report)),
             EngineEvent::Failed { file_id, error } => (file_id, Err(error)),
             EngineEvent::Cancelled { file_id } => (file_id, Err(Error::Cancelled)),
             _ => return,

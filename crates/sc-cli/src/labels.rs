@@ -75,9 +75,10 @@ fn row(name: &str, record: &AnalysisRecord, edit: EditState, confirmed_only: boo
     )
 }
 
-/// A CSV cell, quoted when it holds a comma or a quote.
+/// A CSV cell, quoted when it holds a comma, a quote or a line break, or starts with `#` (which
+/// would read as a comment).
 fn csv(cell: &str) -> String {
-    if cell.contains([',', '"']) {
+    if cell.contains([',', '"', '\n', '\r']) || cell.starts_with('#') {
         format!("\"{}\"", cell.replace('"', "\"\""))
     } else {
         cell.to_owned()
@@ -93,5 +94,6 @@ mod tests {
         assert_eq!(csv("Artist - Song.flac"), "Artist - Song.flac");
         assert_eq!(csv("Artist, The.flac"), "\"Artist, The.flac\"");
         assert_eq!(csv("12\" mix.flac"), "\"12\"\" mix.flac\"");
+        assert_eq!(csv("#1 hit.flac"), "\"#1 hit.flac\"");
     }
 }

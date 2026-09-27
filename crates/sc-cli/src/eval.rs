@@ -9,8 +9,8 @@
 //! - BPM within 0.02, exactly or after one octave flip (x2 or /2);
 //! - meter and grouping identical;
 //! - bar 1 within 15 ms, compared modulo the bar length (bar 1 of a lead-in may be a whole bar
-//!   apart and still be the same downbeat): the label's meter at the label's tempo, falling back
-//!   to ours for whichever the label leaves blank;
+//!   apart and still be the same downbeat): the label's meter (ours when it has none) at the
+//!   label's tempo; without a labelled tempo bar 1 is not scored;
 //! - integrated loudness within 0.1 LU of ffmpeg.
 
 use std::collections::BTreeMap;
@@ -252,11 +252,12 @@ pub fn run(analyzer: &mut Analyzer, labels: &[Label], dir: &Path) -> (Vec<Scored
             row.meter_ok = Some(row.meter.as_deref() == Some(expected.as_str()));
             tally(&mut summary.meter, row.meter_ok);
         }
-        if let Some(bar1) = label.bar1_s {
-            // The bar is the label's when it names a meter and a tempo, else ours.
+        // Bar 1 is scored only against a labelled tempo: ours may be an octave off, and half
+        // a bar would then pass a bar 1 that is two beats wrong.
+        if let (Some(bar1), Some(label_bpm)) = (label.bar1_s, label.bpm) {
             let beats_per_bar = label_beats_per_bar(label)
                 .unwrap_or_else(|| f64::from(grid.meter.beats_per_bar.max(1)));
-            let bar = beats_per_bar * 60.0 / label.bpm.unwrap_or(bpm);
+            let bar = beats_per_bar * 60.0 / label_bpm;
             let ours = grid.anchor.to_seconds(record.spec.sample_rate).0;
             let d = ours - bar1;
             let wrapped = d - bar * (d / bar).round();
@@ -271,7 +272,9 @@ pub fn run(analyzer: &mut Analyzer, labels: &[Label], dir: &Path) -> (Vec<Scored
 
 /// Pulses per bar of a label: the sum of its grouping, else its meter's numerator.
 fn label_beats_per_bar(label: &Label) -> Option<f64> {
-    if let Some(grouping) = &label.grouping {
+    if let Some(grouping) = &label.grouping
+        && !grouping.contains(&0)
+    {
         return Some(grouping.iter().map(|&g| f64::from(g)).sum());
     }
     let meter = label.meter.as_deref()?;
@@ -399,6 +402,16 @@ mod tests {
         assert_eq!(label_beats_per_bar(&labels[0]), Some(4.0));
         let unlabelled = Label::default();
         assert_eq!(label_beats_per_bar(&unlabelled), None);
+        let zero = Label {
+            grouping: Some(vec![2, 0, 2]),
+            meter: Some("6/8".into()),
+            ..Label::default()
+        };
+        assert_eq!(
+            label_beats_per_bar(&zero),
+            Some(6.0),
+            "a zero group is ignored"
+        );
         assert!(parse_labels("file,bpm\nx.flac,fast\n").is_err());
     }
 }

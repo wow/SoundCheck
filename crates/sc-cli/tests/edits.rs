@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use assert_cmd::Command;
 use sc_core::analysis::{AnalysisSettings, GridEdit, Model};
 use sc_core::{AudioSpec, Bpm, testsig};
+use sc_engine::{Analyzer, CancelToken, save_edit};
 use sc_io::cache::Cache;
-use sc_io::edits::{EDIT_SCHEMA, EditStore, SavedEdit};
+use sc_io::edits::EditStore;
 
 fn models() -> Option<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models");
@@ -60,25 +61,21 @@ fn sc_cli(dir: &Path, models: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// Saves `confirmed` for the file as it is now, made under the 130-180 BPM range.
-fn save(dir: &Path, wav: &Path, edit: GridEdit, confirmed: bool) {
+/// Saves `edit` for the file as it is now, made under the 130-180 BPM range.
+fn save(dir: &Path, wav: &Path, edit: &GridEdit, confirmed: bool) {
     let settings = AnalysisSettings {
         bpm_range: (Bpm(130.0), Bpm(180.0)),
         grid: true,
         model: Model::Small,
     };
-    let (path, key) = Cache::key_for(wav, &settings).unwrap();
-    EditStore::open(dir.join("edits"))
-        .put(&SavedEdit {
-            schema: EDIT_SCHEMA,
-            path,
-            size: key.size,
-            mtime_ns: key.mtime_ns,
-            bpm_range: settings.bpm_range,
-            edit,
-            confirmed,
-        })
-        .unwrap();
+    let cache = Cache::open(dir.join("cache"));
+    let record = Analyzer::load(settings.clone(), Some(cache), CancelToken::new())
+        .unwrap()
+        .analyze(wav)
+        .unwrap()
+        .record;
+    let store = EditStore::open(dir.join("edits"));
+    save_edit(&store, &record, settings.bpm_range, edit, confirmed).unwrap();
 }
 
 #[test]
@@ -117,7 +114,7 @@ fn a_confirmed_grid_leaves_review_in_plan_and_is_printed_as_a_label() {
         "{only}"
     );
 
-    save(dir.path(), &wav, GridEdit::default(), true);
+    save(dir.path(), &wav, &GridEdit::default(), true);
     let after = sc_cli(
         dir.path(),
         &models,
@@ -144,7 +141,7 @@ fn a_confirmed_grid_leaves_review_in_plan_and_is_printed_as_a_label() {
     save(
         dir.path(),
         &wav,
-        GridEdit {
+        &GridEdit {
             downbeat_shift: 1,
             ..GridEdit::default()
         },

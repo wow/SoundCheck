@@ -90,7 +90,7 @@ impl Session {
         }
     }
 
-    /// The session applying the grid edits saved in `store` to every analysis it receives.
+    /// The session whose jobs apply the grid edits saved in `store` to every analysis.
     #[must_use]
     pub fn with_edits(mut self, store: EditStore) -> Self {
         self.edits = Some(store);
@@ -252,13 +252,12 @@ impl Session {
                 file_id,
                 fraction,
             },
-            EngineEvent::Analysed { file_id, report } => {
+            EngineEvent::Analysed {
+                file_id,
+                report,
+                edit,
+            } => {
                 let mut record = report.record;
-                let edit = self
-                    .edits
-                    .as_ref()
-                    .map(|store| apply_saved(&mut record, store))
-                    .unwrap_or_default();
                 record.evidence = None;
                 let codec = self
                     .files
@@ -313,8 +312,15 @@ pub fn run_job(
     send: &mut dyn FnMut(JobEvent),
 ) {
     let lock = || session.lock().unwrap_or_else(PoisonError::into_inner);
-    let files = lock().batch(file_ids);
-    let result = run_batch(&files, settings, cancel, &mut |event| {
+    let (files, edits) = {
+        let s = lock();
+        (s.batch(file_ids), s.edits.clone())
+    };
+    let result = run_batch(&files, settings, cancel, &mut |mut event| {
+        // The saved edit is read and refitted before the session is locked.
+        if let (EngineEvent::Analysed { report, edit, .. }, Some(store)) = (&mut event, &edits) {
+            *edit = apply_saved(&mut report.record, store);
+        }
         let ipc = lock().on_engine_event(job_id, event);
         send(ipc);
     });

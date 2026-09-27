@@ -1,6 +1,8 @@
-//! Saved grid edits reach the rows: the session applies them to each analysis before dropping
-//! the evidence, a confirmed grid needs no review, the snapshot and a replan keep both, and a
-//! changed file gets the analysis alone again. Needs the model files (skipped without).
+//! Saved grid edits reach the rows: a job applies them before the session stores each analysis,
+//! a confirmed grid needs no review, the snapshot and a replan keep both, an edit keeps the BPM
+//! range it was made under, survives a rewrite of the same audio (a tag write), is dropped for
+//! other audio, and a confirmation counts only for the grid that was confirmed. Needs the model
+//! files (skipped without).
 
 mod common;
 
@@ -12,10 +14,11 @@ use sc_core::ipc::{JobEvent, JobStage, RowAnalysis};
 use sc_core::plan::{DecideSettings, Plan, ReviewReason};
 use sc_core::{Bpm, SampleIndex};
 use sc_engine::{
-    Analyzer, BatchSettings, CancelToken, Session, collect_audio_files, probe_all, run_job,
+    Analyzer, BatchSettings, CancelToken, EditState, Session, collect_audio_files, probe_all,
+    run_job, save_edit,
 };
 use sc_io::cache::Cache;
-use sc_io::edits::{EDIT_SCHEMA, EditStore, SavedEdit};
+use sc_io::edits::EditStore;
 
 /// DJ settings whose BPM range leaves out the 124 BPM click track, so its row needs review.
 fn decide_settings() -> DecideSettings {
@@ -31,22 +34,24 @@ fn analyse(wav: &Path, cache: &Cache) -> AnalysisRecord {
     analyzer.analyze(wav).unwrap().record
 }
 
-fn save(store: &EditStore, record: &AnalysisRecord, edit: GridEdit, confirmed: bool) {
-    store
-        .put(&SavedEdit {
-            schema: EDIT_SCHEMA,
-            path: record.path.clone(),
-            size: record.size,
-            mtime_ns: record.mtime_ns,
-            bpm_range: common::with_grid().bpm_range,
-            edit,
-            confirmed,
-        })
-        .unwrap();
+fn save(store: &EditStore, record: &AnalysisRecord, edit: &GridEdit, confirmed: bool) {
+    save_edit(
+        store,
+        record,
+        common::with_grid().bpm_range,
+        edit,
+        confirmed,
+    )
+    .unwrap();
 }
 
-/// The session's row and plan for `wav` after one job.
-fn row_and_plan(session: &Mutex<Session>, wav: &Path, cache: &Cache) -> (RowAnalysis, Plan) {
+/// The session's row and plan for `wav` after one job analysing with `analysis`.
+fn row_and_plan(
+    session: &Mutex<Session>,
+    wav: &Path,
+    cache: &Cache,
+    analysis: sc_core::analysis::AnalysisSettings,
+) -> (RowAnalysis, Plan) {
     let files: Vec<PathBuf> = collect_audio_files(&[wav.to_path_buf()]);
     let infos = probe_all(&files, 1);
     let ids: Vec<u32> = {
@@ -59,7 +64,7 @@ fn row_and_plan(session: &Mutex<Session>, wav: &Path, cache: &Cache) -> (RowAnal
     };
     let job = session.lock().unwrap().next_job_id();
     let settings = BatchSettings {
-        analysis: common::with_grid(),
+        analysis,
         workers: 1,
         cache: Some(cache.clone()),
     };
@@ -83,21 +88,48 @@ fn row_and_plan(session: &Mutex<Session>, wav: &Path, cache: &Cache) -> (RowAnal
         .expect("an analysed row")
 }
 
-#[test]
-fn a_saved_edit_and_its_confirmation_reach_the_row_and_its_plan() {
+struct Fixture {
+    _dir: tempfile::TempDir,
+    wav: PathBuf,
+    cache: Cache,
+    store: EditStore,
+    analysed: AnalysisRecord,
+    session: Mutex<Session>,
+}
+
+fn fixture() -> Option<Fixture> {
     if !common::have_models() {
-        return;
+        return None;
     }
     let dir = tempfile::tempdir().unwrap();
     let wav = common::click_wav(dir.path(), 124.0, 72, 0.4);
     let cache = Cache::open(dir.path().join("cache"));
     let store = EditStore::open(dir.path().join("edits"));
     let analysed = analyse(&wav, &cache);
-    let bar1 = analysed.grid.as_ref().expect("a grid").anchor;
     let session = Mutex::new(Session::new(decide_settings()).with_edits(store.clone()));
+    Some(Fixture {
+        _dir: dir,
+        wav,
+        cache,
+        store,
+        analysed,
+        session,
+    })
+}
+
+impl Fixture {
+    fn row(&self) -> (RowAnalysis, Plan) {
+        row_and_plan(&self.session, &self.wav, &self.cache, common::with_grid())
+    }
+}
+
+#[test]
+fn a_saved_edit_and_its_confirmation_reach_the_row_and_its_plan() {
+    let Some(f) = fixture() else { return };
+    let bar1 = f.analysed.grid.as_ref().expect("a grid").anchor;
 
     // No edit: the analysis, needing review for its BPM.
-    let (row, plan) = row_and_plan(&session, &wav, &cache);
+    let (row, plan) = f.row();
     assert!(!row.edited && !row.confirmed);
     assert!(
         plan.review.contains(&ReviewReason::OutsideBpmRange),
@@ -110,8 +142,8 @@ fn a_saved_edit_and_its_confirmation_reach_the_row_and_its_plan() {
         downbeat_shift: 1,
         ..GridEdit::default()
     };
-    save(&store, &analysed, shift.clone(), false);
-    let (row, plan) = row_and_plan(&session, &wav, &cache);
+    save(&f.store, &f.analysed, &shift, false);
+    let (row, plan) = f.row();
     assert!(row.edited && !row.confirmed);
     assert_eq!(plan.status, JobStage::NeedsReview);
     let moved = row.grid.as_ref().unwrap().bar1.0 - bar1.to_seconds(44_100).0;
@@ -121,18 +153,20 @@ fn a_saved_edit_and_its_confirmation_reach_the_row_and_its_plan() {
     );
 
     // Confirmed: out of review, the flags still on the row.
-    save(&store, &analysed, shift, true);
-    let (row, plan) = row_and_plan(&session, &wav, &cache);
+    save(&f.store, &f.analysed, &shift, true);
+    let (row, plan) = f.row();
     assert!(row.edited && row.confirmed);
     assert!(plan.review.is_empty(), "{:?}", plan.review);
     assert_eq!(plan.status, JobStage::Analysed);
-    let s = session.lock().unwrap();
-    let snapshot = &s.snapshot().rows[0];
-    let restored = snapshot.row.as_ref().unwrap();
+    let snapshot = f.session.lock().unwrap().snapshot();
+    let restored = snapshot.rows[0].row.as_ref().unwrap();
     assert!(restored.edited && restored.confirmed);
-    assert_eq!(snapshot.plan.as_ref().unwrap().status, JobStage::Analysed);
-    drop(s);
-    let replan = session
+    assert_eq!(
+        snapshot.rows[0].plan.as_ref().unwrap().status,
+        JobStage::Analysed
+    );
+    let replan = f
+        .session
         .lock()
         .unwrap()
         .set_settings(DecideSettings {
@@ -141,32 +175,75 @@ fn a_saved_edit_and_its_confirmation_reach_the_row_and_its_plan() {
         })
         .unwrap();
     assert_eq!(replan.plans[0].plan.status, JobStage::Analysed);
+
+    // An empty, unconfirmed save removes the edit.
+    let state = save_edit(
+        &f.store,
+        &f.analysed,
+        common::with_grid().bpm_range,
+        &GridEdit::default(),
+        false,
+    )
+    .unwrap();
+    assert_eq!(state, EditState::default());
+    assert!(f.store.get(&f.analysed.path).is_none());
 }
 
 #[test]
-fn a_changed_file_gets_the_analysis_alone_again() {
-    if !common::have_models() {
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let wav = common::click_wav(dir.path(), 124.0, 72, 0.4);
-    let cache = Cache::open(dir.path().join("cache"));
-    let store = EditStore::open(dir.path().join("edits"));
-    let analysed = analyse(&wav, &cache);
+fn an_edit_keeps_the_bpm_range_it_was_made_under() {
+    let Some(f) = fixture() else { return };
+    // Confirmed at 124 under 70-180; the app's range then becomes 40-100, where the analysis
+    // takes 62.
+    save(&f.store, &f.analysed, &GridEdit::default(), true);
+    let narrow = sc_core::analysis::AnalysisSettings {
+        bpm_range: (Bpm(40.0), Bpm(100.0)),
+        ..common::with_grid()
+    };
+    let (row, plan) = row_and_plan(&f.session, &f.wav, &f.cache, narrow);
+    let grid = row.grid.as_ref().unwrap();
+    assert!((grid.bpm.0 - 124.0).abs() < 0.01, "{}", grid.bpm.0);
+    assert!(row.edited, "differs from the 62 BPM analysis");
+    assert!(row.confirmed);
+    assert_eq!(plan.status, JobStage::Analysed);
+}
+
+#[test]
+fn a_rewrite_of_the_same_audio_keeps_the_edit_and_other_audio_drops_it() {
+    let Some(f) = fixture() else { return };
     save(
-        &store,
-        &analysed,
-        GridEdit {
-            anchor: Some(SampleIndex(analysed.grid.as_ref().unwrap().anchor.0 + 441)),
+        &f.store,
+        &f.analysed,
+        &GridEdit {
+            anchor: Some(SampleIndex(
+                f.analysed.grid.as_ref().unwrap().anchor.0 + 441,
+            )),
             ..GridEdit::default()
         },
         true,
     );
-    // Rewrite the file with one more beat: new size and modification time.
+    // A tag write: new modification time, same audio.
     std::thread::sleep(std::time::Duration::from_millis(20));
-    common::click_wav(dir.path(), 124.0, 73, 0.4);
-    let session = Mutex::new(Session::new(decide_settings()).with_edits(store));
-    let (row, plan) = row_and_plan(&session, &wav, &cache);
+    std::fs::write(&f.wav, std::fs::read(&f.wav).unwrap()).unwrap();
+    let (row, plan) = f.row();
+    assert!(row.edited && row.confirmed, "{row:?}");
+    assert_eq!(plan.status, JobStage::Analysed);
+    // Other audio: one more beat.
+    common::click_wav(f.wav.parent().unwrap(), 124.0, 73, 0.4);
+    let (row, plan) = f.row();
     assert!(!row.edited && !row.confirmed);
+    assert_eq!(plan.status, JobStage::NeedsReview);
+}
+
+#[test]
+fn a_confirmation_counts_only_for_the_grid_that_was_confirmed() {
+    let Some(f) = fixture() else { return };
+    save(&f.store, &f.analysed, &GridEdit::default(), true);
+    // The pinned grid no longer matches what the edit gives (as after a new beat model).
+    let mut saved = f.store.get(&f.analysed.path).unwrap();
+    let pin = saved.grid.as_mut().unwrap();
+    pin.anchor = SampleIndex(pin.anchor.0 + 441);
+    f.store.put(&saved).unwrap();
+    let (row, plan) = f.row();
+    assert!(!row.confirmed, "{row:?}");
     assert_eq!(plan.status, JobStage::NeedsReview);
 }
