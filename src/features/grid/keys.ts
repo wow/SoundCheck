@@ -16,6 +16,7 @@ export type GridKey =
   | { type: 'beatOne'; beat: number }
   | { type: 'tap' }
   | { type: 'meter' }
+  | { type: 'details' }
   | { type: 'reset' }
   | { type: 'undo' }
   | { type: 'redo' }
@@ -80,6 +81,8 @@ export function gridKey(e: KeyLike): GridKey | null {
       return { type: 'barOneHere', free: e.shiftKey };
     case 't':
       return { type: 'tap' };
+    case 'i':
+      return { type: 'details' };
     case 'm':
       return { type: 'meter' };
     case 'r':

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
+  Crosshair,
   Layers2,
   Maximize2,
   Metronome,
@@ -36,10 +37,12 @@ import { Btn, Kbd } from './ui';
 import { useView } from './viewStore';
 
 /**
- * Hidden when the fix row is narrower than everything it holds (the compact window): key hints
- * stay in the tooltips and the rail's key legend, the octave buttons in the rail's fit card.
+ * Hidden when the fix row is narrower than everything it holds (1080 px): key hints stay in
+ * the tooltips and the rail's key legend, the octave buttons in the fit card.
  */
-const COMPACT_HIDDEN = '@max-[900px]:hidden';
+const COMPACT_HIDDEN = '@max-[1080px]:hidden';
+/** Hidden when a row is narrower still (a narrow window): labels whose control keeps an icon. */
+const NARROW_HIDDEN = '@max-[820px]:hidden';
 const ICON = 'size-3.5 shrink-0';
 
 /** `40`, or `0.3` when the whole of a long track is in view. */
@@ -98,7 +101,7 @@ function TransportBar() {
   const toggleGhost = useView((s) => s.toggleGhost);
   const rate = opened?.sampleRate ?? 44_100;
   return (
-    <div className="flex h-10 shrink-0 items-center border-t border-line bg-bg-1">
+    <div className="@container flex h-10 shrink-0 items-center border-t border-line bg-bg-1">
       <Group label="Transport">
         <Btn onClick={toBarOne} aria-label="To bar 1" title="To bar 1 · Home" className="px-2">
           <SkipBack className={ICON} aria-hidden />
@@ -122,10 +125,11 @@ function TransportBar() {
           pressed={ghost}
           onClick={toggleGhost}
           disabled={!isEdited}
+          aria-label="Before / after"
           title="The analysed grid, dashed, under yours"
         >
           <Layers2 className={ICON} aria-hidden />
-          Before / after
+          <span className="@max-[780px]:hidden">Before / after</span>
         </Btn>
       </Group>
       <div className="flex-1" />
@@ -144,7 +148,7 @@ function TransportBar() {
         <Btn onClick={fitWhole} aria-label="Whole track" title="Whole track" className="px-2">
           <Maximize2 className={ICON} aria-hidden />
         </Btn>
-        <span className="w-[80px] text-right font-mono text-[11.5px] tabular-nums text-fg-1">
+        <span className="w-[88px] text-right font-mono text-[11.5px] tabular-nums text-fg-1 @max-[780px]:hidden">
           {grid ? `${formatPxPerBeat(samplesPerBeat(grid, rate) / samplesPerPx)} px / beat` : '–'}
         </span>
       </Group>
@@ -194,9 +198,11 @@ function FixBar({
           hint="D"
           hintClassName={COMPACT_HIDDEN}
           onClick={(e) => barOneHere(e.shiftKey)}
+          aria-label="Beat 1 here"
           title="Bar 1 at the pointer, on the nearest kick (Shift: exactly there) · D"
         >
-          Beat 1 here
+          <Crosshair className={ICON} aria-hidden />
+          <span className={NARROW_HIDDEN}>Beat 1 here</span>
         </Btn>
         <Btn
           onClick={(e) => nudge(-1, nudgeUnit(e))}
@@ -216,7 +222,7 @@ function FixBar({
         </Btn>
       </Group>
       <Group label="Which beat is beat 1">
-        <span className="pr-1 text-[11px] text-fg-2">beat 1 =</span>
+        <span className={cn('pr-1 text-[11px] text-fg-2', NARROW_HIDDEN)}>beat 1 =</span>
         {grid && <BeatOneButtons grouping={grid.meter.grouping} />}
       </Group>
       <Group label="Tempo">
@@ -252,14 +258,12 @@ function FixBar({
             pressed={meterOpen}
             onClick={() => setMeterOpen(!meterOpen)}
             aria-haspopup="menu"
+            aria-label={`Meter ${grid ? meterText(grid.meter) : ''}`.trim()}
             title="Choose the meter · M"
           >
-            Meter{' '}
-            <span className={cn('font-mono text-[12px]', COMPACT_HIDDEN)}>
-              {grid ? meterText(grid.meter) : '–'}
-            </span>
-            {/* Compact: the time signature only; the beat buttons beside it show the grouping. */}
-            <span className="hidden font-mono text-[12px] @max-[900px]:inline">
+            <span className={NARROW_HIDDEN}>Meter </span>
+            {/* The time signature: the grouped beat buttons beside it show the grouping. */}
+            <span className="font-mono text-[12px]">
               {grid ? meterText({ ...grid.meter, grouping: [grid.meter.beatsPerBar] }) : '–'}
             </span>
           </Btn>

@@ -1,27 +1,16 @@
 import { useMemo } from 'react';
-import type { Grid, Verdict } from '@/lib/ipc';
+import type { Grid } from '@/lib/ipc';
 import { REASON_TEXT } from '@/lib/format';
 import { useLibrary } from '@/state/library';
 import { ConfidenceRing, MeterBadge } from '@/features/library/cells';
 import { chooseMeter, octave } from './actions';
 import { changes } from './edit';
-import { type ResidualTone, barOf, fitTones } from './geometry';
+import { TONE_TEXT, VERDICT, VERDICT_TONE } from './fitText';
+import { barOf, fitTones } from './geometry';
 import { meterText } from './meters';
 import { queuePlace, reviewQueue } from './navigate';
 import { useTrack } from './store';
-import { Chip, type ChipTone, Kbd } from './ui';
-
-const VERDICT: Record<Verdict, string> = {
-  static: 'Static',
-  staticWarn: 'Static, check by ear',
-  drifts: 'Drifts',
-};
-const VERDICT_TONE: Record<Verdict, ChipTone> = { static: 'ok', staticWarn: 'warn', drifts: 'err' };
-const TONE_TEXT: Record<ResidualTone, string> = {
-  ok: 'text-ok',
-  warn: 'text-warn',
-  err: 'text-err',
-};
+import { Chip, Kbd } from './ui';
 
 const CONFIDENCE_LINE = {
   green: 'Grid confirmed against the kick onsets',
@@ -50,8 +39,20 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
   );
 }
 
-/** What the grid fit found, what was changed, and whether it is saved and confirmed. */
+/** The rail beside the waveform, in a window wide enough for it. */
 export function GridRail() {
+  return (
+    <aside className="flex w-[300px] shrink-0 flex-col overflow-y-auto border-l border-line bg-bg-1">
+      <GridDetails />
+    </aside>
+  );
+}
+
+/**
+ * What the grid fit found, what was changed, and whether it is saved and confirmed: in the
+ * rail, or in the details drawer of a narrow window.
+ */
+export function GridDetails() {
   const grid = useTrack((s) => s.grid);
   const opened = useTrack((s) => s.opened);
   const fit = useTrack((s) => s.fit);
@@ -69,7 +70,7 @@ export function GridRail() {
   const rate = opened?.sampleRate ?? 44_100;
   const chips = opened ? changes(opened.analysed, grid, edit, rate) : [];
   return (
-    <aside className="flex w-[300px] shrink-0 flex-col gap-3 overflow-y-auto border-l border-line bg-bg-1 p-3.5">
+    <div className="flex min-h-full flex-col gap-3 p-3.5">
       <div className="text-[12.5px] text-fg-2">
         {place ? (
           <span className="text-warn">
@@ -149,7 +150,7 @@ export function GridRail() {
           {grid?.meter.unit === 'eighth' ? 'pulse' : 'beat'} is beat 1 · <Kbd>⌘Z</Kbd> undo
         </span>
       </div>
-    </aside>
+    </div>
   );
 }
 

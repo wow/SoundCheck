@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Drawer } from '@/components/Drawer';
 import { ownsKey } from '@/lib/focus';
+import { NARROW, useMediaQuery } from '@/lib/media';
+import { usePanels } from '@/state/panels';
 import {
   back,
   barOneHere,
@@ -20,7 +23,8 @@ import { CursorReadout } from './CursorReadout';
 import { barOf, samplesPerBeat } from './geometry';
 import { GridCanvas } from './GridCanvas';
 import { GridHeader } from './GridHeader';
-import { GridRail } from './GridRail';
+import { FitStrip } from './FitStrip';
+import { GridDetails, GridRail } from './GridRail';
 import { GridToolbar } from './GridToolbar';
 import { gridKey } from './keys';
 import { useTrack } from './store';
@@ -33,6 +37,9 @@ function useGridKeys(toggleMeter: () => void) {
       if (ownsKey(e.target, e.key) || e.repeat) return;
       const action = gridKey(e);
       if (!action) return;
+      // The details drawer, while open, has the keys to itself; I closes it again.
+      const panels = usePanels.getState();
+      if (panels.details && action.type !== 'details') return;
       e.preventDefault();
       const t = useTrack.getState();
       switch (action.type) {
@@ -60,6 +67,10 @@ function useGridKeys(toggleMeter: () => void) {
           return void tap();
         case 'meter':
           return toggleMeter();
+        case 'details':
+          // Only a narrow window folds the rail into a drawer.
+          if (window.matchMedia?.(NARROW).matches) panels.setDetails(!panels.details);
+          return;
         case 'reset':
           return resetGrid();
         case 'undo':
@@ -148,11 +159,20 @@ export function GridView() {
   const [meterOpen, setMeterOpen] = useState(false);
   const toggleMeter = useCallback(() => setMeterOpen((open) => !open), []);
   useGridKeys(toggleMeter);
+  const narrow = useMediaQuery(NARROW);
+  const details = usePanels((p) => p.details);
+  const setDetails = usePanels((p) => p.setDetails);
+  // Widened past the narrow layout, or left: the rail is back (or gone), so no drawer.
+  useEffect(() => {
+    if (!narrow) setDetails(false);
+  }, [narrow, setDetails]);
+  useEffect(() => () => setDetails(false), [setDetails]);
   return (
     <div className="flex h-full flex-col bg-bg-0 text-fg-0">
       <GridHeader />
       <div className="flex min-h-0 flex-1">
         <main className="flex min-w-0 flex-1 flex-col">
+          {narrow && <FitStrip />}
           <StatusLine />
           <div className="relative flex min-h-0 flex-1 flex-col">
             <GridCanvas />
@@ -161,8 +181,13 @@ export function GridView() {
           <GridToolbar meterOpen={meterOpen} setMeterOpen={setMeterOpen} />
           <DriftStrip />
         </main>
-        <GridRail />
+        {!narrow && <GridRail />}
       </div>
+      {narrow && details && (
+        <Drawer label="Grid details" onClose={() => setDetails(false)}>
+          <GridDetails />
+        </Drawer>
+      )}
     </div>
   );
 }

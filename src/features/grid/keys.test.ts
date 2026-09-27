@@ -36,6 +36,7 @@ describe('grid view keys', () => {
     expect(gridKey(key({ key: 'D', shiftKey: true }))).toEqual({ type: 'barOneHere', free: true });
     expect(gridKey(key({ key: 'ArrowRight', shiftKey: true }))).toEqual({ type: 'pan', bars: 8 });
     expect(gridKey(key({ key: 'Home' }))).toEqual({ type: 'toBarOne' });
+    expect(gridKey(key({ key: 'I', shiftKey: true }))).toEqual({ type: 'details' });
     // Cmd+Z by the letter: German (KeyY), French (KeyW), and a Cyrillic layout by place.
     expect(gridKey(key({ key: 'z', code: 'KeyY', metaKey: true }))).toEqual({ type: 'undo' });
     expect(gridKey(key({ key: 'Z', code: 'KeyW', metaKey: true, shiftKey: true }))).toEqual({
