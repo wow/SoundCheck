@@ -105,13 +105,23 @@ function TrackRow({
         </Cell>
       )}
       <Cell width={layout.loudness}>
-        <LoudnessCell row={row} target={target} bar={layout.bar} />
+        <LoudnessCell
+          row={row}
+          target={target}
+          bar={layout.bar}
+          tpCeiling={layout.tp === null ? ceiling : undefined}
+        />
       </Cell>
-      <Cell width={layout.tp}>
-        <TpCell row={row} ceiling={ceiling} />
-      </Cell>
+      {layout.tp !== null && (
+        <Cell width={layout.tp}>
+          <TpCell row={row} ceiling={ceiling} />
+        </Cell>
+      )}
       <Cell width={layout.bpm}>
-        <BpmCell row={row} />
+        <BpmCell
+          row={row}
+          variant={layout.stacked ? 'stacked' : layout.compact ? 'compact' : 'wide'}
+        />
       </Cell>
       <Cell width={layout.action}>
         <ActionCell row={row} bpmRange={bpmRange} />
@@ -190,15 +200,15 @@ export function Table() {
           <HeaderCell nameMin={layout.nameMin}>Name</HeaderCell>
           {layout.spec !== null && <HeaderCell width={layout.spec}>Spec</HeaderCell>}
           <HeaderCell width={layout.loudness}>
-            {mode === 'dj'
+            {(mode === 'dj'
               ? layout.compact
                 ? 'S-P95'
                 : 'Loudness · S-P95'
               : layout.compact
                 ? 'Integrated'
-                : 'Loudness · Integrated'}
+                : 'Loudness · Integrated') + (layout.tp === null ? ' · TP' : '')}
           </HeaderCell>
-          <HeaderCell width={layout.tp}>TP</HeaderCell>
+          {layout.tp !== null && <HeaderCell width={layout.tp}>TP</HeaderCell>}
           <HeaderCell width={layout.bpm}>BPM</HeaderCell>
           <HeaderCell width={layout.action}>Action</HeaderCell>
           <HeaderCell width={layout.status}>Status</HeaderCell>

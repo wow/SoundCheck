@@ -38,6 +38,8 @@ function useKeys() {
       const lib = useLibrary.getState();
       if (e.metaKey && e.key.toLowerCase() === 'f') {
         e.preventDefault();
+        // In a narrow window the field is folded into an icon: opening it focuses it.
+        panels.setSearch(true);
         document.getElementById(SEARCH_ID)?.focus();
         return;
       }
@@ -78,6 +80,29 @@ export default function App() {
     <div className="contents" onMouseDownCapture={keepFocusOnClick}>
       {inGrid ? <GridView /> : <Library />}
     </div>
+  );
+}
+
+/** The table's keys, under it (left out in a narrow window, where they do not fit). */
+function KeyHints() {
+  return (
+    <>
+      <span>
+        <kbd className="font-mono">↑↓</kbd> row
+      </span>
+      <span>
+        <kbd className="font-mono">⏎</kbd> open grid
+      </span>
+      <span>
+        <kbd className="font-mono">N</kbd> next needs review
+      </span>
+      <span>
+        <kbd className="font-mono">⌘F</kbd> filter
+      </span>
+      <span>
+        <kbd className="font-mono">⌘,</kbd> settings
+      </span>
+    </>
   );
 }
 
@@ -124,21 +149,7 @@ function Library() {
           {hasRows ? <Table /> : <EmptyState />}
           {hasRows && (
             <div className="flex h-8 shrink-0 items-center gap-4 border-t border-line px-4 text-[11.5px] text-fg-2">
-              <span>
-                <kbd className="font-mono">↑↓</kbd> row
-              </span>
-              <span>
-                <kbd className="font-mono">⏎</kbd> open grid
-              </span>
-              <span>
-                <kbd className="font-mono">N</kbd> next needs review
-              </span>
-              <span>
-                <kbd className="font-mono">⌘F</kbd> filter
-              </span>
-              <span>
-                <kbd className="font-mono">⌘,</kbd> settings
-              </span>
+              {!narrow && <KeyHints />}
               <div className="flex-1" />
               {review > 0 && (
                 <span className="text-warn">

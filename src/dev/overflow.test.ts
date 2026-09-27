@@ -9,13 +9,14 @@ function box(el: Element, left: number, width: number, scrollWidth = width) {
 }
 
 describe('the overflow report', () => {
-  it('lists the row whose items stick out and the leaf whose text does not fit, not their ancestors', () => {
+  it('lists the row whose items stick out and the leaf whose text does not fit, not their ancestors or marks placed to overhang', () => {
     document.body.innerHTML = `
       <main id="page"><div role="group" aria-label="Fixes" class="flex h-10"><button>Beat 1 here</button><button>Reset</button></div>
       <div role="cell" class="px-2.5">-14.6 → -11.0</div>
       <div role="cell" class="loudness" style="overflow-x: hidden"><span>-14.6</span> → -11.0</div>
       <span class="truncate" style="text-overflow: ellipsis">A very long title</span>
-      <canvas></canvas><span class="sr-only">Filter by name</span></main>`;
+      <canvas></canvas><span class="sr-only">Filter by name</span>
+      <span class="badge"><span>WAV</span><span style="position: absolute">!</span></span></main>`;
     const q = (s: string) => document.querySelector(s) as Element;
     box(q('#page'), 0, 720, 809);
     box(q('[role=group]'), 0, 600, 789);
@@ -27,6 +28,9 @@ describe('the overflow report', () => {
     box(q('.truncate'), 0, 100, 300);
     box(q('canvas'), 0, 700, 900);
     box(q('.sr-only'), 0, 1, 83);
+    box(q('.badge'), 0, 38);
+    box(q('.badge span'), 0, 38);
+    box(q('.badge span:last-child'), 38, 6);
     const report = overflowReport(document.body);
     expect(report.map((o) => o.element)).toEqual([
       'div[Fixes].flex.h-10',
