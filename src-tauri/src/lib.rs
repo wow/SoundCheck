@@ -5,15 +5,18 @@
 // Tauri hands commands their `State` and `Channel` by value.
 #![allow(clippy::needless_pass_by_value)]
 
+mod grid_view;
 mod shell;
 
-use sc_core::Lufs;
+use sc_core::analysis::GridEdit;
 use sc_core::ipc::{
-    AnalyzeRequest, FileEntry, IpcError, IpcErrorKind, JobEvent, JobId, Replan, SessionSnapshot,
+    AnalyzeRequest, FileEntry, IpcError, IpcErrorKind, JobEvent, JobId, Replan, RowUpdate,
+    SessionSnapshot, TrackEvent, TrackOpened,
 };
 use sc_core::plan::DecideSettings;
+use sc_core::{Lufs, SampleIndex};
 use tauri::State;
-use tauri::ipc::Channel;
+use tauri::ipc::{Channel, Response};
 
 use crate::shell::Shell;
 
@@ -100,6 +103,120 @@ async fn restore_session(shell: State<'_, Shell>) -> Result<SessionSnapshot, Ipc
     blocking(move || Ok(shell.restore())).await
 }
 
+/// Opens a row in the grid view; decoding, analysis and player events arrive on `on_event`.
+#[tauri::command]
+async fn track_open(
+    shell: State<'_, Shell>,
+    file_id: u32,
+    on_event: Channel<TrackEvent>,
+) -> Result<TrackOpened, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || {
+        shell.open_track(file_id, move |event| {
+            // A closed channel means the view went away; the next open replaces this track.
+            let _ = on_event.send(event);
+        })
+    })
+    .await
+}
+
+/// Closes the grid view: the player stops and the track's audio is released.
+#[tauri::command]
+async fn track_close(shell: State<'_, Shell>) -> Result<(), IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || {
+        shell.close_track();
+        Ok(())
+    })
+    .await
+}
+
+/// Waveform bins of the open track: little-endian `i16` min/max pairs.
+#[tauri::command]
+async fn read_peaks(
+    shell: State<'_, Shell>,
+    file_id: u32,
+    samples_per_bin: u64,
+    first_bin: u64,
+    bins: u64,
+) -> Result<Response, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || shell.peaks(file_id, samples_per_bin, first_bin, bins))
+        .await
+        .map(Response::new)
+}
+
+/// The open track's embedded cover, or no bytes.
+#[tauri::command]
+async fn track_cover(shell: State<'_, Shell>, file_id: u32) -> Result<Response, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || shell.cover(file_id))
+        .await
+        .map(Response::new)
+}
+
+/// The attacks bar 1 snaps to: little-endian `f64` seconds.
+#[tauri::command]
+async fn track_onsets(shell: State<'_, Shell>, file_id: u32) -> Result<Response, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || shell.onsets(file_id))
+        .await
+        .map(Response::new)
+}
+
+/// The grid an edit gives, with its residuals (header length, JSON header, `f32` residuals).
+#[tauri::command]
+async fn grid_refit(
+    shell: State<'_, Shell>,
+    file_id: u32,
+    edit: GridEdit,
+) -> Result<Response, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || shell.refit(file_id, &edit))
+        .await
+        .map(Response::new)
+}
+
+/// Saves an edit of the open track, confirmed or not; returns its row and plan.
+#[tauri::command]
+async fn grid_commit(
+    shell: State<'_, Shell>,
+    file_id: u32,
+    edit: GridEdit,
+    confirm: bool,
+) -> Result<RowUpdate, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || shell.commit(file_id, &edit, confirm)).await
+}
+
+/// Plays the open track from `from`, or from where it stopped.
+#[tauri::command]
+async fn player_play(shell: State<'_, Shell>, from: Option<SampleIndex>) -> Result<(), IpcError> {
+    shell.play(from);
+    Ok(())
+}
+
+/// Pauses the player.
+#[tauri::command]
+async fn player_pause(shell: State<'_, Shell>) -> Result<(), IpcError> {
+    shell.pause();
+    Ok(())
+}
+
+/// Moves the player to `to`.
+#[tauri::command]
+async fn player_seek(shell: State<'_, Shell>, to: SampleIndex) -> Result<(), IpcError> {
+    shell.seek(to);
+    Ok(())
+}
+
+/// Turns the click on or off.
+#[tauri::command]
+async fn player_set_click(shell: State<'_, Shell>, on: bool) -> Result<(), IpcError> {
+    shell.set_click(on);
+    Ok(())
+}
+
 /// Builds and runs the application.
 ///
 /// # Panics
@@ -119,7 +236,18 @@ pub fn run() {
             set_decide_settings,
             calibration_target,
             restore_session,
-            clear_session
+            clear_session,
+            track_open,
+            track_close,
+            read_peaks,
+            track_cover,
+            track_onsets,
+            grid_refit,
+            grid_commit,
+            player_play,
+            player_pause,
+            player_seek,
+            player_set_click
         ])
         .run(tauri::generate_context!())
         .expect("the Tauri runtime failed to start");

@@ -180,7 +180,7 @@ fn a_truncated_file_keeps_its_decoded_part_and_marks_the_rest() {
     let bytes = std::fs::read(&path).unwrap();
     std::fs::write(&path, &bytes[..bytes.len() / 2]).unwrap();
     let (track, last) = decoded(&path, DbFs(-2.0), 1200.0);
-    assert!(matches!(last, TrackProgress::Failed(_)), "{last:?}");
+    assert!(matches!(last, TrackProgress::Failed { .. }), "{last:?}");
     assert!(track.is_done() && track.failed());
     let decoded = usize::try_from(track.decoded_frames()).unwrap();
     assert!(

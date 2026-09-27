@@ -37,3 +37,42 @@ pub fn read_hints(path: &Path) -> TagHints {
         artist: text(ItemKey::TrackArtist),
     }
 }
+
+/// Largest cover the grid view shows; bigger art is left out rather than slowing the view.
+pub const MAX_COVER_BYTES: usize = 4 * 1024 * 1024;
+
+/// An embedded picture as stored in the file: its media type and its bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cover {
+    /// `image/jpeg`, `image/png` or `image/gif`.
+    pub mime: &'static str,
+    /// The picture as stored.
+    pub bytes: Vec<u8>,
+}
+
+/// The front cover embedded in `path`, else its first picture: a JPEG, PNG or GIF of at most
+/// [`MAX_COVER_BYTES`]. Any read problem, other format or larger picture yields `None`.
+#[must_use]
+pub fn cover(path: &Path) -> Option<Cover> {
+    use lofty::picture::PictureType;
+    let file = lofty::read_from_path(path).ok()?;
+    let pictures = file.tags().iter().flat_map(lofty::tag::Tag::pictures);
+    let picture = pictures
+        .clone()
+        .find(|p| p.pic_type() == PictureType::CoverFront)
+        .or_else(|| pictures.clone().next())?;
+    let bytes = picture.data();
+    if bytes.len() > MAX_COVER_BYTES {
+        return None;
+    }
+    let mime = match bytes {
+        [0xFF, 0xD8, 0xFF, ..] => "image/jpeg",
+        [0x89, b'P', b'N', b'G', ..] => "image/png",
+        [b'G', b'I', b'F', b'8', ..] => "image/gif",
+        _ => return None,
+    };
+    Some(Cover {
+        mime,
+        bytes: bytes.to_vec(),
+    })
+}

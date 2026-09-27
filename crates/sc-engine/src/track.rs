@@ -43,7 +43,12 @@ pub enum TrackProgress {
     /// Decoding finished with this many frames.
     Done(u64),
     /// Decoding stopped; the frames decoded before stay readable.
-    Failed(Error),
+    Failed {
+        /// Why.
+        error: Error,
+        /// Frames decoded before it stopped.
+        frames: u64,
+    },
 }
 
 /// One decoded chunk: interleaved samples at the stored channel count, and the folded min/max of
@@ -340,7 +345,10 @@ fn decode(
         }
         Err(e) => {
             shared.failed.store(true, Ordering::Release);
-            TrackProgress::Failed(e)
+            TrackProgress::Failed {
+                error: e,
+                frames: total,
+            }
         }
     };
     shared.done.store(true, Ordering::Release);

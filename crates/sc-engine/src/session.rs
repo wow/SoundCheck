@@ -11,12 +11,12 @@ use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-use sc_core::analysis::AnalysisRecord;
+use sc_core::analysis::{AnalysisRecord, Grid};
 use sc_core::ipc::{
-    FileEntry, FileInfo, IpcError, JobEvent, JobId, Replan, RowAnalysis, RowPlan, SessionRow,
-    SessionSnapshot,
+    FileEntry, FileInfo, IpcError, JobEvent, JobId, Replan, RowAnalysis, RowPlan, RowUpdate,
+    SessionRow, SessionSnapshot,
 };
-use sc_core::plan::{DecideSettings, Plan};
+use sc_core::plan::{DecideSettings, GainPlan, Plan};
 use sc_core::{Lufs, Result};
 use sc_io::edits::EditStore;
 use unicode_normalization::UnicodeNormalization;
@@ -213,6 +213,48 @@ impl Session {
                 })
                 .collect(),
         }
+    }
+
+    /// The file with `file_id`.
+    #[must_use]
+    pub fn entry(&self, file_id: u32) -> Option<FileEntry> {
+        self.files.get(&file_id).map(|t| t.entry.clone())
+    }
+
+    /// The gain processing would apply to the file, in dB: 0 when it is skipped or at target.
+    #[must_use]
+    pub fn planned_gain(&self, file_id: u32) -> Option<f64> {
+        let plan = self.plan(file_id)?;
+        Some(match plan.gain {
+            Some(GainPlan::Gain { gain_db, .. } | GainPlan::GlobalGain { gain_db, .. }) => gain_db,
+            Some(GainPlan::AtTarget) | None => 0.0,
+        })
+    }
+
+    /// Replaces the analysed file's grid with `grid` (a saved edit's) and its edit state;
+    /// returns the row and its plan under the current settings, or `None` for a file without
+    /// an analysis.
+    pub fn set_grid(
+        &mut self,
+        file_id: u32,
+        grid: Option<Grid>,
+        edit: EditState,
+    ) -> Option<RowUpdate> {
+        let t = self.files.get_mut(&file_id)?;
+        let record = t.record.as_mut()?;
+        if grid.is_some() {
+            record.grid_skipped = None;
+        }
+        record.grid = grid;
+        t.edit = edit;
+        let row = Box::new(t.row(true)?);
+        let plan = t.plan(&self.settings)?;
+        Some(RowUpdate {
+            file_id,
+            row,
+            plan,
+            revision: self.revision,
+        })
     }
 
     /// The plan of one analysed file under the current settings.

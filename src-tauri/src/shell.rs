@@ -7,8 +7,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use sc_core::Lufs;
+use sc_core::analysis::AnalysisSettings;
 use sc_core::ipc::{AnalyzeRequest, FileEntry, IpcError, JobEvent, JobId, Replan, SessionSnapshot};
 use sc_core::plan::{DecideSettings, check_bpm_range};
+use sc_engine::player::Player;
 use sc_engine::{
     BatchSettings, CancelToken, Session, collect_audio_files, default_workers, probe_all, run_job,
 };
@@ -18,13 +20,21 @@ use sc_io::edits::EditStore;
 /// State shared by every command.
 #[derive(Clone)]
 pub struct Shell {
-    inner: Arc<Inner>,
+    pub(crate) inner: Arc<Inner>,
 }
 
-struct Inner {
-    session: Mutex<Session>,
+pub(crate) struct Inner {
+    pub(crate) session: Mutex<Session>,
     jobs: Mutex<HashMap<JobId, CancelToken>>,
-    cache: Option<Cache>,
+    pub(crate) cache: Option<Cache>,
+    pub(crate) edits: Option<EditStore>,
+    /// The analysis settings of the latest job, which the grid view's refits and cache lookups
+    /// use.
+    pub(crate) analysis: Mutex<AnalysisSettings>,
+    /// The track open in the grid view.
+    pub(crate) view: Mutex<Option<crate::grid_view::OpenTrack>>,
+    /// The click player, started with the first track opened.
+    pub(crate) player: Mutex<Option<Player>>,
     workers: usize,
 }
 
@@ -35,8 +45,8 @@ impl Shell {
     #[must_use]
     pub fn new(cache: Option<Cache>, edits: Option<EditStore>, workers: usize) -> Self {
         let session = Session::new(DecideSettings::dj());
-        let session = match edits {
-            Some(store) => session.with_edits(store),
+        let session = match &edits {
+            Some(store) => session.with_edits(store.clone()),
             None => session,
         };
         Self {
@@ -44,6 +54,10 @@ impl Shell {
                 session: Mutex::new(session),
                 jobs: Mutex::new(HashMap::new()),
                 cache,
+                edits,
+                analysis: Mutex::new(AnalysisSettings::default()),
+                view: Mutex::new(None),
+                player: Mutex::new(None),
                 workers,
             }),
         }
@@ -60,7 +74,7 @@ impl Shell {
         )
     }
 
-    fn session(&self) -> std::sync::MutexGuard<'_, Session> {
+    pub(crate) fn session(&self) -> std::sync::MutexGuard<'_, Session> {
         self.inner
             .session
             .lock()
@@ -96,6 +110,11 @@ impl Shell {
         mut send: impl FnMut(JobEvent) + Send + 'static,
     ) -> Result<JobId, IpcError> {
         check_bpm_range(req.analysis.bpm_range)?;
+        *self
+            .inner
+            .analysis
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = req.analysis.clone();
         let job_id = self.session().next_job_id();
         let cancel = CancelToken::new();
         self.jobs().insert(job_id, cancel.clone());
