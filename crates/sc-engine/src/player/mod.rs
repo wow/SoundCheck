@@ -68,6 +68,8 @@ pub struct Feeder {
     origin: u64,
     /// A seek waiting for the callback to empty the ring.
     awaiting: Option<u64>,
+    /// Output stopped by itself at the end of the track.
+    finished: bool,
 }
 
 impl Feeder {
@@ -91,12 +93,29 @@ impl Feeder {
             preroll: preroll_samples(out_rate, out_channels),
             origin,
             awaiting: None,
+            finished: false,
         }
     }
 
     /// Starts or resumes output.
-    pub fn play(&self) {
+    pub fn play(&mut self) {
+        self.finished = false;
         self.shared.playing.store(true, Ordering::Release);
+    }
+
+    fn is_playing(&self) -> bool {
+        self.shared.playing.load(Ordering::Acquire)
+    }
+
+    /// While paused, the queued audio was rendered with the old settings: render again from
+    /// the paused position so playing resumes with the new ones. (While playing, the change is
+    /// heard within the queued 150 ms.)
+    fn rerender_if_paused(&mut self) {
+        let queued = self.ring.slots() < self.ring.buffer().capacity() || !self.pending.is_empty();
+        if queued && !self.is_playing() && !self.finished {
+            let at = self.state().position.0;
+            self.seek(at);
+        }
     }
 
     /// Pauses output; the position holds.
@@ -112,22 +131,26 @@ impl Feeder {
         self.pending.clear();
         self.renderer.seek(frame);
         self.origin = frame;
+        self.finished = false;
         self.shared.ended.store(false, Ordering::Release);
     }
 
     /// Plays at `gain` (dB) from the audio rendered next.
     pub fn set_gain(&mut self, gain: DbFs) {
         self.renderer.set_gain(gain);
+        self.rerender_if_paused();
     }
 
     /// Clicks on `grid`'s lines from the audio rendered next (about 150 ms later).
     pub fn set_grid(&mut self, grid: Option<Arc<Grid>>) {
         self.renderer.set_grid(grid);
+        self.rerender_if_paused();
     }
 
     /// Turns the click on or off from the audio rendered next.
     pub fn set_click(&mut self, on: bool) {
         self.renderer.set_click(on);
+        self.rerender_if_paused();
     }
 
     /// Queues rendered audio until the pre-roll is full; returns whether it queued anything.
@@ -166,22 +189,32 @@ impl Feeder {
         }
         if self.shared.ended.load(Ordering::Acquire)
             && self.ring.slots() == self.ring.buffer().capacity()
+            && self.is_playing()
         {
             self.pause();
+            self.finished = true;
         }
         queued
     }
 
-    /// Output reached the end of the track.
+    /// Output stopped by itself at the end of the track (so playing again starts over).
     #[must_use]
-    pub fn ended(&self) -> bool {
-        self.shared.ended.load(Ordering::Acquire)
+    pub fn finished(&self) -> bool {
+        self.finished
     }
 
     /// Where playback is: the frame being heard, from the frames played since the last seek
     /// less the device's latency.
     #[must_use]
     pub fn state(&self) -> PlayerState {
+        if self.awaiting.is_some() {
+            // Until the callback acknowledges a seek, `played` still counts the old position.
+            return PlayerState {
+                playing: self.is_playing(),
+                position: SampleIndex(self.origin),
+                underruns: self.shared.underruns.load(Ordering::Relaxed),
+            };
+        }
         let played = self.shared.played.load(Ordering::Acquire);
         let latency = self.shared.latency_frames.load(Ordering::Acquire);
         let heard = played.saturating_sub(latency);

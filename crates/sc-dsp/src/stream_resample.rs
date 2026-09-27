@@ -3,7 +3,8 @@
 //! converted in fixed chunks and the output is handed back as soon as it is ready; the
 //! converter's start-up delay is skipped after construction and after every [`reset`], so
 //! output frame `n` corresponds to input time `n / rate_out` since the last reset. Nothing is
-//! trimmed at the end: a player keeps feeding it.
+//! trimmed at the end: a player keeps feeding it, and [`flush`](StreamResampler::flush) lets the
+//! last frames out when the input ends.
 //!
 //! [`reset`]: StreamResampler::reset
 
@@ -93,6 +94,21 @@ impl StreamResampler {
                 self.pending.clear();
             }
         }
+    }
+
+    /// Converts what is still buffered, padded with silence, and the converter's delay line, so
+    /// the last input frame comes out; then starts over as after [`StreamResampler::reset`].
+    /// The appended tail ends with some silence.
+    pub fn flush(&mut self, out: &mut Vec<f32>) {
+        if self.inner.is_some() {
+            let chunk = STREAM_CHUNK_FRAMES * self.channels;
+            self.pending.resize(chunk, 0.0);
+            self.convert(out);
+            self.pending.clear();
+            self.pending.resize(chunk, 0.0);
+            self.convert(out);
+        }
+        self.reset();
     }
 
     /// Forgets buffered input and the converter's history, as after a seek.

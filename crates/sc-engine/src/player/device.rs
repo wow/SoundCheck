@@ -3,8 +3,10 @@
 //! is published every few milliseconds.
 //!
 //! The device's own rate and channel count are used (the track is resampled to them), never
-//! changed, so other apps keep theirs. When the device changes or fails, playback stops with an
-//! error in the state and the next `play` opens the new default device.
+//! changed, so other apps keep theirs. When the stream reports that its device went away, was
+//! rerouted or needs rebuilding, playback stops with an error in the state (the way a player
+//! pauses when headphones are pulled) and the next `play` opens the default device again. A
+//! momentary overload is counted as an underrun and playback goes on.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -178,9 +180,16 @@ fn run(commands: &mpsc::Receiver<Command>, status: &Mutex<Status>) {
                 o.feeder.pump();
             }
         }
-        let state = loaded
-            .as_ref()
-            .and_then(|l| l.open.as_ref().map(|o| o.feeder.state()));
+        let state = loaded.as_ref().map(|l| {
+            l.open.as_ref().map_or(
+                PlayerState {
+                    playing: false,
+                    position: SampleIndex(l.resume_at),
+                    underruns: 0,
+                },
+                |o| o.feeder.state(),
+            )
+        });
         *status.lock().unwrap_or_else(PoisonError::into_inner) = Status {
             state,
             error: error.clone(),
@@ -219,7 +228,7 @@ fn handle(command: Command, loaded: &mut Option<Loaded>, error: &mut Option<Stri
             if let Some(o) = l.open.as_mut() {
                 if let Some(frame) = from {
                     o.feeder.seek(frame);
-                } else if o.feeder.ended() {
+                } else if o.feeder.finished() {
                     o.feeder.seek(0);
                 }
                 o.feeder.play();
@@ -259,6 +268,16 @@ fn with_feeder(loaded: &mut Option<Loaded>, f: impl FnOnce(&mut Feeder)) {
     }
 }
 
+/// Whether a stream error ends playback: the device went away, was rerouted or must be rebuilt,
+/// or the host failed. A busy device or a refused real-time promotion only degrades it; an
+/// overload is an underrun.
+fn stops_playback(kind: cpal::ErrorKind) -> bool {
+    !matches!(
+        kind,
+        cpal::ErrorKind::Xrun | cpal::ErrorKind::DeviceBusy | cpal::ErrorKind::RealtimeDenied
+    )
+}
+
 /// Opens the default output device for `l`, continuing at `l.resume_at`.
 fn open(l: &Loaded) -> Result<Open> {
     let device_error = |e: &dyn std::fmt::Display| Error::Internal(format!("output device: {e}"));
@@ -285,21 +304,32 @@ fn open(l: &Loaded) -> Result<Open> {
     renderer.seek(l.resume_at);
     let mut callback = Callback::new(consumer, Arc::clone(&shared), channels);
     let latency = Arc::clone(&shared);
+    let overloads = Arc::clone(&shared);
     let failed = Arc::new(AtomicBool::new(false));
     let on_error = Arc::clone(&failed);
+    let frame_len = u64::from(channels.max(1));
     let stream = device
         .build_output_stream(
             config,
             move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
                 let t = info.timestamp();
                 if let Some(ahead) = t.playback.checked_duration_since(t.callback) {
+                    // The whole buffer counts as played as soon as it is filled; its first
+                    // frame is heard `ahead` later.
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let frames = (ahead.as_secs_f64() * f64::from(rate)) as u64;
+                    let frames = (ahead.as_secs_f64() * f64::from(rate)) as u64
+                        + data.len() as u64 / frame_len;
                     latency.latency_frames.store(frames, Ordering::Relaxed);
                 }
                 callback.fill(data);
             },
-            move |_| on_error.store(true, Ordering::Release),
+            move |e: cpal::Error| match e.kind() {
+                cpal::ErrorKind::Xrun => {
+                    overloads.underruns.fetch_add(1, Ordering::Relaxed);
+                }
+                kind if stops_playback(kind) => on_error.store(true, Ordering::Release),
+                _ => {}
+            },
             None,
         )
         .map_err(|e| device_error(&e))?;
@@ -310,4 +340,28 @@ fn open(l: &Loaded) -> Result<Open> {
         failed,
         _stream: stream,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_lost_or_rerouted_device_stops_playback() {
+        use cpal::ErrorKind::{
+            BackendError, DeviceBusy, DeviceChanged, DeviceNotAvailable, RealtimeDenied,
+            StreamInvalidated, Xrun,
+        };
+        for kind in [
+            DeviceNotAvailable,
+            DeviceChanged,
+            StreamInvalidated,
+            BackendError,
+        ] {
+            assert!(stops_playback(kind), "{kind:?}");
+        }
+        for kind in [Xrun, DeviceBusy, RealtimeDenied] {
+            assert!(!stops_playback(kind), "{kind:?}");
+        }
+    }
 }

@@ -69,31 +69,45 @@ struct Rig {
     feeder: Feeder,
     callback: Callback,
     shared: Arc<Shared>,
+    channels: usize,
 }
 
 fn rig(track: Arc<Track>, gain: f64, out_rate: u32) -> Rig {
+    rig_with(track, gain, out_rate, 2)
+}
+
+fn rig_with(track: Arc<Track>, gain: f64, out_rate: u32, channels: u16) -> Rig {
     let shared = Arc::new(Shared::default());
-    let (producer, consumer) = ring(out_rate, 2);
-    let renderer = Renderer::new(track, DbFs(gain), out_rate, 2).unwrap();
+    let (producer, consumer) = ring(out_rate, channels);
+    let renderer = Renderer::new(track, DbFs(gain), out_rate, channels).unwrap();
     Rig {
-        feeder: Feeder::new(renderer, producer, Arc::clone(&shared), out_rate, 2),
-        callback: Callback::new(consumer, Arc::clone(&shared), 2),
+        feeder: Feeder::new(renderer, producer, Arc::clone(&shared), out_rate, channels),
+        callback: Callback::new(consumer, Arc::clone(&shared), channels),
         shared,
+        channels: usize::from(channels),
     }
 }
 
 impl Rig {
-    /// Plays `frames` output frames in device buffers of 256 frames; returns the left channel.
-    fn play(&mut self, frames: usize) -> Vec<f32> {
-        let mut left = Vec::with_capacity(frames);
-        let mut buffer = vec![0.0_f32; 512];
-        while left.len() < frames {
+    /// Plays `frames` output frames in device buffers of 256 frames; returns every channel,
+    /// interleaved.
+    fn play_all(&mut self, frames: usize) -> Vec<f32> {
+        let ch = self.channels;
+        let mut all = Vec::with_capacity(frames * ch);
+        let mut buffer = vec![0.0_f32; 256 * ch];
+        while all.len() < frames * ch {
             self.feeder.pump();
             self.callback.fill(&mut buffer);
-            left.extend(buffer.iter().step_by(2).copied());
+            all.extend_from_slice(&buffer);
         }
-        left.truncate(frames);
-        left
+        all.truncate(frames * ch);
+        all
+    }
+
+    /// As [`Rig::play_all`], the first channel only.
+    fn play(&mut self, frames: usize) -> Vec<f32> {
+        let ch = self.channels;
+        self.play_all(frames).iter().step_by(ch).copied().collect()
     }
 }
 
@@ -246,15 +260,129 @@ fn the_end_stops_output_and_only_a_dry_ring_counts_as_an_underrun() {
     assert!(!r.feeder.state().playing, "stopped at the end");
     assert_eq!(r.shared.underruns.load(Ordering::Relaxed), 0);
 
-    // Playing with nothing queued and no end in sight: an underrun per device buffer.
+    // Waiting for the first audio is not an underrun; a ring that runs dry once audio flows,
+    // with no end in sight, is one per device buffer.
     let path = dir.path().join("long.wav");
     wav(&path, 48_000, 48_000, |_| 1000);
     let mut r = rig(track(&path), 0.0, 48_000);
     r.feeder.play();
     let mut buffer = vec![0.0_f32; 512];
     r.callback.fill(&mut buffer);
-    assert_eq!(r.shared.underruns.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        r.shared.underruns.load(Ordering::Relaxed),
+        0,
+        "not primed yet"
+    );
+    r.feeder.pump();
+    for _ in 0..40 {
+        r.callback.fill(&mut buffer);
+    }
+    assert!(r.shared.underruns.load(Ordering::Relaxed) > 0);
     assert!(buffer.iter().all(|&x| x == 0.0));
+}
+
+#[test]
+fn a_line_just_before_a_block_boundary_still_clicks() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("silence.wav");
+    wav(&path, 48_000, 3 * 48_000, |_| 0);
+    let mut r = rig(track(&path), 0.0, 48_000);
+    // One line every 20,479.7 samples: the second rounds onto 20,480, the first sample of
+    // block 20 (blocks of 1,024).
+    let bpm = 60.0 * 48_000.0 / 20_479.7;
+    r.feeder.set_grid(Some(grid(bpm, 0, Meter::four_four())));
+    r.feeder.set_click(true);
+    r.feeder.play();
+    let left = r.play(3 * 48_000);
+    assert_eq!(
+        onsets(&left),
+        vec![0, 20_480, 40_959, 61_439, 81_919, 102_399, 122_878, 143_358]
+    );
+}
+
+#[test]
+fn right_after_a_seek_the_position_is_the_seek_point_and_no_underrun_is_counted() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tone.wav");
+    wav(&path, 48_000, 6 * 48_000, |n| {
+        if n % 2 == 0 { 3000 } else { -3000 }
+    });
+    let mut r = rig(track(&path), 0.0, 48_000);
+    r.feeder.play();
+    let _ = r.play(5 * 48_000);
+    r.feeder.seek(1000);
+    assert_eq!(
+        r.feeder.state().position,
+        SampleIndex(1000),
+        "before the callback acknowledges"
+    );
+    let _ = r.play(4800);
+    assert_eq!(r.shared.underruns.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn resampled_output_stays_within_full_scale_and_the_end_is_not_cut() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("square-44k.wav");
+    wav(&path, 44_100, 22_050, |n| {
+        if (n / 40) % 2 == 0 { 32_767 } else { -32_767 }
+    });
+    let mut r = rig(track(&path), 6.0, 48_000);
+    r.feeder.play();
+    let left = r.play(48_000);
+    let peak = left.iter().fold(0.0_f32, |m, x| m.max(x.abs()));
+    assert!(peak <= 1.0, "{peak}");
+    // Half a second at 44.1 kHz is 24,000 frames at 48 kHz, all of them heard.
+    let last = left.iter().rposition(|&x| x.abs() > 0.5).unwrap();
+    assert!(last >= 23_990, "the tail stops at {last}");
+}
+
+#[test]
+fn music_and_clicks_use_the_first_two_channels_and_mono_hears_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("level.wav");
+    wav(&path, 48_000, 48_000, |_| 8192);
+    let mut r = rig_with(track(&path), 0.0, 48_000, 4);
+    r.feeder.set_grid(Some(grid(120.0, 0, Meter::four_four())));
+    r.feeder.set_click(true);
+    r.feeder.play();
+    let all = r.play_all(24_000);
+    assert!(
+        all.chunks(4).all(|f| f[2..].iter().all(|&x| x == 0.0)),
+        "the third and fourth channels stay silent"
+    );
+    assert!(
+        all.chunks(4).any(|f| (f[0] - 0.125).abs() > 0.01),
+        "clicks on the first channel"
+    );
+    let mut mono = rig_with(track(&path), 0.0, 48_000, 1);
+    mono.feeder.play();
+    let heard = mono.play(4800);
+    assert!((heard[1000] - 0.25).abs() < 1e-6, "{}", heard[1000]);
+}
+
+#[test]
+fn an_edit_while_paused_is_heard_from_the_first_frame_played() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("silence.wav");
+    wav(&path, 48_000, 4 * 48_000, |_| 0);
+    let mut r = rig(track(&path), 0.0, 48_000);
+    r.feeder.set_click(true);
+    r.feeder.play();
+    let _ = r.play(256 * 40);
+    r.feeder.pause();
+    let _ = r.play(512);
+    let at = r.feeder.state().position.0;
+    // A new grid with a line 100 samples after the paused position.
+    r.feeder
+        .set_grid(Some(grid(120.0, at + 100, Meter::four_four())));
+    r.feeder.play();
+    let left = r.play(2000);
+    let first = onsets(&left)[0];
+    assert!(
+        first.abs_diff(100) <= 256,
+        "the new line is heard at {first}"
+    );
 }
 
 /// The device player's thread starts, takes commands without opening a device until asked to
@@ -272,7 +400,16 @@ fn the_device_player_opens_nothing_until_it_plays() {
     player.seek(SampleIndex(1000));
     std::thread::sleep(std::time::Duration::from_millis(30));
     let status = player.status();
-    assert_eq!(status.state, None, "no stream before play");
+    let paused_at_the_seek = sc_engine::player::PlayerState {
+        playing: false,
+        position: SampleIndex(1000),
+        underruns: 0,
+    };
+    assert_eq!(
+        status.state,
+        Some(paused_at_the_seek),
+        "no stream before play"
+    );
     assert_eq!(status.error, None);
     drop(player);
 }

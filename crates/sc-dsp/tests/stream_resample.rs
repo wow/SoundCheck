@@ -79,3 +79,27 @@ fn equal_rates_copy_and_a_reset_starts_over() {
     assert!(StreamResampler::new(0, 48_000, 2).is_err());
     assert!(StreamResampler::new(44_100, 48_000, 0).is_err());
 }
+
+#[test]
+fn a_flush_lets_the_last_frames_out() {
+    let input = stereo(3000, 44_100.0);
+    let mut r = StreamResampler::new(44_100, 48_000, 2).unwrap();
+    let mut out = Vec::new();
+    r.process(&input, &mut out);
+    let before = out.len() / 2;
+    r.flush(&mut out);
+    let whole = resample_all(&channel(&input, 0), 44_100, 48_000).unwrap();
+    assert!(before < whole.len(), "{before} frames before the flush");
+    assert!(
+        out.len() / 2 >= whole.len(),
+        "{} frames after",
+        out.len() / 2
+    );
+    let left = channel(&out, 0);
+    let worst = left
+        .iter()
+        .zip(&whole)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(worst < 1e-5, "{worst}");
+}

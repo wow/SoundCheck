@@ -1,6 +1,7 @@
 //! The SoundCheck desktop shell: thin Tauri commands over the engine. No DSP and no file parsing
 //! live here; commands map UI intent to engine calls and stream results back.
 #![allow(missing_docs)]
+#![forbid(unsafe_code)]
 // Tauri hands commands their `State` and `Channel` by value.
 #![allow(clippy::needless_pass_by_value)]
 

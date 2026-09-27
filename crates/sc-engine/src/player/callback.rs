@@ -1,6 +1,7 @@
 //! The audio callback: copies rendered samples from a lock-free ring into the device buffer and
 //! nothing else. It never allocates, locks, logs, blocks or panics (a test runs it under an
-//! allocation-counting allocator); a short ring outputs silence and counts an underrun.
+//! allocation-counting allocator); a ring that runs short once audio is flowing outputs silence
+//! and counts an underrun (the wait for the first audio after a start or a seek is not one).
 //!
 //! Seeking uses an epoch: the controlling thread raises it, the callback drops everything queued
 //! for the old position and acknowledges, and only then is audio for the new position queued,
@@ -34,6 +35,8 @@ pub struct Callback {
     shared: Arc<Shared>,
     channels: usize,
     epoch: u64,
+    /// Audio has arrived since the last seek.
+    primed: bool,
 }
 
 impl Callback {
@@ -45,6 +48,7 @@ impl Callback {
             shared,
             channels: usize::from(channels).max(1),
             epoch: 0,
+            primed: false,
         }
     }
 
@@ -57,6 +61,7 @@ impl Callback {
                 chunk.commit_all();
             }
             self.epoch = epoch;
+            self.primed = false;
             self.shared.played.store(0, Ordering::Release);
             self.shared.acked.store(epoch, Ordering::Release);
         }
@@ -75,9 +80,10 @@ impl Callback {
             chunk.commit_all();
         }
         out[copied..].fill(0.0);
-        if copied < out.len() && !self.shared.ended.load(Ordering::Acquire) {
+        if copied < out.len() && self.primed && !self.shared.ended.load(Ordering::Acquire) {
             self.shared.underruns.fetch_add(1, Ordering::Relaxed);
         }
+        self.primed |= copied > 0;
         self.shared
             .played
             .fetch_add((copied / self.channels) as u64, Ordering::Release);

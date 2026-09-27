@@ -3,8 +3,9 @@
 //!
 //! The mix happens at the track's own rate, so the clicks sit on the grid's sample positions
 //! exactly and the resampler moves music and click together. With the click on, the music is
-//! 6 dB down so the click cuts through; the result is clamped to full scale, so a track whose
-//! planned gain leaves overs clips only in the player, never in a file.
+//! 6 dB down so the click cuts through. The converted output is clamped to full scale, so a track
+//! whose planned gain leaves overs clips only in the player, never in a file. Clicks go to the
+//! first two output channels only, as the music does.
 
 use std::sync::Arc;
 
@@ -40,6 +41,7 @@ pub struct Renderer {
     resampler: StreamResampler,
     pcm: Vec<i16>,
     mix: Vec<f32>,
+    flushed: bool,
 }
 
 impl Renderer {
@@ -65,6 +67,7 @@ impl Renderer {
             resampler,
             pcm: Vec::new(),
             mix: Vec::new(),
+            flushed: false,
         };
         renderer.set_gain(gain);
         Ok(renderer)
@@ -87,6 +90,7 @@ impl Renderer {
         self.position = frame;
         self.ringing.clear();
         self.resampler.reset();
+        self.flushed = false;
     }
 
     /// Plays at `gain` (dB) from the next block on.
@@ -117,8 +121,22 @@ impl Renderer {
     }
 
     /// Renders up to `frames` source frames (fewer where decoding has not got to yet) and
-    /// appends the converted output to `out`; returns the source frames rendered.
+    /// appends the converted output to `out`; returns the source frames rendered. At the end of
+    /// the track the converter's last frames are appended once.
     pub fn render(&mut self, frames: usize, out: &mut Vec<f32>) -> usize {
+        let from = out.len();
+        let n = self.render_block(frames, out);
+        if n == 0 && self.at_end() && !self.flushed {
+            self.resampler.flush(out);
+            self.flushed = true;
+        }
+        for s in &mut out[from..] {
+            *s = s.clamp(-1.0, 1.0);
+        }
+        n
+    }
+
+    fn render_block(&mut self, frames: usize, out: &mut Vec<f32>) -> usize {
         let in_ch = usize::from(self.track.channels());
         self.pcm.resize(frames * in_ch, 0);
         let n = self.track.read(self.position, &mut self.pcm);
@@ -147,9 +165,6 @@ impl Renderer {
         if self.click {
             self.add_clicks(n);
         }
-        for s in &mut self.mix {
-            *s = s.clamp(-1.0, 1.0);
-        }
         self.resampler.process(&self.mix, out);
         self.position += n as u64;
         n
@@ -166,10 +181,16 @@ impl Renderer {
             return;
         };
         let spb = grid.samples_per_beat(self.rate);
+        if !(spb.is_finite() && spb > 0.0) {
+            self.ringing = ringing;
+            return;
+        }
         let anchor = sample_f64(grid.anchor.0);
         let start = sample_f64(self.position);
         let bar = i64::from(grid.meter.beats_per_bar.max(1));
-        let mut i = ((start - anchor) / spb).ceil();
+        // Lines are rounded to samples: start half a sample early so a line that rounds onto
+        // this block's first sample is played here, not lost between two blocks.
+        let mut i = ((start - 0.5 - anchor) / spb).ceil();
         loop {
             let line = (anchor + i * spb).round();
             if line >= start + sample_f64(n as u64) {
@@ -192,14 +213,14 @@ impl Renderer {
     }
 
     /// Adds click samples from `from` onwards at frame `offset` of the block (of `n` frames) to
-    /// every output channel; returns how many click samples it added.
+    /// the first two output channels; returns how many click samples it added.
     fn mix_click(&mut self, accent: Accent, offset: usize, from: usize, n: usize) -> usize {
         let och = self.out_channels;
         let sound = &self.clicks.sound(accent)[from..];
         let count = sound.len().min(n.saturating_sub(offset));
         for (k, &s) in sound[..count].iter().enumerate() {
             let f = offset + k;
-            for c in &mut self.mix[f * och..(f + 1) * och] {
+            for c in &mut self.mix[f * och..f * och + och.min(2)] {
                 *c += s;
             }
         }
