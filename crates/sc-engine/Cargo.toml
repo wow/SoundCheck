@@ -16,7 +16,13 @@ sc-io = { workspace = true }
 sc-analysis = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
+rtrb = { workspace = true }
+cpal = { workspace = true, optional = true }
 unicode-normalization = { workspace = true }
+
+[features]
+# The audio output device; only the desktop app enables it, so `sc-cli` never links CoreAudio.
+playback = ["dep:cpal"]
 
 [dev-dependencies]
 sc-core = { workspace = true, features = ["testsig"] }
@@ -33,3 +39,7 @@ harness = false
 [[bench]]
 name = "track"
 harness = false
+
+[[example]]
+name = "click"
+required-features = ["playback"]
