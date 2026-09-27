@@ -51,7 +51,8 @@ const LIBRARY: Synthetic[] = [
   { title: 'Six Eight Waltz', artist: 'Mock Artist H', codec: 'flac', rate: 44100, bits: 16, kbps: null, sp95: -9.5, integrated: -11.2, tp: -1.1, bpm: 138.41, meter: '6/8 · 3+3', confidence: 'amber', verdict: 'staticWarn', reasons: ['octaveMargin'] },
   { title: 'Broken Download', artist: 'Mock Artist I', codec: 'mp3', rate: 44100, bits: null, kbps: 256, sp95: null, integrated: null, tp: 0, bpm: null, fails: true },
   { title: 'Big Room', artist: 'Mock Artist J', codec: 'wav', rate: 44100, bits: 24, kbps: null, sp95: -6.1, integrated: -7.4, tp: 0.4, bpm: 128 },
-  { title: 'Downtempo', artist: 'Mock Artist K', codec: 'flac', rate: 44100, bits: 16, kbps: null, sp95: -12.2, integrated: -14.0, tp: -2.9, bpm: 92 },
+  // Ten pulses a bar: the longest row of beat-1 buttons in the grid view.
+  { title: 'Downtempo', artist: 'Mock Artist K', codec: 'flac', rate: 44100, bits: 16, kbps: null, sp95: -12.2, integrated: -14.0, tp: -2.9, bpm: 92, meter: '10/8 · 3+2+2+3', confidence: 'amber' },
   { title: 'Breakbeat Tool', artist: 'Mock Artist L', codec: 'aiff', rate: 44100, bits: 24, kbps: null, sp95: -9.0, integrated: -10.8, tp: -0.4, bpm: 174, confidence: 'red', reasons: ['octaveMargin', 'downbeatMargin'] },
 ];
 

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Drawer } from '@/components/Drawer';
 import { ownsKey } from '@/lib/focus';
+import { NARROW, useMediaQuery } from '@/lib/media';
+import { usePanels } from '@/state/panels';
 import {
   back,
   barOneHere,
@@ -20,11 +23,14 @@ import { CursorReadout } from './CursorReadout';
 import { barOf, samplesPerBeat } from './geometry';
 import { GridCanvas } from './GridCanvas';
 import { GridHeader } from './GridHeader';
-import { GridRail } from './GridRail';
+import { FitStrip } from './FitStrip';
+import { GridDetails, GridRail } from './GridRail';
 import { GridToolbar } from './GridToolbar';
-import { gridKey } from './keys';
+import { type GridKey, gridKey } from './keys';
 import { useTrack } from './store';
 import { useView } from './viewStore';
+
+const DRAWER_KEYS = new Set<GridKey['type']>(['details', 'undo', 'redo', 'playPause', 'click']);
 
 /** The grid view's keys, while it is open. */
 function useGridKeys(toggleMeter: () => void) {
@@ -33,6 +39,13 @@ function useGridKeys(toggleMeter: () => void) {
       if (ownsKey(e.target, e.key) || e.repeat) return;
       const action = gridKey(e);
       if (!action) return;
+      // While the details drawer is open, only I (closes it), undo, redo, play and the click
+      // reach the view; Esc closes the drawer rather than leaving.
+      const panels = usePanels.getState();
+      if (panels.details) {
+        if (action.type === 'back') return panels.setDetails(false);
+        if (!DRAWER_KEYS.has(action.type)) return;
+      }
       e.preventDefault();
       const t = useTrack.getState();
       switch (action.type) {
@@ -60,6 +73,10 @@ function useGridKeys(toggleMeter: () => void) {
           return void tap();
         case 'meter':
           return toggleMeter();
+        case 'details':
+          // Only a narrow window folds the rail into a drawer.
+          if (window.matchMedia?.(NARROW).matches) panels.setDetails(!panels.details);
+          return;
         case 'reset':
           return resetGrid();
         case 'undo':
@@ -77,9 +94,17 @@ function useGridKeys(toggleMeter: () => void) {
   }, [toggleMeter]);
 }
 
-/** Opening, analysing again, decoding, or why something failed: one line above the waveform. */
-function StatusLine() {
+/**
+ * Opening, analysing again, decoding, or why something failed: one line above the waveform. In
+ * a narrow window, where the rail that shows them is folded away, also a failed save (with
+ * Save again) and why the grid shown is not the edit's.
+ */
+function StatusLine({ narrow }: { narrow: boolean }) {
   const phase = useTrack((s) => s.phase);
+  const saveError = useTrack((s) => s.saveError);
+  const saving = useTrack((s) => s.saving);
+  const refitNote = useTrack((s) => s.refitNote);
+  const retrySave = useTrack((s) => s.retrySave);
   const analysing = useTrack((s) => s.analysing);
   const error = useTrack((s) => s.error);
   const decoded = useTrack((s) => s.decoded);
@@ -96,6 +121,25 @@ function StatusLine() {
   else if (phase === 'failed' || (error && done && decoded < frames)) {
     text = error ?? 'The track could not be opened.';
     tone = 'text-err';
+  } else if (narrow && saveError && !saving) {
+    return (
+      <div
+        role="alert"
+        className="flex shrink-0 items-center gap-3 border-b border-line bg-bg-1 px-4 py-1 text-[12px] text-err"
+      >
+        <span className="min-w-0 flex-1 truncate">Not saved: {saveError}</span>
+        <button
+          type="button"
+          onClick={retrySave}
+          className="h-6 shrink-0 rounded-md border border-line px-2 text-[12px] font-medium text-fg-1 hover:bg-bg-2"
+        >
+          Save again
+        </button>
+      </div>
+    );
+  } else if (narrow && refitNote) {
+    text = refitNote;
+    tone = 'text-warn';
   } else if (playerError) {
     text = playerError;
     tone = 'text-warn';
@@ -148,12 +192,21 @@ export function GridView() {
   const [meterOpen, setMeterOpen] = useState(false);
   const toggleMeter = useCallback(() => setMeterOpen((open) => !open), []);
   useGridKeys(toggleMeter);
+  const narrow = useMediaQuery(NARROW);
+  const details = usePanels((p) => p.details);
+  const setDetails = usePanels((p) => p.setDetails);
+  // Widened past the narrow layout, or left: the rail is back (or gone), so no drawer.
+  useEffect(() => {
+    if (!narrow) setDetails(false);
+  }, [narrow, setDetails]);
+  useEffect(() => () => setDetails(false), [setDetails]);
   return (
     <div className="flex h-full flex-col bg-bg-0 text-fg-0">
       <GridHeader />
       <div className="flex min-h-0 flex-1">
         <main className="flex min-w-0 flex-1 flex-col">
-          <StatusLine />
+          {narrow && <FitStrip />}
+          <StatusLine narrow={narrow} />
           <div className="relative flex min-h-0 flex-1 flex-col">
             <GridCanvas />
             <CursorReadout />
@@ -161,8 +214,13 @@ export function GridView() {
           <GridToolbar meterOpen={meterOpen} setMeterOpen={setMeterOpen} />
           <DriftStrip />
         </main>
-        <GridRail />
+        {!narrow && <GridRail />}
       </div>
+      {narrow && details && (
+        <Drawer label="Grid details" focus="panel" onClose={() => setDetails(false)}>
+          <GridDetails />
+        </Drawer>
+      )}
     </div>
   );
 }
