@@ -28,7 +28,7 @@ import {
   typeBpm,
   zoom,
 } from './actions';
-import { pxPerBeat } from './geometry';
+import { samplesPerBeat } from './geometry';
 import { playText } from './readout';
 import { meterText, pickerMeters } from './meters';
 import { edited, useTrack } from './store';
@@ -92,7 +92,8 @@ function TransportBar() {
   const playing = useTrack((s) => s.player.playing);
   const click = useTrack((s) => s.click);
   const isEdited = useTrack(edited);
-  const view = useView((s) => s.view);
+  // Only the zoom: the view's start moves every frame while it follows the playhead.
+  const samplesPerPx = useView((s) => s.view.samplesPerPx);
   const ghost = useView((s) => s.ghost);
   const toggleGhost = useView((s) => s.toggleGhost);
   const rate = opened?.sampleRate ?? 44_100;
@@ -144,7 +145,7 @@ function TransportBar() {
           <Maximize2 className={ICON} aria-hidden />
         </Btn>
         <span className="w-[80px] text-right font-mono text-[11.5px] tabular-nums text-fg-1">
-          {grid ? `${formatPxPerBeat(pxPerBeat(view, grid, rate))} px / beat` : '–'}
+          {grid ? `${formatPxPerBeat(samplesPerBeat(grid, rate) / samplesPerPx)} px / beat` : '–'}
         </span>
       </Group>
     </div>
