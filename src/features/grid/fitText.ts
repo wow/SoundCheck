@@ -19,3 +19,9 @@ export const TONE_TEXT: Record<ResidualTone, string> = {
   warn: 'text-warn',
   err: 'text-err',
 };
+/** What the colours say, for screen readers. */
+export const TONE_WORDS: Record<ResidualTone, string> = {
+  ok: ', within the limit',
+  warn: ', near the limit',
+  err: ', over the limit',
+};

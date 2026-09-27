@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { Drawer } from './Drawer';
 
@@ -109,5 +109,40 @@ describe('the drawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Widen' }));
     expect(screen.queryByRole('button', { name: 'Opener' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Rail' })).toHaveFocus();
+  });
+
+  it('brings focus back in when the focused control goes away, and closes on Esc from there', () => {
+    const windowEscape = vi.fn();
+    const onWindowKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') windowEscape();
+    };
+    function Shrinking() {
+      const [open, setOpen] = useState(true);
+      const [card, setCard] = useState(true);
+      return open ? (
+        <Drawer label="Grid details" onClose={() => setOpen(false)}>
+          {card && (
+            <button type="button" onClick={() => setCard(false)}>
+              Try 4/4
+            </button>
+          )}
+          <button type="button">Undo</button>
+        </Drawer>
+      ) : null;
+    }
+    window.addEventListener('keydown', onWindowKey);
+    render(<Shrinking />);
+    const tryIt = screen.getByRole('button', { name: 'Try 4/4' });
+    expect(tryIt).toHaveFocus();
+    fireEvent.click(tryIt);
+    // The button is gone and focus with it; Tab comes back into the panel.
+    expect(document.body).toHaveFocus();
+    fireEvent.keyDown(document.body, { key: 'Tab' });
+    expect(screen.getByRole('button', { name: 'Undo' })).toHaveFocus();
+    act(() => (document.activeElement as HTMLElement).blur());
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(windowEscape).not.toHaveBeenCalled();
+    window.removeEventListener('keydown', onWindowKey);
   });
 });

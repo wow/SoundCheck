@@ -1,7 +1,7 @@
 import { ConfidenceRing, MeterBadge } from '@/features/library/cells';
 import { usePanels } from '@/state/panels';
 import { fitTones } from './geometry';
-import { TONE_TEXT, VERDICT, VERDICT_TONE } from './fitText';
+import { TONE_TEXT, TONE_WORDS, VERDICT, VERDICT_TONE } from './fitText';
 import { meterText } from './meters';
 import { useTrack } from './store';
 import { Chip, Kbd } from './ui';
@@ -17,7 +17,11 @@ export function FitStrip() {
   const setOpen = usePanels((p) => p.setDetails);
   const tones = grid ? fitTones(grid.residualP95Ms, grid.residualMaxMs) : null;
   return (
-    <div className="flex h-8 shrink-0 items-center gap-2.5 border-b border-line bg-bg-1 px-3 text-[12px] text-fg-2">
+    <div
+      role="group"
+      aria-label="Grid fit"
+      className="flex h-8 shrink-0 items-center gap-2.5 border-b border-line bg-bg-1 px-3 text-[12px] text-fg-2"
+    >
       {grid && tones ? (
         <>
           <ConfidenceRing confidence={grid.confidence} />
@@ -29,16 +33,18 @@ export function FitStrip() {
           </span>
           <MeterBadge meter={meterText(grid.meter)} />
           <span>
-            P95{' '}
+            <span className="sr-only">Residual </span>P95{' '}
             <span className={`font-mono tabular-nums ${TONE_TEXT[tones.p95]}`}>
               {grid.residualP95Ms.toFixed(0)} ms
             </span>
+            <span className="sr-only">{TONE_WORDS[tones.p95]}</span>
           </span>
           <span>
-            max{' '}
+            <span className="sr-only">Residual </span>max{' '}
             <span className={`font-mono tabular-nums ${TONE_TEXT[tones.max]}`}>
               {grid.residualMaxMs.toFixed(0)} ms
             </span>
+            <span className="sr-only">{TONE_WORDS[tones.max]}</span>
           </span>
           <Chip tone={VERDICT_TONE[grid.verdict]} mono={false}>
             {VERDICT[grid.verdict]}
@@ -50,6 +56,8 @@ export function FitStrip() {
       <div className="flex-1" />
       <button
         type="button"
+        aria-label="Details"
+        aria-keyshortcuts="I"
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen(!open)}

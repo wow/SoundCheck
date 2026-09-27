@@ -37,12 +37,16 @@ import { Btn, Kbd } from './ui';
 import { useView } from './viewStore';
 
 /**
- * Hidden when the fix row is narrower than everything it holds (1080 px): key hints stay in
- * the tooltips and the rail's key legend, the octave buttons in the fit card.
+ * Hidden when the fix row is narrower than everything it holds (1,085 px with a 10/8 meter, so
+ * below 1,096): key hints stay in the tooltips and the rail's key legend, the octave buttons in
+ * the fit card.
  */
-const COMPACT_HIDDEN = '@max-[1080px]:hidden';
-/** Hidden when a row is narrower still (a narrow window): labels whose control keeps an icon. */
-const NARROW_HIDDEN = '@max-[820px]:hidden';
+const COMPACT_HIDDEN = '@max-[1096px]:hidden';
+/**
+ * Hidden when a row is narrower still (the compact row needs 833 px with a 10/8 meter, so
+ * below 844): labels whose control keeps an icon.
+ */
+const NARROW_HIDDEN = '@max-[844px]:hidden';
 const ICON = 'size-3.5 shrink-0';
 
 /** `40`, or `0.3` when the whole of a long track is in view. */

@@ -26,9 +26,11 @@ import { GridHeader } from './GridHeader';
 import { FitStrip } from './FitStrip';
 import { GridDetails, GridRail } from './GridRail';
 import { GridToolbar } from './GridToolbar';
-import { gridKey } from './keys';
+import { type GridKey, gridKey } from './keys';
 import { useTrack } from './store';
 import { useView } from './viewStore';
+
+const DRAWER_KEYS = new Set<GridKey['type']>(['details', 'undo', 'redo', 'playPause', 'click']);
 
 /** The grid view's keys, while it is open. */
 function useGridKeys(toggleMeter: () => void) {
@@ -37,9 +39,13 @@ function useGridKeys(toggleMeter: () => void) {
       if (ownsKey(e.target, e.key) || e.repeat) return;
       const action = gridKey(e);
       if (!action) return;
-      // The details drawer, while open, has the keys to itself; I closes it again.
+      // While the details drawer is open, only I (closes it), undo, redo, play and the click
+      // reach the view; Esc closes the drawer rather than leaving.
       const panels = usePanels.getState();
-      if (panels.details && action.type !== 'details') return;
+      if (panels.details) {
+        if (action.type === 'back') return panels.setDetails(false);
+        if (!DRAWER_KEYS.has(action.type)) return;
+      }
       e.preventDefault();
       const t = useTrack.getState();
       switch (action.type) {
@@ -88,9 +94,17 @@ function useGridKeys(toggleMeter: () => void) {
   }, [toggleMeter]);
 }
 
-/** Opening, analysing again, decoding, or why something failed: one line above the waveform. */
-function StatusLine() {
+/**
+ * Opening, analysing again, decoding, or why something failed: one line above the waveform. In
+ * a narrow window, where the rail that shows them is folded away, also a failed save (with
+ * Save again) and why the grid shown is not the edit's.
+ */
+function StatusLine({ narrow }: { narrow: boolean }) {
   const phase = useTrack((s) => s.phase);
+  const saveError = useTrack((s) => s.saveError);
+  const saving = useTrack((s) => s.saving);
+  const refitNote = useTrack((s) => s.refitNote);
+  const retrySave = useTrack((s) => s.retrySave);
   const analysing = useTrack((s) => s.analysing);
   const error = useTrack((s) => s.error);
   const decoded = useTrack((s) => s.decoded);
@@ -107,6 +121,25 @@ function StatusLine() {
   else if (phase === 'failed' || (error && done && decoded < frames)) {
     text = error ?? 'The track could not be opened.';
     tone = 'text-err';
+  } else if (narrow && saveError && !saving) {
+    return (
+      <div
+        role="alert"
+        className="flex shrink-0 items-center gap-3 border-b border-line bg-bg-1 px-4 py-1 text-[12px] text-err"
+      >
+        <span className="min-w-0 flex-1 truncate">Not saved: {saveError}</span>
+        <button
+          type="button"
+          onClick={retrySave}
+          className="h-6 shrink-0 rounded-md border border-line px-2 text-[12px] font-medium text-fg-1 hover:bg-bg-2"
+        >
+          Save again
+        </button>
+      </div>
+    );
+  } else if (narrow && refitNote) {
+    text = refitNote;
+    tone = 'text-warn';
   } else if (playerError) {
     text = playerError;
     tone = 'text-warn';
@@ -173,7 +206,7 @@ export function GridView() {
       <div className="flex min-h-0 flex-1">
         <main className="flex min-w-0 flex-1 flex-col">
           {narrow && <FitStrip />}
-          <StatusLine />
+          <StatusLine narrow={narrow} />
           <div className="relative flex min-h-0 flex-1 flex-col">
             <GridCanvas />
             <CursorReadout />
@@ -184,7 +217,7 @@ export function GridView() {
         {!narrow && <GridRail />}
       </div>
       {narrow && details && (
-        <Drawer label="Grid details" onClose={() => setDetails(false)}>
+        <Drawer label="Grid details" focus="panel" onClose={() => setDetails(false)}>
           <GridDetails />
         </Drawer>
       )}
