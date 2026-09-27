@@ -11,7 +11,7 @@ Thanks for helping. SoundCheck is a desktop tool that touches people's music lib
 ```
 git clone https://github.com/wow/SoundCheck && cd SoundCheck
 ./scripts/setup-dev.sh        # installs the git hooks, enables sign-off, checks toolchains
-./scripts/verify.sh           # file size, fmt, clippy -D warnings, tests, typecheck, vitest
+./scripts/verify.sh           # file size, test files, fmt, clippy -D warnings, tests, typecheck, vitest
 pnpm tauri dev
 ```
 Toolchain: stable Rust (`rust-toolchain.toml`), Node 22+, pnpm 10+. macOS is the primary platform; Linux builds and runs the tests.
@@ -48,6 +48,7 @@ Signed-off-by: Your Name <you@example.com>
 - Fill the template: summary, user-visible behaviour, tests run (paste the `./scripts/verify.sh` summary), whether it is an output change, docs touched.
 - Size: aim for under ~400 changed lines excluding fixtures, goldens and generated bindings; split otherwise or say why.
 - File size: no source file over 700 lines, inline tests and comments included (generated bindings are exempt); split a growing file by concern into a module folder or subcomponents. `scripts/check-file-size.sh` checks it in `verify.sh` and CI.
+- Tests: integration tests in each crate's `tests/` folder; unit tests (for private code) in their own file next to the module, `foo.rs` -> `foo/tests.rs` (`mod.rs` or `lib.rs` -> `tests.rs`), declared with `#[cfg(test)] mod tests;`, never inline. `scripts/check-test-files.sh` checks it.
 - Required checks: `fmt`, `clippy`, `test`, `deny`, `typecheck`, `vitest`, `dco`, `pr-title`, and `macos-build` on PRs. A PR that adds a dependency states its licence in the description.
 - Review: a maintainer reviews every PR; DSP, grid, file-layer and IPC changes get a numerical review (tolerances, determinism, byte-preservation). Address comments with new commits; the squash keeps history clean.
 - Merge: squash only, by a maintainer, after CI is green. The squash message is the PR title plus the PR description.

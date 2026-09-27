@@ -254,9 +254,4 @@ pub fn run() {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn version_matches_core() {
-        assert_eq!(super::app_version(), sc_core::VERSION);
-    }
-}
+mod tests;

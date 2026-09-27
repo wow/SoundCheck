@@ -33,15 +33,4 @@ pub fn to_mono(interleaved: &[f32], channels: u16, out: &mut Vec<f32>) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stereo_averages_and_mono_copies() {
-        let mut out = Vec::new();
-        to_mono(&[1.0, 0.0, 0.5, 0.5, -1.0, 1.0], 2, &mut out);
-        assert_eq!(out, vec![0.5, 0.5, 0.0]);
-        to_mono(&[0.25, -0.25], 1, &mut out);
-        assert_eq!(out, vec![0.5, 0.5, 0.0, 0.25, -0.25]);
-    }
-}
+mod tests;
