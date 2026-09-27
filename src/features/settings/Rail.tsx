@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import type { LoudnessMode } from '@/lib/ipc';
 import { useLibrary } from '@/state/library';
@@ -47,7 +47,9 @@ function Segmented<T extends string>({
 
 /**
  * A number field that commits on Enter or blur, so the table replans once per edit rather than
- * per keystroke.
+ * per keystroke; also when it goes away while typed in (the settings drawer closing), since a
+ * field removed while focused never gets its blur. Esc drops what was typed; with nothing
+ * typed it is left to the drawer, which closes.
  */
 function NumberField({
   label,
@@ -65,13 +67,24 @@ function NumberField({
   digits?: number;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const cancelled = useRef(false);
   const commit = () => {
-    if (draft !== null) {
-      const v = Number(draft.replace('−', '-'));
-      if (Number.isFinite(v)) onCommit(v);
-    }
+    if (draft !== null && !cancelled.current) commitText(draft, onCommit);
+    cancelled.current = false;
     setDraft(null);
   };
+  // What is typed and where it goes, for the unmount below.
+  const latest = useRef({ draft, onCommit });
+  useEffect(() => {
+    latest.current = { draft, onCommit };
+  });
+  useEffect(
+    () => () => {
+      const { draft: typed, onCommit: save } = latest.current;
+      if (typed !== null) commitText(typed, save);
+    },
+    [],
+  );
   return (
     <label className="flex flex-col gap-1" style={{ width }}>
       <span className="text-[11px] text-fg-2">{label}</span>
@@ -80,11 +93,18 @@ function NumberField({
           type="text"
           inputMode="decimal"
           value={draft ?? value.toFixed(digits)}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            cancelled.current = false;
+            setDraft(e.target.value);
+          }}
           onBlur={commit}
           onKeyDown={(e) => {
             if (e.key === 'Enter') e.currentTarget.blur();
-            if (e.key === 'Escape') {
+            if (e.key === 'Escape' && draft !== null) {
+              // The first Esc drops the typing (and the blur after it saves nothing); the
+              // drawer only closes on the next.
+              e.stopPropagation();
+              cancelled.current = true;
               setDraft(null);
               e.currentTarget.blur();
             }
@@ -97,17 +117,37 @@ function NumberField({
   );
 }
 
+function commitText(text: string, onCommit: (v: number) => void): void {
+  const v = Number(text.replace('−', '-'));
+  if (Number.isFinite(v)) onCommit(v);
+}
+
 const MODES: { id: LoudnessMode; label: string }[] = [
   { id: 'dj', label: 'DJ' },
   { id: 'streaming', label: 'Streaming' },
 ];
 
-/** The right rail: what the batch is levelled to, and the DJ app's BPM range. */
+/** The right rail beside the table: the settings, in a window wide enough for them. */
 export function Rail() {
+  return (
+    <aside
+      data-settings-rail
+      className="flex w-[272px] shrink-0 flex-col xl:w-[300px] overflow-y-auto border-l border-line bg-bg-1"
+    >
+      <Settings />
+    </aside>
+  );
+}
+
+/**
+ * What the batch is levelled to, and the DJ app's BPM range: in the rail, or in the settings
+ * drawer of a narrow window.
+ */
+export function Settings() {
   const s = useSettings();
   const analysed = useLibrary((l) => Object.values(l.rows).some((r) => r.analysis?.shortTermP95 != null));
   return (
-    <aside className="flex w-[272px] shrink-0 flex-col xl:w-[300px] gap-[22px] overflow-y-auto border-l border-line bg-bg-1 px-[18px] pb-4 pt-[18px]">
+    <div className="flex min-h-full flex-col gap-[22px] px-[18px] pb-4 pt-[18px]">
       <Section title="Loudness">
         <Segmented label="Loudness mode" value={s.mode} options={MODES} onChange={s.setMode} />
         <label className="relative flex flex-col gap-1">
@@ -184,6 +224,6 @@ export function Rail() {
       <p className="flex items-center gap-2 text-[11.5px] text-fg-2">
         Originals untouched. Nothing is written in this version.
       </p>
-    </aside>
+    </div>
   );
 }

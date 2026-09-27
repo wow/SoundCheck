@@ -14,6 +14,9 @@ async function start() {
   if (import.meta.env.VITE_MOCK_IPC === '1') {
     const { installMockBackend } = await import('./dev/mockBackend');
     installMockBackend();
+    // For layout checks from the browser console: `overflowReport()` lists what does not fit.
+    const { overflowReport } = await import('./dev/overflow');
+    Object.assign(window, { overflowReport });
   }
   const root = document.getElementById('root');
   if (!root) throw new Error('missing #root');
