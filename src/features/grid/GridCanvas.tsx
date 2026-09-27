@@ -10,6 +10,7 @@ import {
   type Palette,
 } from './draw';
 import { placedBarOne } from './edit';
+import { type Heard, followed, heardAt, paged, reported } from './follow';
 import { samplesPerBeat, sampleToX, snapped, xToSample, zoomAround, zoomLimits } from './geometry';
 import { PeakTiles } from './peaks';
 import { useTrack } from './store';
@@ -36,7 +37,9 @@ export function GridCanvas() {
   const palette = useRef<Palette | null>(null);
   const pending = useRef<number | null>(null);
   const drag = useRef<Drag | null>(null);
-  const heard = useRef({ position: 0, at: 0, playing: false });
+  const heard = useRef<Heard>({ position: 0, at: 0, playing: false });
+  /** The pointer's x over the waveform, to keep the hover line under it as the view scrolls. */
+  const pointerX = useRef<number | null>(null);
 
   useEffect(() => {
     const scene = sceneRef.current;
@@ -54,7 +57,22 @@ export function GridCanvas() {
       const h = heard.current;
       const rate = useTrack.getState().opened?.sampleRate ?? 44_100;
       if (!h.playing) return useTrack.getState().player.position > 0 ? h.position : null;
-      return h.position + ((performance.now() - h.at) / 1000) * rate;
+      return heardAt(h, performance.now(), rate);
+    };
+    // While playing the view follows the playhead: it scrolls, or pages with reduced motion.
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    const follow = () => {
+      const head = heard.current.playing ? playhead() : null;
+      if (head === null || drag.current?.kind === 'pan' || drag.current?.kind === 'overview')
+        return;
+      const v = useView.getState();
+      const next = reducedMotion?.matches
+        ? paged(v.view, head)
+        : followed(v.view, head, size.current.dpr);
+      if (next === v.view) return;
+      v.setView(next);
+      if (pointerX.current !== null && v.hover !== null)
+        v.setHover(xToSample(next, pointerX.current));
     };
     const shownGrid = (): Grid | null => {
       const g = useTrack.getState().grid;
@@ -67,6 +85,7 @@ export function GridCanvas() {
     let sceneDirty = true;
     const render = () => {
       pending.current = null;
+      follow();
       const t = useTrack.getState();
       const v = useView.getState();
       const { width, height, dpr } = size.current;
@@ -104,13 +123,7 @@ export function GridCanvas() {
         { view: v.view, frames: t.opened.frames, playhead: head, hover: v.hover },
         p,
       );
-      if (heard.current.playing) {
-        // Keep the playhead in view: page on when it passes 85 % of the width.
-        if (head !== null && sampleToX(v.view, head) > width * 0.85) {
-          v.setView({ ...v.view, start: head - width * 0.15 * v.view.samplesPerPx });
-        }
-        requestFrame();
-      }
+      if (heard.current.playing) requestFrame();
     };
     const requestFrame = () => {
       if (pending.current === null) pending.current = requestAnimationFrame(render);
@@ -163,8 +176,9 @@ export function GridCanvas() {
     };
     // Where the player was last heard: the playhead runs on from it between player events.
     const onPlayer = () => {
-      const p = useTrack.getState().player;
-      heard.current = { position: p.position, at: performance.now(), playing: p.playing };
+      const t = useTrack.getState();
+      const rate = t.opened?.sampleRate ?? 44_100;
+      heard.current = reported(heard.current, t.player, performance.now(), rate);
       requestFrame();
     };
     const unTrack = useTrack.subscribe((t, prev) => {
@@ -251,7 +265,9 @@ export function GridCanvas() {
       } else if (d?.kind === 'overview') {
         centreOn((x / b.width) * t.opened.frames);
       }
-      v.setHover(y > RULER_H && y < b.laneTop ? sample : null);
+      const over = y > RULER_H && y < b.laneTop;
+      pointerX.current = over ? x : null;
+      v.setHover(over ? sample : null);
       overlay.style.cursor =
         d?.kind === 'handle' ||
         (t.grid &&
@@ -285,7 +301,10 @@ export function GridCanvas() {
         : snapped(t.onsets, xToSample(v.view, x), t.opened.sampleRate);
       t.edit(placedBarOne(t.edits.present, sample), { ...t.grid, anchor: sample });
     };
-    const onLeave = () => useView.getState().setHover(null);
+    const onLeave = () => {
+      pointerX.current = null;
+      useView.getState().setHover(null);
+    };
     overlay.addEventListener('wheel', onWheel, { passive: false });
     overlay.addEventListener('pointerdown', onDown);
     overlay.addEventListener('pointermove', onMove);
