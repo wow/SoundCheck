@@ -82,3 +82,5 @@ export function restoreSession(): Promise<SessionSnapshot> {
 export function calibrationTarget(): Promise<number | null> {
   return invoke<number | null>('calibration_target');
 }
+
+export * from './grid';

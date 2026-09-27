@@ -114,7 +114,7 @@ export function actionText(plan: Plan): {
   return { main: `Gain ${signed(gain.gainDb)} dB`, detail: null, tone: 'fg' };
 }
 
-const REASON_TEXT: Record<Reason, string> = {
+export const REASON_TEXT: Record<Reason, string> = {
   residuals: 'beats off the grid',
   coverage: 'few beats on the grid',
   recall: 'missing beats',

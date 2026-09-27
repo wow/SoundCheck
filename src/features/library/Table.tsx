@@ -5,6 +5,7 @@ import { useLibrary, visibleIds } from '@/state/library';
 import { useSettings } from '@/state/settings';
 import { layoutFor, minWidth, rowDomId, type Layout } from './columns';
 import { ActionCell, BpmCell, LoudnessCell, NameCell, SpecCell, StatusPill, TpCell } from './cells';
+import { openInGridView } from '@/features/grid/actions';
 
 /** Row height in px; rows are fixed-height so only the visible ones are rendered. */
 export const ROW_HEIGHT = 44;
@@ -86,6 +87,7 @@ function TrackRow({
       aria-rowindex={index + 2}
       data-state={row.state}
       onClick={() => select(id)}
+      onDoubleClick={() => openInGridView(id)}
       className={cn(
         'absolute left-0 right-0 flex items-center border-b border-[#1c2129]',
         index % 2 === 1 && 'bg-[rgba(255,255,255,.015)]',
