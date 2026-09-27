@@ -6,12 +6,15 @@
     clippy::cast_sign_loss
 )] // benchmark fixture arithmetic on small counts
 //! Grid solving and refitting on a six-minute track at 128 BPM (768 beats, one kick per beat,
-//! hi-hat attacks on the eighths). Budgets: a full solve well under 20 ms, a refit (tempo and bar
-//! 1 pinned by the user) under 5 ms.
+//! hi-hat attacks on the eighths). Budgets: a full solve well under 20 ms, a refit from the
+//! cached evidence with a user's edit (what the grid view runs on every edit) under 5 ms.
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use sc_analysis::grid::{Evidence, SolveSettings, TimedOnset, fit_beats, solve};
 use sc_analysis::meter::estimate;
+use sc_analysis::refit::{Context, refit};
+use sc_core::Bpm;
+use sc_core::analysis::{GridEdit, GridEvidence, OnsetList, TagHints};
 
 /// Beats, downbeats, activations, kick onsets, broadband onsets.
 type Evidence5 = (
@@ -51,7 +54,28 @@ fn evidence() -> Evidence5 {
     (beats, downbeats, logits, kick, broadband)
 }
 
+/// The same evidence as the cache stores it.
+fn cached(ev: &Evidence5) -> GridEvidence {
+    let list = |onsets: &[TimedOnset]| OnsetList {
+        sample_rate: 22_050,
+        frames: onsets
+            .iter()
+            .map(|o| (o.time_s * 22_050.0).round() as u32)
+            .collect(),
+        rise_db: onsets.iter().map(|o| o.rise_db).collect(),
+        level_db: onsets.iter().map(|o| o.level_db).collect(),
+    };
+    GridEvidence {
+        beats_s: ev.0.iter().map(|&b| b as f32).collect(),
+        downbeats_s: ev.1.iter().map(|&b| b as f32).collect(),
+        downbeat_logits_50fps: ev.2.clone(),
+        kick_onsets: list(&ev.3),
+        broadband_onsets: list(&ev.4),
+    }
+}
+
 fn bench_grid(c: &mut Criterion) {
+    let cached = cached(&evidence());
     let (beats, downbeats, logits, kick, broadband) = evidence();
     let ev = Evidence {
         beats_s: &beats,
@@ -72,6 +96,20 @@ fn bench_grid(c: &mut Criterion) {
     });
     group.bench_function("refit 768 beats (tempo + bar 1 pinned)", |b| {
         b.iter(|| solve(std::hint::black_box(&ev), &pinned, 44_100).unwrap());
+    });
+    group.bench_function("refit from the cache 768 beats (x2, beat 1 = 3)", |b| {
+        let tags = TagHints::default();
+        let ctx = Context {
+            bpm_range: (Bpm(70.0), Bpm(180.0)),
+            tags: &tags,
+            sample_rate: 44_100,
+        };
+        let edit = GridEdit {
+            octave: 1,
+            downbeat_shift: 2,
+            ..GridEdit::default()
+        };
+        b.iter(|| refit(std::hint::black_box(&cached), &ctx, &edit).unwrap());
     });
     group.bench_function("meter estimate 768 beats", |b| {
         let fit = fit_beats(&beats).unwrap();

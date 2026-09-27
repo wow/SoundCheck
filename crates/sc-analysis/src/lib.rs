@@ -9,6 +9,7 @@ pub mod grid;
 pub mod loudness;
 pub mod meter;
 pub mod peak;
+pub mod refit;
 
 pub use beats::{BeatTracker, RawBeats};
 pub use loudness::{LoudnessMeter, measure};

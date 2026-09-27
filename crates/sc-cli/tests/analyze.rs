@@ -104,7 +104,7 @@ fn analyze_json_reports_loudness_and_writes_the_cache() {
     assert_eq!(doc["schema"], 2);
     assert_eq!(doc["cache"], "written");
     let r = &doc["record"];
-    assert_eq!(r["schema"], 1);
+    assert_eq!(r["schema"], 2);
     assert_eq!(r["spec"]["sampleRate"], 44_100);
     assert_eq!(r["spec"]["channels"], 2);
     assert_eq!(r["frames"], 220_500);
@@ -320,13 +320,21 @@ fn a_click_track_gets_a_static_four_four_grid_with_bar_one_after_the_lead_in() {
         dir.path(),
         &[wav.to_str().unwrap(), "--no-cache", "--evidence"],
     );
+    let evidence = &with["record"]["evidence"];
     assert!(
-        with["record"]["evidence"]["beats"]
-            .as_array()
-            .unwrap()
-            .len()
-            >= 100
+        evidence["beatsS"].as_array().unwrap().len() >= 100,
+        "{evidence}"
     );
+    let mut total = 0;
+    for key in ["kickOnsets", "broadbandOnsets"] {
+        let onsets = &evidence[key];
+        assert_eq!(onsets["sampleRate"], 22_050, "{key}");
+        let frames = onsets["frames"].as_array().unwrap().len();
+        assert_eq!(onsets["riseDb"].as_array().unwrap().len(), frames, "{key}");
+        assert_eq!(onsets["levelDb"].as_array().unwrap().len(), frames, "{key}");
+        total += frames;
+    }
+    assert!(total > 0, "{evidence}");
 }
 
 #[test]

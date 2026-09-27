@@ -11,13 +11,13 @@ use std::time::{Duration, Instant};
 use sc_analysis::beats::{
     BEAT_MODEL_FILE, BEAT_MODEL_FULL_FILE, BeatTracker, MODEL_SAMPLE_RATE, find_model_dir,
 };
-use sc_analysis::grid::{self, Evidence, SolveSettings, TimedOnset};
-use sc_analysis::{LoudnessMeter, meter};
+use sc_analysis::{LoudnessMeter, refit};
 use sc_core::analysis::LoudnessReport;
 use sc_core::analysis::{
-    AnalysisRecord, AnalysisSettings, BeatUnit, Grid, GridEvidence, Model, RECORD_SCHEMA, TagHints,
+    AnalysisRecord, AnalysisSettings, Grid, GridEdit, GridEvidence, Model, OnsetList,
+    RECORD_SCHEMA, TagHints,
 };
-use sc_core::{AudioSpec, Error, Result, SampleIndex, Seconds};
+use sc_core::{AudioSpec, Error, Result, SampleIndex};
 use sc_dsp::{KickBand, Onset, OnsetDetector, Resampler, to_mono};
 use sc_io::cache::Cache;
 use sc_io::{Decoder, tags};
@@ -348,80 +348,39 @@ fn grid_for(
     let detector = OnsetDetector::new(MODEL_SAMPLE_RATE);
     let mut band = mono.to_vec();
     KickBand::new(MODEL_SAMPLE_RATE).process_block(&mut band);
-    let kick = timed(&detector.detect(&band));
-    let broadband = timed(&detector.detect(mono));
+    let kick = detector.detect(&band);
+    let broadband = detector.detect(mono);
     timings.onsets += t.elapsed();
 
     let t = Instant::now();
-    let beats_s: Vec<f64> = raw.beats_s.iter().map(|&b| f64::from(b)).collect();
-    let downbeats_s: Vec<f64> = raw.downbeats_s.iter().map(|&b| f64::from(b)).collect();
     let evidence = GridEvidence {
-        beats: raw.beats_at(sample_rate),
-        downbeats: raw.downbeats_at(sample_rate),
+        beats_s: raw.beats_s.clone(),
+        downbeats_s: raw.downbeats_s.clone(),
         downbeat_logits_50fps: raw.downbeat_logits.clone(),
-        kick_onsets: kick
-            .iter()
-            .map(|o| Seconds(o.time_s).to_sample_index(sample_rate))
-            .collect(),
+        kick_onsets: onset_list(&kick),
+        broadband_onsets: onset_list(&broadband),
     };
-    let Some(fit) = grid::fit_beats(&beats_s) else {
-        timings.grid += t.elapsed();
-        return Ok((None, Some("no beats found".to_owned()), Some(evidence)));
+    let ctx = refit::Context {
+        bpm_range: settings.bpm_range,
+        tags: hints,
+        sample_rate,
     };
-    let hint = [&hints.genre, &hints.title, &hints.artist]
-        .iter()
-        .filter_map(|s| s.as_deref())
-        .collect::<Vec<_>>()
-        .join(" ");
-    // The meter is read on the attacks' phase, not the model's: trackers sometimes follow the
-    // off-beat for whole sections.
-    let anchor_onsets = if kick.len() * 4 >= beats_s.len() {
-        &kick
-    } else {
-        &broadband
-    };
-    let phase = grid::onset_phase(&fit, anchor_onsets);
-    let estimate = meter::estimate(
-        fit.period,
-        phase,
-        fit.span,
-        &kick,
-        &broadband,
-        &raw.downbeat_logits,
-        &hint,
-    );
-    let solve_settings = SolveSettings {
-        bpm_range: (settings.bpm_range.0.0, settings.bpm_range.1.0),
-        tag_bpm: hints.bpm.map(|b| b.0),
-        genre: hints.genre.clone(),
-        meter: estimate.meter.clone(),
-        meter_margin: estimate.margin,
-        fixed_period: (estimate.meter.unit == BeatUnit::Eighth).then_some(estimate.unit_period),
-        ..SolveSettings::default()
-    };
-    let ev = Evidence {
-        beats_s: &beats_s,
-        downbeats_s: &downbeats_s,
-        downbeat_logits: &raw.downbeat_logits,
-        kick_onsets: &kick,
-        broadband_onsets: &broadband,
-    };
-    let grid = grid::solve(&ev, &solve_settings, sample_rate).map(|mut g| {
-        g.meter_runner_up.clone_from(&estimate.runner_up);
-        g
-    });
+    // The analysis is a refit with no edit, so the cached evidence reproduces this grid.
+    let grid = refit::refit(&evidence, &ctx, &GridEdit::default()).map(|solved| solved.grid);
     timings.grid += t.elapsed();
     let skipped = grid.is_none().then(|| "no beats found".to_owned());
     Ok((grid, skipped, Some(evidence)))
 }
 
-fn timed(onsets: &[Onset]) -> Vec<TimedOnset> {
-    onsets
-        .iter()
-        .map(|o| TimedOnset {
-            time_s: SampleIndex(o.frame as u64).to_seconds(MODEL_SAMPLE_RATE).0,
-            rise_db: o.rise_db,
-            level_db: o.level_db,
-        })
-        .collect()
+/// Onsets as the cache stores them: frames at the analysis rate.
+fn onset_list(onsets: &[Onset]) -> OnsetList {
+    OnsetList {
+        sample_rate: MODEL_SAMPLE_RATE,
+        frames: onsets
+            .iter()
+            .map(|o| u32::try_from(o.frame).unwrap_or(u32::MAX))
+            .collect(),
+        rise_db: onsets.iter().map(|o| o.rise_db).collect(),
+        level_db: onsets.iter().map(|o| o.level_db).collect(),
+    }
 }

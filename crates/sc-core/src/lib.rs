@@ -20,8 +20,8 @@ pub mod testsig;
 pub mod units;
 
 pub use analysis::{
-    AnalysisRecord, AnalysisSettings, Confidence, Grid, GridEvidence, LoudnessReport, Meter,
-    Reason, TagHints, Verdict,
+    AnalysisRecord, AnalysisSettings, Confidence, Grid, GridEdit, GridEvidence, LoudnessReport,
+    Meter, OnsetList, Reason, TagHints, Verdict,
 };
 pub use audio::{AudioBuffer, AudioSpec};
 pub use error::{Error, Result};

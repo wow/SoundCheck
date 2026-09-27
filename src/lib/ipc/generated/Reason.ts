@@ -3,4 +3,4 @@
 /**
  * Why a grid is not green, shown as chips next to the confidence ring.
  */
-export type Reason = "residuals" | "coverage" | "recall" | "octaveMargin" | "downbeatMargin" | "meterMargin" | "tagDisagrees" | "outsideRange" | "short" | "drifts" | "noKick";
+export type Reason = "residuals" | "coverage" | "recall" | "octaveMargin" | "downbeatMargin" | "meterMargin" | "tagDisagrees" | "outsideRange" | "short" | "drifts" | "noKick" | "manual";
