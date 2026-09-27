@@ -29,3 +29,7 @@ criterion = { workspace = true }
 [[bench]]
 name = "decide"
 harness = false
+
+[[bench]]
+name = "track"
+harness = false
