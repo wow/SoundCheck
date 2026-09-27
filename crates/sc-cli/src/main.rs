@@ -1,4 +1,5 @@
 //! Headless SoundCheck: the same analysis the app shows, printed as text or JSON.
+#![forbid(unsafe_code)]
 
 mod eval;
 mod labels;

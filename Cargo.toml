@@ -39,6 +39,8 @@ tauri-build = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
+cpal = "0.18"
+rtrb = "0.4"
 
 # test and bench only
 approx = "0.5"
@@ -50,7 +52,9 @@ assert_cmd = "2"
 predicates = "3"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# Every library crate also forbids unsafe code in its lib.rs; "deny" here lets a test that needs
+# it (a counting global allocator) opt in with `#![allow(unsafe_code)]` and SAFETY comments.
+unsafe_code = "deny"
 missing_docs = "warn"
 
 [workspace.lints.clippy]

@@ -1,0 +1,101 @@
+//! The audio callback never allocates: it runs here under a global allocator that counts every
+//! allocation made while counting is switched on, through playing, a seek and a pause. This
+//! binary holds this one test, so no other test allocates while the count runs.
+#![allow(unsafe_code)] // a global allocator is an unsafe trait; each method only forwards
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
+
+use sc_core::DbFs;
+use sc_engine::player::{Callback, Feeder, Renderer, Shared, ring};
+use sc_engine::{Track, TrackProgress};
+
+struct Counting;
+
+static COUNTING: AtomicBool = AtomicBool::new(false);
+static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+
+// SAFETY: every method forwards to the system allocator with the caller's arguments unchanged,
+// so `Counting` upholds exactly the contract `System` does; the counters are plain atomics.
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if COUNTING.load(Ordering::Relaxed) {
+            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        }
+        // SAFETY: the caller's layout, passed on as `GlobalAlloc::alloc` requires.
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: `ptr` came from this allocator, which is `System`, with this layout.
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        if COUNTING.load(Ordering::Relaxed) {
+            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        }
+        // SAFETY: as for `dealloc`; `new_size` is the caller's, checked by the caller.
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static GLOBAL: Counting = Counting;
+
+#[test]
+fn the_callback_never_allocates() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tone.wav");
+    let mut w = hound::WavWriter::create(
+        &path,
+        hound::WavSpec {
+            channels: 2,
+            sample_rate: 44_100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .unwrap();
+    for n in 0..88_200_i32 {
+        let v = i16::try_from((n * 37) % 20_000).unwrap();
+        w.write_sample(v).unwrap();
+        w.write_sample(v).unwrap();
+    }
+    w.finalize().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let track = Arc::new(
+        Track::open(&path, DbFs(-1.0), move |p| {
+            if !matches!(p, TrackProgress::Decoded(_)) {
+                let _ = tx.send(());
+            }
+        })
+        .unwrap(),
+    );
+    rx.recv().unwrap();
+
+    let shared = Arc::new(Shared::default());
+    let (producer, consumer) = ring(48_000, 2);
+    let renderer = Renderer::new(track, DbFs(0.0), 48_000, 2).unwrap();
+    let mut feeder = Feeder::new(renderer, producer, Arc::clone(&shared), 48_000, 2);
+    let mut callback = Callback::new(consumer, Arc::clone(&shared), 2);
+    let mut buffer = vec![0.0_f32; 512];
+    feeder.play();
+
+    let mut measured = |feeder: &mut Feeder, calls: usize| {
+        for _ in 0..calls {
+            feeder.pump();
+            COUNTING.store(true, Ordering::SeqCst);
+            callback.fill(&mut buffer);
+            COUNTING.store(false, Ordering::SeqCst);
+        }
+    };
+    measured(&mut feeder, 50);
+    feeder.seek(30_000);
+    measured(&mut feeder, 50);
+    feeder.pause();
+    measured(&mut feeder, 10);
+    assert_eq!(ALLOCATIONS.load(Ordering::SeqCst), 0);
+    assert!(shared.played.load(Ordering::SeqCst) > 0);
+}

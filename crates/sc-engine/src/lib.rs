@@ -3,8 +3,10 @@
 //! [`analyze`] runs one file end to end (decode, loudness, beats, onsets, meter, grid, tags,
 //! cache); [`batch`] runs many on worker threads with progress and cancellation; [`edits`]
 //! applies the user's saved grid edits; [`decide`] says what processing would do to an analysed
-//! file; [`track`] holds the track open in the grid view. Nothing here
-//! prints or knows about IPC; callers turn reports and events into text, JSON or IPC messages.
+//! file; [`track`] holds the track open in the grid view and [`player`] plays it with a click.
+//! Nothing here prints or knows about IPC; callers turn reports and events into text, JSON or IPC
+//! messages.
+#![forbid(unsafe_code)]
 
 pub mod analyze;
 pub mod batch;
@@ -12,6 +14,7 @@ pub mod cancel;
 pub mod decide;
 pub mod edits;
 pub mod expand;
+pub mod player;
 pub mod session;
 pub mod track;
 

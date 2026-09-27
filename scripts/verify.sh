@@ -25,8 +25,8 @@ HAS_FE_DEPS=1; [ -d node_modules ] && HAS_FE_DEPS=0
 
 run_step file-size     0            ./scripts/check-file-size.sh
 run_step cargo-fmt     "$HAS_CARGO" cargo fmt --all -- --check
-run_step cargo-clippy  "$HAS_CARGO" cargo clippy --workspace --all-targets -- -D warnings
-run_step cargo-test    "$HAS_CARGO" cargo test --workspace
+run_step cargo-clippy  "$HAS_CARGO" cargo clippy --workspace --all-targets --all-features -- -D warnings
+run_step cargo-test    "$HAS_CARGO" cargo test --workspace --all-features
 if [ "$HAS_FE" = "0" ] && [ "$HAS_FE_DEPS" != "0" ]; then echo "SKIP  frontend                (run: pnpm install)"; else
   run_step fe-typecheck  "$HAS_FE" pnpm typecheck
   run_step fe-lint       "$HAS_FE" pnpm lint
