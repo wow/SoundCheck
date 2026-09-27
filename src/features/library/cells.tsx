@@ -176,11 +176,30 @@ export function BpmCell({ row }: { row: Row }) {
     }
     return <Dash />;
   }
-  const octave = grid.reasons.includes('octaveMargin');
+  const octave = grid.reasons.includes('octaveMargin') && !row.analysis?.confirmed;
   return (
     <div className="flex items-center gap-1.5 whitespace-nowrap">
-      <ConfidenceRing confidence={grid.confidence} />
+      {row.analysis?.confirmed ? (
+        <span
+          className="w-3.5 text-center text-[13px] font-semibold text-ok"
+          role="img"
+          aria-label="Grid confirmed by ear"
+          title="Grid confirmed by ear"
+        >
+          ✓
+        </span>
+      ) : (
+        <ConfidenceRing confidence={grid.confidence} />
+      )}
       <span className="font-mono text-[13px] font-medium">{grid.bpm.toFixed(2)}</span>
+      {row.analysis?.edited && (
+        <span
+          className="size-1.5 rounded-full bg-accent"
+          role="img"
+          aria-label="Edited in the grid view"
+          title="Edited in the grid view"
+        />
+      )}
       {octave && (
         <span
           className="font-mono text-[11px] text-warn"

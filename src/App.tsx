@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSelector } from '@xstate/react';
+import { keepFocusOnClick, ownsKey } from '@/lib/focus';
 import { listenForDrops } from '@/lib/platform';
 import { useLibrary } from '@/state/library';
 import { EmptyState } from '@/features/library/EmptyState';
@@ -9,23 +10,25 @@ import { Table } from '@/features/library/Table';
 import { SEARCH_ID, Toolbar } from '@/features/library/Toolbar';
 import { addPaths, clearList, pipeline } from '@/features/pipeline/actions';
 import { Rail } from '@/features/settings/Rail';
+import { openInGridView } from '@/features/grid/actions';
+import { GridView } from '@/features/grid/GridView';
+import { useTrack } from '@/features/grid/store';
 import { startSettingsSync } from '@/features/settings/sync';
 
-function isTyping(target: EventTarget | null): boolean {
-  return target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement;
-}
 
 /** Keys for the review loop: arrows move, N jumps to the next row that needs a look. */
 function useKeys() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The grid view handles its own keys while it is open.
+      if (useTrack.getState().fileId !== null) return;
       const lib = useLibrary.getState();
       if (e.metaKey && e.key.toLowerCase() === 'f') {
         e.preventDefault();
         document.getElementById(SEARCH_ID)?.focus();
         return;
       }
-      if (isTyping(e.target)) {
+      if (ownsKey(e.target, e.key)) {
         if (e.key === 'Escape' && e.target instanceof HTMLInputElement && e.target.id === SEARCH_ID) {
           lib.setQuery('');
           e.target.blur();
@@ -38,6 +41,9 @@ function useKeys() {
         lib.moveSelection(e.key === 'ArrowDown' ? 1 : -1);
       } else if (e.key === 'n' || e.key === 'N') {
         lib.selectNextReview();
+      } else if (e.key === 'Enter' && lib.selected !== null) {
+        e.preventDefault();
+        openInGridView(lib.selected);
       } else if (e.key === 'Escape') {
         lib.setFilter('all');
         lib.setQuery('');
@@ -48,8 +54,22 @@ function useKeys() {
   }, []);
 }
 
-/** The main screen: toolbar, the table (or the drop target), the settings rail and the footer. */
 export default function App() {
+  const inGrid = useTrack((s) => s.fileId !== null);
+  // For the app's lifetime, not the table's: the table unmounts while the grid view is open, and
+  // restoring the list again on its return would reset the selection and every row.
+  useKeys();
+  useEffect(() => startSettingsSync(), []);
+  useEffect(() => startTrackListPersistence(), []);
+  return (
+    <div className="contents" onMouseDownCapture={keepFocusOnClick}>
+      {inGrid ? <GridView /> : <Library />}
+    </div>
+  );
+}
+
+/** The main screen: toolbar, the table (or the drop target), the settings rail and the footer. */
+function Library() {
   const hasRows = useLibrary((s) => s.order.length > 0);
   const aborted = useLibrary((s) => s.aborted);
   const notice = useLibrary((s) => s.notice);
@@ -57,9 +77,6 @@ export default function App() {
   const state = useSelector(pipeline(), (s) => s.value);
   const [dropping, setDropping] = useState(false);
 
-  useKeys();
-  useEffect(() => startSettingsSync(), []);
-  useEffect(() => startTrackListPersistence(), []);
   useEffect(
     () =>
       listenForDrops(
@@ -89,6 +106,9 @@ export default function App() {
             <div className="flex h-8 shrink-0 items-center gap-4 border-t border-line px-4 text-[11.5px] text-fg-2">
               <span>
                 <kbd className="font-mono">↑↓</kbd> row
+              </span>
+              <span>
+                <kbd className="font-mono">⏎</kbd> open grid
               </span>
               <span>
                 <kbd className="font-mono">N</kbd> next needs review

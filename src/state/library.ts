@@ -6,6 +6,7 @@ import type {
   Plan,
   Replan,
   RowAnalysis,
+  RowUpdate,
   SessionSnapshot,
 } from '@/lib/ipc';
 
@@ -70,6 +71,8 @@ interface LibraryState {
   /** Marks rows queued for a job about to start with `range`. */
   queue(fileIds: number[], range: [number, number]): void;
   applyEvent(event: JobEvent): void;
+  /** A row whose grid edit was saved: its analysis and plan, as an analysed event would. */
+  applyRowUpdate(update: RowUpdate): void;
   applyReplan(replan: Replan): void;
   /** Rebuilds the table from the engine's session after the window reloaded. */
   restore(snapshot: SessionSnapshot, range: [number, number]): void;
@@ -217,6 +220,16 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
         realtimeX: null,
         startedAt: Date.now(),
       },
+    });
+  },
+  applyRowUpdate(update) {
+    get().applyEvent({
+      type: 'analysed',
+      jobId: 0,
+      fileId: update.fileId,
+      row: update.row,
+      plan: update.plan,
+      revision: update.revision,
     });
   },
   applyEvent(event) {

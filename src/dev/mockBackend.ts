@@ -5,6 +5,7 @@
  * `VITE_MOCK_IPC` is set.
  */
 import { mockIPC } from '@tauri-apps/api/mocks';
+import { gridCommand } from './mockGrid';
 import type { Channel } from '@tauri-apps/api/core';
 import type {
   Codec,
@@ -66,6 +67,10 @@ let nextJob = 1;
 function entryFor(s: Synthetic, folder: string): FileEntry {
   const fileId = nextId++;
   entries.set(fileId, s);
+  return fileEntry(s, folder, fileId);
+}
+
+function fileEntry(s: Synthetic, folder: string, fileId: number): FileEntry {
   return {
     fileId,
     path: `${folder}/${s.artist} - ${s.title}.${s.codec === 'alac' ? 'm4a' : s.codec}`,
@@ -231,7 +236,14 @@ export function installMockBackend(): void {
       case 'plugin:dialog|message':
         return true;
       default:
-        return null;
+        return (
+          gridCommand(cmd, a, (fileId) => {
+            const s = entries.get(fileId);
+            const an = analysed.get(fileId);
+            if (!s || !an) return undefined;
+            return { entry: fileEntry(s, '/Music/Mock Crate', fileId), analysis: an, plan: planFor(s, an), revision };
+          }) ?? null
+        );
     }
   });
 }
