@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import type { TrackOpened } from '@/lib/ipc';
 import { usePanels } from '@/state/panels';
@@ -148,5 +148,73 @@ describe('the grid view in a narrow window', () => {
     expect(screen.queryByRole('button', { name: 'Details' })).toBeNull();
     fireEvent.keyDown(window, { key: 'i' });
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
+describe('the fit choice', () => {
+  function withChoice(
+    choice: { wholeShare: number; startShare: number; windowEndS: number } | null,
+  ) {
+    act(() =>
+      useTrack.setState({
+        fit: {
+          header: {
+            grid,
+            firstLine: 0,
+            lines: 0,
+            worstLine: null,
+            matched: 0,
+            attacks: 0,
+            fitChoice: choice,
+          },
+          residuals: new Float32Array(0),
+        },
+      }),
+    );
+  }
+
+  it('offers the start fit on a track whose tempo changes, with the kicks each fit holds', () => {
+    narrow = false;
+    openTrack();
+    withChoice({ wholeShare: 0.02, startShare: 0.98, windowEndS: 65.6 });
+    render(<GridView />);
+    const group = screen.getByRole('group', { name: 'Fit to' });
+    expect(group).toHaveTextContent('kicks on the grid to 1:06');
+    const whole = within(group).getByRole('button', {
+      name: 'Whole track, 2 % of kicks on the grid',
+    });
+    const start = within(group).getByRole('button', {
+      name: 'Start, 98 % of kicks on the grid',
+    });
+    expect(whole).toHaveAttribute('aria-pressed', 'true');
+    expect(start).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(start);
+    expect(useTrack.getState().edits.present.fit).toBe('start');
+    // The octave step made before is kept.
+    expect(useTrack.getState().edits.present.octave).toBe(1);
+  });
+
+  it('stays switchable for a start fit when the engine finds no start to fit', () => {
+    narrow = false;
+    openTrack();
+    act(() =>
+      useTrack.setState({
+        edits: { past: [], present: { ...NO_EDIT, fit: 'start' }, future: [] },
+      }),
+    );
+    withChoice(null);
+    render(<GridView />);
+    const group = screen.getByRole('group', { name: 'Fit to' });
+    expect(group).toHaveTextContent('no start to fit: whole track used');
+    fireEvent.click(within(group).getByRole('button', { name: 'Whole track' }));
+    expect(useTrack.getState().edits.present.fit).toBe('whole');
+  });
+
+  it('is not offered when the tempo holds', () => {
+    narrow = false;
+    openTrack();
+    withChoice(null);
+    render(<GridView />);
+    expect(screen.queryByRole('group', { name: 'Fit to' })).toBeNull();
   });
 });

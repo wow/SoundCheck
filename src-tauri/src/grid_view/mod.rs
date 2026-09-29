@@ -14,7 +14,7 @@ use std::time::Duration;
 use sc_core::analysis::{AnalysisRecord, Grid, GridEdit};
 use sc_core::ipc::{GridFitHeader, IpcError, RowUpdate, TrackEvent, TrackOpened};
 use sc_core::{Bpm, DbFs, Error, SampleIndex};
-use sc_engine::edits::{audio_of, refit_record, snap_onsets};
+use sc_engine::edits::{audio_of, fit_choice, refit_record, snap_onsets};
 use sc_engine::player::Player;
 use sc_engine::{
     Analyzer, CancelToken, Progress, Timings, Track, TrackProgress, apply_saved, save_edit,
@@ -328,6 +328,9 @@ impl Shell {
             let solved = refit_record(&open.record, open.bpm_range, edit);
             // The click follows the edit, set while this track is surely the open one.
             self.set_player_grid(solved.as_ref().map(|s| s.grid.clone()));
+            let choice = solved
+                .as_ref()
+                .and_then(|s| fit_choice(&open.record, open.bpm_range, edit, Some(s)));
             Ok(match solved {
                 Some(s) => (
                     GridFitHeader {
@@ -337,6 +340,7 @@ impl Shell {
                         worst_line: s.lines.worst_line,
                         matched: s.lines.matched,
                         attacks: s.lines.attacks,
+                        fit_choice: choice,
                     },
                     s.lines.residuals_ms,
                 ),
@@ -348,6 +352,7 @@ impl Shell {
                         worst_line: None,
                         matched: 0,
                         attacks: 0,
+                        fit_choice: None,
                     },
                     Vec::new(),
                 ),

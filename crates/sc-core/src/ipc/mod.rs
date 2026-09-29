@@ -9,7 +9,7 @@ mod track;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-pub use track::{GridFitHeader, RowUpdate, TrackEvent, TrackOpened};
+pub use track::{FitChoice, GridFitHeader, RowUpdate, TrackEvent, TrackOpened};
 
 use crate::analysis::{AnalysisRecord, AnalysisSettings, Confidence, Reason, Verdict};
 use crate::plan::{Codec, Plan};

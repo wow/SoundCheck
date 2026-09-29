@@ -40,6 +40,10 @@ harness = false
 name = "track"
 harness = false
 
+[[bench]]
+name = "fit_choice"
+harness = false
+
 [[example]]
 name = "click"
 required-features = ["playback"]

@@ -1,6 +1,7 @@
 /**
  * The grid view's side of the mock backend (`pnpm dev:mock`): a synthetic track per row whose
- * kicks sit on the analysed grid (drifting slowly on the rows marked `drifts`), waveform bins
+ * kicks sit on the analysed grid (on the rows marked `drifts`, a tempo that changes: 30 ms early
+ * at the start, 20 ms late at the end), waveform bins
  * shaped by those kicks, refits computed by arithmetic with real residuals against them, saved
  * and confirmed edits, and a player clock. Never bundled into the app.
  */
@@ -91,16 +92,24 @@ function gridOf(g: RowGrid): Grid {
   };
 }
 
-/** Kick times (samples): on the analysed lines, drifting to 40 ms late by the end on drifting rows. */
+/**
+ * Kick times (samples): on the analysed lines, or on drifting rows from 30 ms early at the start
+ * to 20 ms late at the end, bending at the 40 % mark as a tempo change does.
+ */
 function kicksOf(g: Grid): Float64Array {
   const spb = (60 * RATE) / g.bpm;
-  const drift = g.verdict === 'drifts' ? 0.04 : 0;
+  const drifts = g.verdict === 'drifts';
   const out: number[] = [];
   for (let i = 0; ; i++) {
     const t = g.anchor + i * spb;
     if (t > SECONDS * RATE) break;
     const x = t / (SECONDS * RATE);
-    out.push(t + drift * RATE * x * x + (((i * 7919) % 13) - 6) * 3);
+    const off = drifts
+      ? x < 0.4
+        ? -0.03 + 0.025 * (x / 0.4)
+        : -0.005 + 0.025 * ((x - 0.4) / 0.6)
+      : 0;
+    out.push(t + off * RATE + (((i * 7919) % 13) - 6) * 3);
   }
   return Float64Array.from(out);
 }
@@ -151,8 +160,49 @@ function peaks(spb: number, firstBin: number, bins: number): ArrayBuffer {
   return out.buffer;
 }
 
+/** Beats the start fit is fitted to, as the engine does. */
+const START_BEATS = 128;
+
+/** The analysed grid refitted by least squares to the kicks of its first 128 beats. */
+function startFitted(a: Grid, kicks: Float64Array): Grid {
+  const spb = (60 * RATE) / a.bpm;
+  const end = a.anchor + START_BEATS * spb;
+  let n = 0,
+    sx = 0,
+    sy = 0,
+    sxx = 0,
+    sxy = 0;
+  for (const t of kicks) {
+    if (t > end) break;
+    const k = Math.round((t - a.anchor) / spb);
+    n++;
+    sx += k;
+    sy += t;
+    sxx += k * k;
+    sxy += k * t;
+  }
+  if (n < 8) return a;
+  const slope = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+  const anchor = Math.round((sy - slope * sx) / n);
+  return { ...a, bpm: (60 * RATE) / slope, anchor };
+}
+
+/** The share of `g`'s lines up to `end` (samples) holding a kick within 20 ms. */
+function share(g: Grid, kicks: Float64Array, end: number): number {
+  const spb = (60 * RATE) / g.bpm;
+  let lines = 0,
+    held = 0,
+    k = 0;
+  for (let line = g.anchor; line <= end; line += spb) {
+    lines++;
+    while (k + 1 < kicks.length && (kicks[k] ?? 0) < line - 0.02 * RATE) k++;
+    if (Math.abs((kicks[k] ?? Infinity) - line) <= 0.02 * RATE) held++;
+  }
+  return lines === 0 ? 0 : held / lines;
+}
+
 function applied(edit: GridEdit): Grid {
-  const a = open!.analysed;
+  const a = edit.fit === 'start' ? startFitted(open!.analysed, open!.kicks) : open!.analysed;
   const meter = edit.meter ?? a.meter;
   let bpm = a.bpm * Math.pow(2, edit.octave);
   if (edit.bpm !== null) bpm = edit.bpm;
@@ -217,7 +267,17 @@ function fit(edit: GridEdit): ArrayBuffer {
     worstLine: worstAt >= 0 ? first + worstAt : null,
     matched,
     attacks: kicks.length,
+    fitChoice: null,
   };
+  if (edit.fit === 'start' || open!.analysed.verdict === 'drifts') {
+    const a = open!.analysed;
+    const end = a.anchor + (START_BEATS * 60 * RATE) / a.bpm;
+    header.fitChoice = {
+      wholeShare: share(applied({ ...edit, fit: 'whole' }), kicks, end),
+      startShare: share(applied({ ...edit, fit: 'start' }), kicks, end),
+      windowEndS: end / RATE,
+    };
+  }
   const json = new TextEncoder().encode(JSON.stringify(header));
   const buf = new ArrayBuffer(4 + json.length + 4 * residuals.length);
   const view = new DataView(buf);
@@ -267,6 +327,7 @@ export function gridCommand(
         octave: 0,
         anchor: null,
         downbeatShift: 0,
+        fit: 'whole' as const,
       };
       // Loading a track stops the player at its start, as the engine does.
       if (player.timer) clearInterval(player.timer);

@@ -1,4 +1,4 @@
-import type { Grid, Meter } from '@/lib/ipc';
+import type { EditFit, Grid, Meter } from '@/lib/ipc';
 import { useLibrary } from '@/state/library';
 import {
   NO_EDIT,
@@ -10,6 +10,7 @@ import {
   placedBarOne,
   tappedBpm,
   typedBpm,
+  withFit,
 } from './edit';
 import { panBars, samplesPerBeat, snapped, zoomAround, zoomLimits } from './geometry';
 import { nextReview } from './navigate';
@@ -90,6 +91,13 @@ export function tap(now: number = performance.now()): number | null {
     t.edit(tappedBpm(t.edits.present, t.grid, bpm), undefined, continuing);
   }
   return bpm;
+}
+
+/** Fits the grid to the whole track or to its start. */
+export function chooseFit(fit: EditFit): void {
+  const t = useTrack.getState();
+  if (!t.opened) return;
+  t.edit(withFit(t.edits.present, fit));
 }
 
 export function chooseMeter(meter: Meter): void {

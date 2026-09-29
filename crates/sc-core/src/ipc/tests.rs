@@ -141,6 +141,11 @@ fn a_worst_case_refit_header_stays_within_4_kb() {
         worst_line: Some(i64::MAX),
         matched: u32::MAX,
         attacks: u32::MAX,
+        fit_choice: Some(FitChoice {
+            whole_share: 0.123_456_79,
+            start_share: 0.987_654_3,
+            window_end_s: 123_456.789_012_345,
+        }),
     };
     assert!(json_len(&header) <= 4096, "{} bytes", json_len(&header));
 }

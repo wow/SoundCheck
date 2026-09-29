@@ -1,11 +1,12 @@
 //! `sc-cli labels`: evaluation labels from the grids the app shows. Confirming a grid by ear in
 //! the app and printing it here is how the evaluation set is labelled; `sc-cli eval` reads the
-//! same columns.
+//! same columns. `fit` says which part of the track the grid was fitted to (`whole`, or `start`
+//! for a track whose tempo changes), so the label is scored against the same kind of fit.
 
 use std::io::Write;
 use std::path::PathBuf;
 
-use sc_core::analysis::AnalysisRecord;
+use sc_core::analysis::{AnalysisRecord, GridFit};
 use sc_engine::{BatchSettings, EditState, apply_saved};
 use sc_io::edits::EditStore;
 
@@ -19,7 +20,7 @@ pub fn labels_all(
 ) -> anyhow::Result<usize> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    writeln!(out, "file,bpm,bar1_s,meter,grouping,confirmed")?;
+    writeln!(out, "file,bpm,bar1_s,meter,grouping,confirmed,fit")?;
     let mut failed = 0;
     let mut first_error = None;
     crate::run_in_order(settings, files, &mut |file, outcome| {
@@ -67,12 +68,21 @@ fn row(name: &str, record: &AnalysisRecord, edit: EditState, confirmed_only: boo
         String::new()
     };
     format!(
-        "{},{:.2},{:.3},{meter},{grouping},{}",
+        "{},{:.2},{:.3},{meter},{grouping},{},{}",
         csv(name),
         grid.bpm.0,
         grid.anchor.to_seconds(record.spec.sample_rate).0,
-        if edit.confirmed { "yes" } else { "no" }
+        if edit.confirmed { "yes" } else { "no" },
+        fit_name(edit.fit)
     )
+}
+
+/// The `fit` cell: `whole` or `start`.
+pub fn fit_name(fit: GridFit) -> &'static str {
+    match fit {
+        GridFit::Whole => "whole",
+        GridFit::Start => "start",
+    }
 }
 
 /// A CSV cell, quoted when it holds a comma, a quote or a line break, or starts with `#` (which

@@ -97,3 +97,23 @@ fn a_grid_edit_defaults_to_no_edit_and_reads_missing_fields() {
     assert!(json.contains("\"tempoHint\":null"), "{json}");
     assert!(json.contains("\"downbeatShift\":0"), "{json}");
 }
+
+#[test]
+fn a_saved_edit_without_a_fit_reads_as_the_whole_track_fit() {
+    let edit: GridEdit = serde_json::from_str(r#"{"octave":0,"downbeatShift":0}"#).unwrap();
+    assert_eq!(edit.fit, GridFit::Whole);
+    assert!(edit.is_empty(), "the whole-track fit is no edit");
+    assert_eq!(GridEdit::default().fit, GridFit::Whole);
+}
+
+#[test]
+fn a_start_fit_round_trips_through_json() {
+    let edit: GridEdit = serde_json::from_str(r#"{"fit":"start"}"#).unwrap();
+    assert_eq!(edit.fit, GridFit::Start);
+    assert!(!edit.is_empty());
+    let json = serde_json::to_string(&edit).unwrap();
+    assert!(json.contains("\"fit\":\"start\""), "{json}");
+    assert_eq!(serde_json::from_str::<GridEdit>(&json).unwrap(), edit);
+    let whole = serde_json::to_string(&GridEdit::default()).unwrap();
+    assert!(whole.contains("\"fit\":\"whole\""), "{whole}");
+}

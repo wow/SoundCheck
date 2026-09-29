@@ -114,6 +114,28 @@ pub struct GridFitHeader {
     pub matched: u32,
     /// Attacks within the judged span.
     pub attacks: u32,
+    /// The two fits of a track whose tempo changes, compared on the start of the music; `None`
+    /// unless the edit fits the start, the whole-track grid drifts, or the start fit holds at
+    /// least 0.2 more of the start window's lines than the whole-track fit. Also `None` when the
+    /// track has no start fit (too few attacks at its start); a start edit then gives the
+    /// whole-track grid.
+    pub fit_choice: Option<FitChoice>,
+}
+
+/// How well the whole-track fit and the start fit hold the start of the music: of the grid lines
+/// in the start window, the share (0 to 1) that hold a kick-band attack (the broadband one when
+/// the kick band is nearly silent) under each fit.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct FitChoice {
+    /// Share of the start window's lines holding an attack under the whole-track fit.
+    pub whole_share: f32,
+    /// Share of the start window's lines holding an attack under the start fit.
+    pub start_share: f32,
+    /// End of the start window, in seconds from the start of the file (it begins at the first
+    /// beat).
+    pub window_end_s: f64,
 }
 
 /// What `grid_commit` answers: the row and its plan under the saved edit.

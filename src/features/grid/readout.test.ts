@@ -9,7 +9,15 @@ const opened = {
   timeline: { hopMs: 500, shortTerm: [-9.25, -8.5, -8.0, -7.5, -7.0, -6.5] },
 } as unknown as TrackOpened;
 const fit: GridFit = {
-  header: { grid, firstLine: 0, lines: 6, worstLine: null, matched: 6, attacks: 6 },
+  header: {
+    grid,
+    firstLine: 0,
+    lines: 6,
+    worstLine: null,
+    matched: 6,
+    attacks: 6,
+    fitChoice: null,
+  },
   residuals: new Float32Array([1, -0.3, 2, 3, 4.6, Number.NaN]),
 };
 const idle = { playing: false, position: 0, underruns: 0, error: null };

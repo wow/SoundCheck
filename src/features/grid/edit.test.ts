@@ -14,6 +14,7 @@ import {
   tappedBpm,
   typedBpm,
   undo,
+  withFit,
 } from './edit';
 import { AKSAK, testGrid } from './testGrid';
 
@@ -107,5 +108,19 @@ describe('grid edits', () => {
     // A slower lattice re-anchors on the base tempo's bar 1, which the user did not move.
     const half = octaveStep(NO_EDIT, grid, -1);
     expect(changes(grid, testGrid(60, grid.anchor + 480), half, RATE)).toEqual(['½ → 60.00']);
+  });
+});
+
+describe('the start fit', () => {
+  it('is an override like the others, shown as a change', () => {
+    const grid = testGrid(117.23, 24_000);
+    const start = withFit(NO_EDIT, 'start');
+    expect(start).toEqual({ ...NO_EDIT, fit: 'start' });
+    expect(isEmpty(start)).toBe(false);
+    expect(withFit(start, 'start')).toBe(start);
+    expect(isEmpty(withFit(start, 'whole'))).toBe(true);
+    expect(changes(grid, testGrid(117.02, 23_100), start, RATE)).toEqual(['fitted to the start']);
+    // Other fixes keep it.
+    expect(octaveStep(start, grid, -1).fit).toBe('start');
   });
 });

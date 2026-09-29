@@ -7,14 +7,15 @@
 )] // benchmark fixture arithmetic on small counts
 //! Grid solving and refitting on a six-minute track at 128 BPM (768 beats, one kick per beat,
 //! hi-hat attacks on the eighths). Budgets: a full solve well under 20 ms, a refit from the
-//! cached evidence with a user's edit (what the grid view runs on every edit) under 5 ms.
+//! cached evidence with a user's edit (what the grid view runs on every edit, a start fit
+//! included) under 5 ms.
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use sc_analysis::grid::{Evidence, SolveSettings, TimedOnset, fit_beats, solve};
 use sc_analysis::meter::estimate;
 use sc_analysis::refit::{Context, refit};
 use sc_core::Bpm;
-use sc_core::analysis::{GridEdit, GridEvidence, OnsetList, TagHints};
+use sc_core::analysis::{GridEdit, GridEvidence, GridFit, OnsetList, TagHints};
 
 /// Beats, downbeats, activations, kick onsets, broadband onsets.
 type Evidence5 = (
@@ -107,6 +108,19 @@ fn bench_grid(c: &mut Criterion) {
         let edit = GridEdit {
             octave: 1,
             downbeat_shift: 2,
+            ..GridEdit::default()
+        };
+        b.iter(|| refit(std::hint::black_box(&cached), &ctx, &edit).unwrap());
+    });
+    group.bench_function("refit from the cache 768 beats (start fit)", |b| {
+        let tags = TagHints::default();
+        let ctx = Context {
+            bpm_range: (Bpm(70.0), Bpm(180.0)),
+            tags: &tags,
+            sample_rate: 44_100,
+        };
+        let edit = GridEdit {
+            fit: GridFit::Start,
             ..GridEdit::default()
         };
         b.iter(|| refit(std::hint::black_box(&cached), &ctx, &edit).unwrap());
