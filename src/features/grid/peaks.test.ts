@@ -95,4 +95,24 @@ describe('waveform tiles', () => {
     await vi.waitFor(() => expect(tiles.bin(8, 3)).toEqual([-3, 3]));
     expect(fetch).toHaveBeenCalledTimes(3);
   });
+
+  it('keeps the tile it just asked for when the cache is full (regression: blank waveform past tile 62)', async () => {
+    // A new tile was stamped as used only after the eviction, so a full cache evicted the new
+    // tile itself: it never showed, and was asked for again on every frame.
+    const fetch = vi.fn(async (_spb: number, first: number) => tileOf(first));
+    const tiles = new PeakTiles(fetch, () => {}, 2);
+    tiles.bin(8, 0);
+    tiles.bin(8, TILE_BINS);
+    tiles.bin(8, 2 * TILE_BINS);
+    await vi.waitFor(() =>
+      expect(tiles.bin(8, 2 * TILE_BINS + 5)).toEqual([
+        -(2 * TILE_BINS + 5) % 1000,
+        (2 * TILE_BINS + 5) % 1000,
+      ]),
+    );
+    expect(fetch).toHaveBeenCalledTimes(3);
+    // The one evicted was the least recently used, the first.
+    tiles.bin(8, TILE_BINS);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
 });

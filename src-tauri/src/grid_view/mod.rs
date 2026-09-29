@@ -283,10 +283,11 @@ impl Shell {
         first_bin: u64,
         bins: u64,
     ) -> Result<Vec<u8>, IpcError> {
-        self.with_open(file_id, |open| {
-            let pairs = open.track.peaks(samples_per_bin, first_bin, bins)?;
-            Ok(pairs.iter().flat_map(|v| v.to_le_bytes()).collect())
-        })
+        // The track is taken from under the lock and read outside it, so waveform reads (many
+        // while the view scrolls) never hold up a save or a refit.
+        let track = self.with_open(file_id, |open| Ok(Arc::clone(&open.track)))?;
+        let pairs = track.peaks(samples_per_bin, first_bin, bins)?;
+        Ok(pairs.iter().flat_map(|v| v.to_le_bytes()).collect())
     }
 
     /// The open track's embedded cover as stored, or no bytes.

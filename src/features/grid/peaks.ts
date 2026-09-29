@@ -35,7 +35,8 @@ export class PeakTiles {
   constructor(
     private readonly fetchBins: FetchBins,
     private readonly onLoad: () => void,
-    private readonly capacity = 64,
+    // 256 tiles of 1,024 min/max pairs: 1 MB, the whole of a 6-minute track at beat zoom.
+    private readonly capacity = 256,
   ) {}
 
   /** Min and max of bin `bin` at `samplesPerBin`, or null while its tile loads or is not decoded. */
@@ -56,11 +57,13 @@ export class PeakTiles {
       };
       this.tiles.set(key, tile);
       this.load(key, tile);
-      this.evict();
     } else if (tile.stale && !tile.loading) {
       this.load(key, tile);
     }
+    // Stamped before any eviction, so a full cache drops the least recently used tile, never
+    // the one just asked for.
     tile.used = ++this.clock;
+    this.evict();
     if (tile.data === null) return null;
     const k = 2 * (bin - tileIndex * TILE_BINS);
     const min = tile.data[k];
