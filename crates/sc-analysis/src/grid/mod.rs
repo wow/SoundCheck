@@ -404,6 +404,8 @@ pub struct BeatFit {
     pub alt_phase: Option<f64>,
     /// First and last usable beat, in seconds.
     pub span: (f64, f64),
+    /// Standard error of `period`, in seconds (infinite when it cannot be estimated).
+    pub sigma_period: f64,
 }
 
 /// Fits the model's beats; `None` when fewer than [`MIN_BEATS`] usable beats exist.
@@ -424,6 +426,7 @@ pub fn fit_beats_within(beats_s: &[f64], window_s: Option<(f64, f64)>) -> Option
         phase: tempo.phase,
         alt_phase: tempo.alt_phase,
         span: (fitted[0], fitted[fitted.len() - 1]),
+        sigma_period: tempo.sigma_period,
     })
 }
 

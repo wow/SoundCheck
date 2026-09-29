@@ -196,14 +196,28 @@ fn a_steady_track_gets_the_same_tempo_from_either_fit() {
 }
 
 #[test]
-fn a_creeping_tempo_keeps_the_longest_window() {
-    // 116.0 creeping to 116.6 over six minutes, as a live drummer's does: 128 beats hold it.
-    let ev = track(|t| 116.0 + 0.6 * t / 360.0, 360.0);
+fn a_creeping_tempo_gets_the_tempo_of_the_opening() {
+    // 116.0 creeping to 116.6 over six minutes, as a live drummer's does: the start fit takes
+    // the average tempo of the window it chose, nearer the opening than the whole track's.
+    let tempo_at = |t: f64| 116.0 + 0.6 * t / 360.0;
+    let ev = track(tempo_at, 360.0);
     let window = start_window_s(&ev).expect("a window");
-    assert_eq!(window.beats, START_BEATS, "{window:?}");
     let start = fit(&ev, GridFit::Start);
-    // The first 66 s average 116.055.
-    assert!((start.bpm.0 - 116.055).abs() <= 0.005, "{}", start.bpm.0);
+    let whole = fit(&ev, GridFit::Whole);
+    let mean = tempo_at(f64::midpoint(window.from_s, window.to_s));
+    // Within 0.03: a shorter window's fit is noisier, and a round BPM within three of its
+    // standard errors is taken (here 116.00 for an average of 116.03, 8 ms over the window).
+    assert!(
+        (start.bpm.0 - mean).abs() <= 0.03,
+        "{} vs {mean} over {window:?}",
+        start.bpm.0
+    );
+    assert!(
+        (start.bpm.0 - 116.0).abs() < (whole.bpm.0 - 116.0).abs() - 0.1,
+        "start {} whole {}",
+        start.bpm.0,
+        whole.bpm.0
+    );
 }
 
 #[test]
@@ -385,4 +399,32 @@ fn line_share_counts_the_lines_holding_an_attack_within_20_ms() {
         line_share(&grid, &onsets_at(&reversed), SR, 1.0, 5.0).to_bits(),
         share.to_bits()
     );
+}
+
+/// Changes of 0.4 to 1 BPM between the candidate window lengths (beats 34 to 96): a fit
+/// blended across them still keeps the opening's attacks within 20 ms, so the window must be
+/// cut by the tempo the shorter window holds.
+#[test]
+fn a_small_tempo_change_between_window_lengths_does_not_bend_the_start_tempo() {
+    for (bpm_a, bpm_b, at_beat) in [
+        (120.0, 121.0, 40.0),
+        (116.0, 117.2, 40.0),
+        (124.0, 124.4, 80.0),
+        (124.0, 124.4, 34.0),
+        (120.0, 121.0, 96.0),
+    ] {
+        let change_s = FIRST + at_beat * 60.0 / bpm_a;
+        let ev = two_tempo(bpm_a, change_s, bpm_b, 300.0);
+        let g = fit(&ev, GridFit::Start);
+        assert!(
+            (g.bpm.0 - bpm_a).abs() <= 0.01,
+            "{bpm_a}->{bpm_b} at beat {at_beat}: {}",
+            g.bpm.0
+        );
+        assert!(
+            (anchor_s(&g) - FIRST).abs() <= 0.005,
+            "{bpm_a}->{bpm_b} at beat {at_beat}: bar 1 at {:.4}",
+            anchor_s(&g)
+        );
+    }
 }

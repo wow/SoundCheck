@@ -10,8 +10,13 @@
 //! beats, where a DJ mixes in), by their precision there: the share of its attacks that land on
 //! the window's lattice ([`grid::lattice_precision`]). A fit blended across a tempo change
 //! misses the opening; a breakdown, or attacks off the beat (an off-beat bass, hi-hats), cost
-//! every window alike. The longest window within [`START_SHORTER_GAIN`] of the best opening
-//! precision wins. The longest window comes first because more
+//! every window alike. A tempo change too small to push the opening's attacks off the lines
+//! (under about 0.25 BPM of blend) still bends a longer fit: so, from the shortest window up, a
+//! longer one is taken only while its tempo agrees with the shorter one's within
+//! [`START_AGREE_SIGMAS`] standard errors of the shorter fit, when the shorter fit itself holds
+//! the opening ([`START_TRUST_PRECISION`]; over a loose intro the longest window near the best
+//! precision is taken), and while its opening precision is
+//! within [`START_SHORTER_GAIN`] of the best. The longest window is preferred because more
 //! beats give a steadier tempo: the model's beats sit on 20 ms frames, so 128 beats pin the tempo
 //! to about 0.003 BPM where 32 beats leave about 0.025 (and a round BPM within three times that
 //! is taken), and on real tracks whose tempo creeps 128 beats matched hand-set tempi to
@@ -31,6 +36,13 @@ pub const START_BEATS_WIDE: u32 = 192;
 pub const START_MIN_ATTACKS: usize = 32;
 /// Shorter windows tried, in beats, when the tempo changes inside the longest one.
 pub const START_SHORTER: [u32; 2] = [64, 32];
+/// A longer window must give the tempo of the shorter one within this many of the shorter
+/// fit's standard errors (the model's beats sit on 20 ms frames, so a steady tempo agrees).
+pub const START_AGREE_SIGMAS: f64 = 3.0;
+/// A shorter window overrules a longer one's tempo only when its own fit holds this share of
+/// the opening's attacks: over a sparse or loose intro the few model beats of a short window
+/// give a tempo no better than the longer fit's.
+pub const START_TRUST_PRECISION: f64 = 0.8;
 /// Beats of the opening every window is scored on: the shortest window.
 pub const START_OPENING_BEATS: u32 = 32;
 /// A longer window wins unless a shorter one holds this much more of the opening's attacks.
@@ -105,31 +117,52 @@ pub(super) fn choose(
     let longest = [START_BEATS, START_BEATS_WIDE]
         .into_iter()
         .find(|&b| held(b) >= START_MIN_ATTACKS)?;
-    let candidates = std::iter::once(longest).chain(START_SHORTER).map(|beats| {
-        let to_s = end(beats);
-        let fit = grid::fit_beats_within(beats_s, Some((from_s, to_s))).unwrap_or(*whole);
-        let phase = grid::onset_phase(&fit, attacks, &[]);
-        StartWindow {
-            from_s,
-            to_s,
-            beats,
-            precision: grid::lattice_precision(
-                fit.period,
-                phase,
-                attacks,
-                from_s - slack,
-                end(START_OPENING_BEATS),
-            ),
-            line_share: grid::lattice_share(fit.period, phase, attacks, from_s, to_s),
-        }
-    });
-    let candidates: Vec<StartWindow> = candidates.collect();
+    // Shortest first.
+    let candidates = START_SHORTER
+        .into_iter()
+        .rev()
+        .chain(std::iter::once(longest))
+        .map(|beats| {
+            let to_s = end(beats);
+            let fit = grid::fit_beats_within(beats_s, Some((from_s, to_s))).unwrap_or(*whole);
+            let phase = grid::onset_phase(&fit, attacks, &[]);
+            let window = StartWindow {
+                from_s,
+                to_s,
+                beats,
+                precision: grid::lattice_precision(
+                    fit.period,
+                    phase,
+                    attacks,
+                    from_s - slack,
+                    end(START_OPENING_BEATS),
+                ),
+                line_share: grid::lattice_share(fit.period, phase, attacks, from_s, to_s),
+            };
+            (window, fit)
+        });
+    let candidates: Vec<(StartWindow, BeatFit)> = candidates.collect();
     let best = candidates
         .iter()
-        .map(|w| w.precision)
+        .map(|(w, _)| w.precision)
         .fold(f64::NEG_INFINITY, f64::max);
-    // Longest first: the first within the gain of the best.
-    candidates
-        .into_iter()
-        .find(|w| w.precision >= best - START_SHORTER_GAIN)
+    // Grow from the shortest window. Once a window holds the opening, a longer one must hold it
+    // too and keep its tempo; until then (a loose intro), the longest near the best is taken.
+    let mut chosen: Option<(StartWindow, BeatFit)> = None;
+    for (window, fit) in candidates {
+        let near_best = window.precision >= best - START_SHORTER_GAIN;
+        match &chosen {
+            Some((held, shorter)) if held.precision >= START_TRUST_PRECISION => {
+                let agrees = (fit.period - shorter.period).abs()
+                    <= START_AGREE_SIGMAS * shorter.sigma_period;
+                if !(near_best && agrees) {
+                    break;
+                }
+                chosen = Some((window, fit));
+            }
+            _ if near_best => chosen = Some((window, fit)),
+            _ => {}
+        }
+    }
+    chosen.map(|(window, _)| window)
 }
