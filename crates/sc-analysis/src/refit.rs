@@ -12,7 +12,14 @@
 //!   the tap itself;
 //! - **octave**: steps from the chosen tempo;
 //! - **bar line**: bar 1 is that line's lattice point at or after the first beat;
-//! - **beat 1**: which beat of the solved bar starts the bar.
+//! - **beat 1**: which beat of the solved bar starts the bar;
+//! - **fit**: `start` fits tempo, phase and meter to the start of the music ([`start`]: up to
+//!   128 beats from the first beat with an attack, fewer when the tempo already changes inside
+//!   them), for a track whose tempo changes: a static grid fitted to the whole track takes its
+//!   middle and misses the start, where a DJ mixes in and where bar 1 is judged. It stays one
+//!   static grid judged over the whole track, so such a track still drifts. The other overrides
+//!   apply on top; without enough attacks at the start there is no start fit and the whole
+//!   track is fitted.
 //!
 //! Every choice the user made counts as certain, so its margin no longer lowers the
 //! confidence; coverage, recall and the verdict still do. A track with too few beats gets a
@@ -20,12 +27,16 @@
 //! 5 ms on a six-minute track (`benches/grid.rs`), so the grid view recomputes on every edit.
 
 use sc_core::analysis::{
-    BeatUnit, EDIT_BPM_LIMITS, GridEdit, GridEvidence, Meter, OnsetList, TagHints,
+    BeatUnit, EDIT_BPM_LIMITS, GridEdit, GridEvidence, GridFit, Meter, OnsetList, TagHints,
 };
 use sc_core::{Bpm, SampleIndex};
 
 use crate::grid::{self, BeatFit, Evidence, SolveSettings, Solved, TimedOnset};
 use crate::meter;
+
+pub mod start;
+
+pub use start::{StartWindow, start_window_s};
 
 /// A tap selects a lattice when it lies within this fraction of the lattice's tempo.
 const TAP_TOLERANCE: f64 = 0.04;
@@ -79,9 +90,21 @@ fn solve(evidence: &GridEvidence, ctx: &Context<'_>, edit: &GridEdit) -> Option<
         broadband_onsets: &broadband,
     };
     let anchor_s = edit.anchor.map(|a| a.to_seconds(ctx.sample_rate).0);
-    let Some(fit) = grid::fit_beats(&beats_s) else {
+    let Some(whole) = grid::fit_beats(&beats_s) else {
         let meter = edit.meter.clone().unwrap_or_else(Meter::four_four);
         return grid::manual(edit.bpm?.0, anchor_s?, &meter, &ev, ctx.sample_rate);
+    };
+    // The start fit reads the meter, the tap's lattices and the grid from the start window's
+    // beats alone, so all three agree.
+    let fit_window_s = if edit.fit == GridFit::Start {
+        start::choose(&beats_s, &whole, attacks(beats_s.len(), &kick, &broadband))
+            .map(|w| (w.from_s, w.to_s))
+    } else {
+        None
+    };
+    let fit = match fit_window_s {
+        Some(window) => grid::fit_beats_within(&beats_s, Some(window)).unwrap_or(whole),
+        None => whole,
     };
 
     // The meter is read on the attacks' phase, not the model's: trackers sometimes follow the
@@ -144,6 +167,7 @@ fn solve(evidence: &GridEvidence, ctx: &Context<'_>, edit: &GridEdit) -> Option<
         anchor_override_s: anchor_s,
         octave_shift: edit.octave,
         downbeat_shift: edit.downbeat_shift,
+        fit_window_s,
     };
     grid::solve_detailed(&ev, &settings, ctx.sample_rate).map(|mut solved| {
         solved.grid.meter_runner_up = runner_up;
@@ -169,6 +193,29 @@ fn tapped_period(tap_bpm: f64, fit: &BeatFit, kick: &[TimedOnset]) -> Option<f64
         let kicks = grid::fit_beats(&times)?;
         nearest(&mut [2.0, 1.0, 0.5].iter().map(|r| kicks.period * r))
     })
+}
+
+/// The attacks the solver matches grid lines against, on the timeline: the kick-band onsets,
+/// or the broadband ones when the kick band is nearly silent (fewer than one kick per four
+/// beats) and broadband ones exist.
+#[must_use]
+pub fn grid_attacks(evidence: &GridEvidence) -> Vec<TimedOnset> {
+    let kick = timed(&evidence.kick_onsets);
+    let broadband = timed(&evidence.broadband_onsets);
+    attacks(evidence.beats_s.len(), &kick, &broadband).to_vec()
+}
+
+/// [`grid_attacks`]'s choice, for `beats` model beats and onsets already on the timeline.
+fn attacks<'a>(
+    beats: usize,
+    kick: &'a [TimedOnset],
+    broadband: &'a [TimedOnset],
+) -> &'a [TimedOnset] {
+    if kick.len() * 4 >= beats || broadband.is_empty() {
+        kick
+    } else {
+        broadband
+    }
 }
 
 /// Onsets on the timeline in seconds.

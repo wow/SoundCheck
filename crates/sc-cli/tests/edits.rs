@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
-use sc_core::analysis::{AnalysisSettings, GridEdit, Model};
+use sc_core::analysis::{AnalysisSettings, GridEdit, GridFit, Model};
 use sc_core::{AudioSpec, Bpm, testsig};
 use sc_engine::{Analyzer, CancelToken, save_edit};
 use sc_io::cache::Cache;
@@ -99,11 +99,11 @@ fn a_confirmed_grid_leaves_review_in_plan_and_is_printed_as_a_label() {
     let mut lines = labels.lines();
     assert_eq!(
         lines.next(),
-        Some("file,bpm,bar1_s,meter,grouping,confirmed")
+        Some("file,bpm,bar1_s,meter,grouping,confirmed,fit")
     );
     let row = lines.next().unwrap();
     assert!(row.starts_with("\"click, 124.wav\",124.00,"), "{row}");
-    assert!(row.ends_with(",4/4,,no"), "{row}");
+    assert!(row.ends_with(",4/4,,no,whole"), "{row}");
     let only = sc_cli(
         dir.path(),
         &models,
@@ -135,7 +135,10 @@ fn a_confirmed_grid_leaves_review_in_plan_and_is_printed_as_a_label() {
         &models,
         &["labels", file, "--bpm-range", "130-180", "--confirmed-only"],
     );
-    assert!(labels.lines().nth(1).unwrap().ends_with(",yes"), "{labels}");
+    assert!(
+        labels.lines().nth(1).unwrap().ends_with(",yes,whole"),
+        "{labels}"
+    );
 
     // An edit moving beat 1 to beat 2 shows up in both.
     save(
@@ -172,4 +175,26 @@ fn a_confirmed_grid_leaves_review_in_plan_and_is_printed_as_a_label() {
         (bar1 - base - 60.0 / 124.0).abs() <= 0.002,
         "{bar1} vs {base}"
     );
+}
+
+#[test]
+fn a_confirmed_start_fit_is_labelled_as_one() {
+    let Some(models) = models() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let wav = click_wav(dir.path());
+    let file = wav.to_str().unwrap();
+    let start = GridEdit {
+        fit: GridFit::Start,
+        ..GridEdit::default()
+    };
+    save(dir.path(), &wav, &start, true);
+    let labels = sc_cli(
+        dir.path(),
+        &models,
+        &["labels", file, "--bpm-range", "130-180", "--confirmed-only"],
+    );
+    let row = labels.lines().nth(1).unwrap();
+    // A steady track: the start fit gives the same tempo.
+    assert!(row.starts_with("\"click, 124.wav\",124.00,"), "{row}");
+    assert!(row.ends_with(",yes,start"), "{row}");
 }

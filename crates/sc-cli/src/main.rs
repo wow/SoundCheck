@@ -122,9 +122,10 @@ enum Command {
         #[command(flatten)]
         analysis: AnalysisArgs,
     },
-    /// Print evaluation labels (CSV: `file`, `bpm`, `bar1_s`, `meter`, `grouping`, `confirmed`)
-    /// from each file's grid as the app shows it, with the edits saved there applied; the
-    /// analysis cache is used.
+    /// Print evaluation labels (CSV: `file`, `bpm`, `bar1_s`, `meter`, `grouping`, `confirmed`,
+    /// `fit`) from each file's grid as the app shows it, with the edits saved there applied;
+    /// `fit` is `start` when the grid was fitted to the start of a track whose tempo changes,
+    /// else `whole`. The analysis cache is used.
     Labels {
         /// Audio files.
         #[arg(required = true)]
@@ -149,8 +150,9 @@ enum Command {
         analysis: AnalysisArgs,
     },
     /// Score the analysis against hand labels (CSV columns `file`, `bpm`, `bar1_s`, `meter`,
-    /// `grouping`, `ffmpeg_i_lufs`); files are found by name anywhere under the folder. The cache
-    /// is not used.
+    /// `grouping`, `ffmpeg_i_lufs`, `fit`); a row whose `fit` is `start` is scored against the
+    /// analysis refitted to the start of the track. Files are found by name anywhere under the
+    /// folder. The cache is not used.
     Eval {
         /// The labels CSV.
         #[arg(long)]
@@ -272,7 +274,8 @@ fn main() -> anyhow::Result<()> {
             let labels = eval::parse_labels(&text)
                 .map_err(|e| anyhow::anyhow!("{}: {e}", labels.display()))?;
             let mut analyzer = analyzer(&analysis, None);
-            let (rows, summary) = eval::run(&mut analyzer, &labels, &dir);
+            let bpm_range = settings(&analysis).bpm_range;
+            let (rows, summary) = eval::run(&mut analyzer, &labels, &dir, bpm_range);
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
             if json {

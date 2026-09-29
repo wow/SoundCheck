@@ -1,4 +1,4 @@
-import type { Grid, GridEdit, Meter } from '@/lib/ipc';
+import type { EditFit, Grid, GridEdit, Meter } from '@/lib/ipc';
 import { samplesPerBeat } from './geometry';
 import { meterText } from './meters';
 
@@ -16,6 +16,7 @@ export const NO_EDIT: GridEdit = {
   octave: 0,
   anchor: null,
   downbeatShift: 0,
+  fit: 'whole',
 };
 
 export function isEmpty(edit: GridEdit): boolean {
@@ -25,8 +26,17 @@ export function isEmpty(edit: GridEdit): boolean {
     edit.tempoHint === null &&
     edit.octave === 0 &&
     edit.anchor === null &&
-    edit.downbeatShift === 0
+    edit.downbeatShift === 0 &&
+    edit.fit === 'whole'
   );
+}
+
+/**
+ * Fits the grid to the whole track or to its start (up to its first 128 beats, fewer when the
+ * tempo changes sooner), for a track whose tempo changes: the other overrides still apply on top.
+ */
+export function withFit(edit: GridEdit, fit: EditFit): GridEdit {
+  return edit.fit === fit ? edit : { ...edit, fit };
 }
 
 /** The tempi and octave steps the engine accepts in an edit. */
@@ -149,5 +159,6 @@ export function changes(
     chips.push(within ? `bar 1 ${ms > 0 ? '+' : ''}${ms.toFixed(0)} ms` : 'bar 1 moved');
   }
   if (edit.downbeatShift !== 0) chips.push(`beat 1 = ${edit.downbeatShift + 1}`);
+  if (edit.fit === 'start') chips.push('fitted to the start');
   return chips;
 }

@@ -64,6 +64,24 @@ pub struct GridEdit {
     /// solved), when no anchor is placed. It is relative: a later meter or tempo change moves
     /// the bar it counts from, so an editor that wants bar 1 to stay put places `anchor`.
     pub downbeat_shift: u8,
+    /// Which beats the tempo, phase and bar 1 are fitted on. The grid stays one static grid
+    /// either way and is still judged over the whole track.
+    pub fit: GridFit,
+}
+
+/// Which part of the track a static grid is fitted to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "lowercase")]
+pub enum GridFit {
+    /// The whole track: the tempo that fits every beat best (on a track whose tempo changes,
+    /// the middle of the track).
+    #[default]
+    Whole,
+    /// The start of the music (its first 128 beats, more when they hold few kicks): where a DJ
+    /// mixes in and where bar 1 is judged. On a track whose tempo changes the rest drifts off
+    /// the grid, and the verdict still says so.
+    Start,
 }
 
 /// Tempos an edit may set or produce, in BPM at the meter's unit: wide enough for any pulse a

@@ -10,7 +10,10 @@ import type { TrackOpened } from './generated/TrackOpened';
  * raw little-endian bytes (`tauri::ipc::Response`) and are turned into typed arrays here.
  */
 
+export type { FitChoice } from './generated/FitChoice';
 export type { Grid } from './generated/Grid';
+/** Which part of the track the grid is fitted to (named apart from a refit's answer, `GridFit`). */
+export type { GridFit as EditFit } from './generated/GridFit';
 export type { GridEdit } from './generated/GridEdit';
 export type { GridFitHeader } from './generated/GridFitHeader';
 export type { Meter } from './generated/Meter';

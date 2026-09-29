@@ -10,7 +10,7 @@ mod edit;
 mod grid;
 
 pub use edit::{
-    EDIT_BPM_LIMITS, EDIT_MAX_PULSES, EDIT_OCTAVE_LIMIT, GridEdit, GridEvidence, OnsetList,
+    EDIT_BPM_LIMITS, EDIT_MAX_PULSES, EDIT_OCTAVE_LIMIT, GridEdit, GridEvidence, GridFit, OnsetList,
 };
 pub use grid::{Alternatives, BeatUnit, Confidence, Grid, Meter, Reason, TempoSegment, Verdict};
 

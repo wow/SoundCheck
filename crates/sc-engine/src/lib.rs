@@ -24,7 +24,7 @@ pub use batch::{
 };
 pub use cancel::CancelToken;
 pub use decide::decide;
-pub use edits::{EditState, apply_saved, save_edit};
+pub use edits::{EditState, apply_saved, fit_choice, save_edit};
 pub use expand::{collect_audio_files, probe_all};
 pub use session::{Session, run_job};
 pub use track::{Track, TrackProgress};

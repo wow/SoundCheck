@@ -4,7 +4,9 @@
 //! optional): `file` (base name, matched NFC-normalised anywhere under the folder), `bpm`,
 //! `bar1_s` (bar 1 in seconds from the start of the decoded audio), `meter` (`4/4`, `9/8`, ...),
 //! `grouping` (`2+2+2+3`), `ffmpeg_i_lufs` (integrated loudness measured by
-//! `scripts/ffmpeg-reference.sh`). Each row is scored where both sides exist:
+//! `scripts/ffmpeg-reference.sh`), `fit` (`whole`, the default, or `start`: the label was set on
+//! a grid fitted to the start of a track whose tempo changes, so it is scored against the fresh
+//! analysis refitted the same way). Each row is scored where both sides exist:
 //!
 //! - BPM within 0.02, exactly or after one octave flip (x2 or /2);
 //! - meter and grouping identical;
@@ -19,7 +21,10 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use unicode_normalization::UnicodeNormalization;
 
+use sc_core::Bpm;
+use sc_core::analysis::{GridEdit, GridFit};
 use sc_engine::Analyzer;
+use sc_engine::edits::refit_record;
 
 /// Tolerances of the scores.
 const BPM_TOLERANCE: f64 = 0.02;
@@ -41,6 +46,8 @@ pub struct Label {
     pub grouping: Option<Vec<u8>>,
     /// Reference integrated loudness.
     pub ffmpeg_i_lufs: Option<f64>,
+    /// The part of the track the labelled grid was fitted to (whole when not given).
+    pub fit: GridFit,
 }
 
 /// One scored row.
@@ -55,6 +62,8 @@ pub struct Scored {
     pub bpm_label: Option<f64>,
     /// Our tempo.
     pub bpm: Option<f64>,
+    /// The fit our grid was refitted with (the label's).
+    pub fit: Option<GridFit>,
     /// Within tolerance without a flip.
     pub bpm_exact: Option<bool>,
     /// Within tolerance after one octave flip.
@@ -110,12 +119,13 @@ pub fn parse_labels(text: &str) -> Result<Vec<Label>, String> {
             .position(|h| h.trim().eq_ignore_ascii_case(name))
     };
     let file_col = col("file").ok_or("labels need a `file` column")?;
-    let (bpm_col, bar1_col, meter_col, grouping_col, loud_col) = (
+    let (bpm_col, bar1_col, meter_col, grouping_col, loud_col, fit_col) = (
         col("bpm"),
         col("bar1_s"),
         col("meter"),
         col("grouping"),
         col("ffmpeg_i_lufs"),
+        col("fit"),
     );
     let mut labels = Vec::new();
     for (n, line) in lines.enumerate() {
@@ -141,6 +151,13 @@ pub fn parse_labels(text: &str) -> Result<Vec<Label>, String> {
                     .map_err(|e| format!("row {}: grouping {g:?}: {e}", n + 2))
             })
             .transpose()?;
+        let fit = match get(fit_col).map(|f| f.to_ascii_lowercase()).as_deref() {
+            None | Some("whole") => GridFit::Whole,
+            Some("start") => GridFit::Start,
+            Some(other) => {
+                return Err(format!("row {}: fit {other:?} (whole or start)", n + 2));
+            }
+        };
         labels.push(Label {
             file: get(Some(file_col)).unwrap_or_default().nfc().collect(),
             bpm: number(bpm_col, "bpm")?,
@@ -148,6 +165,7 @@ pub fn parse_labels(text: &str) -> Result<Vec<Label>, String> {
             meter: get(meter_col),
             grouping,
             ffmpeg_i_lufs: number(loud_col, "ffmpeg_i_lufs")?,
+            fit,
         });
     }
     Ok(labels)
@@ -194,8 +212,14 @@ fn index_dir(dir: &Path) -> BTreeMap<String, PathBuf> {
     found
 }
 
-/// Analyses and scores every labelled file found under `dir`.
-pub fn run(analyzer: &mut Analyzer, labels: &[Label], dir: &Path) -> (Vec<Scored>, Summary) {
+/// Analyses and scores every labelled file found under `dir`; a `start` label is scored against
+/// the analysis refitted to the start under `bpm_range` (the analysis's range).
+pub fn run(
+    analyzer: &mut Analyzer,
+    labels: &[Label],
+    dir: &Path,
+    bpm_range: (Bpm, Bpm),
+) -> (Vec<Scored>, Summary) {
     let files = index_dir(dir);
     let mut summary = Summary {
         rows: labels.len(),
@@ -230,11 +254,29 @@ pub fn run(analyzer: &mut Analyzer, labels: &[Label], dir: &Path) -> (Vec<Scored
             row.loudness_ok = Some(diff.abs() <= LOUDNESS_TOLERANCE_LU);
             tally(&mut summary.loudness, row.loudness_ok);
         }
-        let Some(grid) = &record.grid else {
-            row.skipped.clone_from(&record.grid_skipped);
-            rows.push(row);
-            continue;
+        let start_fit;
+        let grid = match (&record.grid, label.fit) {
+            (None, _) => {
+                row.skipped.clone_from(&record.grid_skipped);
+                rows.push(row);
+                continue;
+            }
+            (Some(grid), GridFit::Whole) => grid,
+            (Some(_), GridFit::Start) => {
+                let edit = GridEdit {
+                    fit: GridFit::Start,
+                    ..GridEdit::default()
+                };
+                let Some(solved) = refit_record(record, bpm_range, &edit) else {
+                    row.skipped = Some("the start fit gives no grid".into());
+                    rows.push(row);
+                    continue;
+                };
+                start_fit = solved.grid;
+                &start_fit
+            }
         };
+        row.fit = Some(label.fit);
         let bpm = grid.bpm.0;
         row.bpm = Some(bpm);
         row.meter = Some(grid.meter.to_string());
@@ -323,7 +365,7 @@ pub fn write_text(
         }
         writeln!(
             out,
-            "{:<48} bpm {:>7} / {:>8} {:<4}  meter {:>14} / {:<14} {:<4}  bar1 {:>7} {:<4}  I {:>6} {}",
+            "{:<48} bpm {:>7} / {:>8} {:<4}  meter {:>14} / {:<14} {:<4}  bar1 {:>7} {:<4}  I {:>6} {}{}",
             truncate(&r.file, 48),
             r.bpm_label.map_or("-".into(), |b| format!("{b:.2}")),
             r.bpm.map_or("-".into(), |b| format!("{b:.3}")),
@@ -342,6 +384,11 @@ pub fn write_text(
             r.loudness_diff_lu
                 .map_or("-".into(), |d| format!("{d:+.2}")),
             mark(r.loudness_ok),
+            if r.fit == Some(GridFit::Start) {
+                "  (start fit)"
+            } else {
+                ""
+            },
         )?;
     }
     writeln!(out)?;

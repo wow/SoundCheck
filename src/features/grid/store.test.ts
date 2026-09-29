@@ -49,6 +49,7 @@ function fit(bpm: number, anchor = 24_000): GridFit {
       worstLine: null,
       matched: 2,
       attacks: 2,
+      fitChoice: null,
     },
     residuals: new Float32Array([1, -2]),
   };

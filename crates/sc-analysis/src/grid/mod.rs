@@ -156,6 +156,12 @@ pub struct SolveSettings {
     /// Bar positions to move beat 1 on from the solved one (the user's `1`-`n`). Ignored with
     /// `anchor_override_s`.
     pub downbeat_shift: u8,
+    /// Fits the grid to one stretch of the track (the start fit), from and to a time in seconds:
+    /// tempo, phase, octave and bar position come from the beats inside it (all beats when
+    /// `None`, or when fewer than [`MIN_BEATS`] lie inside). Bar 1 is still the first bar line
+    /// at or after the first beat of the track, and the residuals, the fitness and the verdict
+    /// are still judged on the whole track.
+    pub fit_window_s: Option<(f64, f64)>,
 }
 
 impl Default for SolveSettings {
@@ -172,6 +178,7 @@ impl Default for SolveSettings {
             anchor_override_s: None,
             octave_shift: 0,
             downbeat_shift: 0,
+            fit_window_s: None,
         }
     }
 }
@@ -216,8 +223,11 @@ pub fn solve_detailed(
     sample_rate: u32,
 ) -> Option<Solved> {
     let beats = clean_beats(ev.beats_s);
-    let tempo = fit_tempo(&beats)?;
-    let span = (beats[0], beats[beats.len() - 1]);
+    // Tempo, phase, octave and bar 1 from the fitted beats (the start, or all of them); the
+    // fitness and the verdict from all of them.
+    let (fitted, tempo) = fit_within(&beats, settings.fit_window_s)?;
+    let span = (fitted[0], fitted[fitted.len() - 1]);
+    let whole_span = (beats[0], beats[beats.len() - 1]);
 
     // Kick band unless it is (nearly) silent; then broadband attacks.
     let kick_enough = ev.kick_onsets.len() * 4 >= beats.len();
@@ -261,7 +271,7 @@ pub fn solve_detailed(
     let (anchor_s, downbeat) = if let Some(anchor) = settings.anchor_override_s {
         let bar_len = period * count_f64(bar);
         (
-            first_bar_line(anchor, bar_len, span.0 - period / 2.0),
+            first_bar_line(anchor, bar_len, whole_span.0 - period / 2.0),
             Downbeat::pinned(),
         )
     } else {
@@ -275,12 +285,12 @@ pub fn solve_detailed(
             onsets,
         )
         .shifted(settings.downbeat_shift, bar);
-        let lattice = first_downbeat(period, octave.phase, bar, db.r, span.0);
+        let lattice = first_downbeat(period, octave.phase, bar, db.r, whole_span.0);
         let local = snap_anchor(lattice, onsets).filter(|t| (t - lattice).abs() <= ANCHOR_AGREE_S);
         (local.unwrap_or(lattice), db)
     };
 
-    let fit = fitness(anchor_s, period, onsets, &beats, span);
+    let fit = fitness(anchor_s, period, onsets, &beats, whole_span);
     let verdict = verdict(&fit);
     let first_downbeat_index = nearest_index(ev.beats_s, anchor_s);
 
@@ -296,7 +306,7 @@ pub fn solve_detailed(
         settings,
     });
 
-    let lines = line_residuals(&fit, anchor_s, period, span);
+    let lines = line_residuals(&fit, anchor_s, period, whole_span);
     let grid = Grid {
         anchor: Seconds(anchor_s).to_sample_index(sample_rate),
         bpm: Bpm(bpm),
@@ -394,19 +404,119 @@ pub struct BeatFit {
     pub alt_phase: Option<f64>,
     /// First and last usable beat, in seconds.
     pub span: (f64, f64),
+    /// Standard error of `period`, in seconds (infinite when it cannot be estimated).
+    pub sigma_period: f64,
 }
 
 /// Fits the model's beats; `None` when fewer than [`MIN_BEATS`] usable beats exist.
 #[must_use]
 pub fn fit_beats(beats_s: &[f64]) -> Option<BeatFit> {
+    fit_beats_within(beats_s, None)
+}
+
+/// As [`fit_beats`], on the usable beats within `window_s` (from, to, in seconds) only, chosen
+/// exactly as [`SolveSettings::fit_window_s`] chooses them: all of them when `None` or when
+/// fewer than [`MIN_BEATS`] lie inside.
+#[must_use]
+pub fn fit_beats_within(beats_s: &[f64], window_s: Option<(f64, f64)>) -> Option<BeatFit> {
     let beats = clean_beats(beats_s);
-    let tempo = fit_tempo(&beats)?;
+    let (fitted, tempo) = fit_within(&beats, window_s)?;
     Some(BeatFit {
         period: tempo.period,
         phase: tempo.phase,
         alt_phase: tempo.alt_phase,
-        span: (beats[0], beats[beats.len() - 1]),
+        span: (fitted[0], fitted[fitted.len() - 1]),
+        sigma_period: tempo.sigma_period,
     })
+}
+
+/// The cleaned (sorted) beats within `window_s` and their tempo fit; the whole track when
+/// `window_s` is `None`, holds fewer than [`MIN_BEATS`] beats or every beat, or gives no fit.
+fn fit_within(beats: &[f64], window_s: Option<(f64, f64)>) -> Option<(&[f64], tempo::Tempo)> {
+    if let Some((from, to)) = window_s {
+        let first = beats.partition_point(|&t| t < from);
+        let end = beats.partition_point(|&t| t <= to).max(first);
+        let inside = &beats[first..end];
+        if inside.len() >= MIN_BEATS
+            && inside.len() < beats.len()
+            && let Some(tempo) = fit_tempo(inside)
+        {
+            return Some((inside, tempo));
+        }
+    }
+    fit_tempo(beats).map(|tempo| (beats, tempo))
+}
+
+/// Largest distance at which an attack counts as on a grid line for [`line_share`] (never more
+/// than a quarter beat): the width of a kick's attack, well inside what a DJ hears as on the
+/// beat.
+const SHARE_WINDOW_S: f64 = 0.020;
+
+/// The share (0 to 1) of `grid`'s lines within `from_s..=to_s` seconds that hold one of
+/// `onsets` within 20 ms (a quarter beat at most); 0 when no line lies there.
+#[must_use]
+pub fn line_share(
+    grid: &Grid,
+    onsets: &[TimedOnset],
+    sample_rate: u32,
+    from_s: f64,
+    to_s: f64,
+) -> f64 {
+    let bpm = grid.bpm.0;
+    if !(bpm.is_finite() && bpm > 0.0) {
+        return 0.0;
+    }
+    let anchor_s = grid.anchor.to_seconds(sample_rate).0;
+    lattice_share(60.0 / bpm, anchor_s, onsets, from_s, to_s)
+}
+
+/// As [`line_share`], for the lattice of `period` seconds through `phase_s`.
+#[must_use]
+pub fn lattice_share(
+    period: f64,
+    phase_s: f64,
+    onsets: &[TimedOnset],
+    from_s: f64,
+    to_s: f64,
+) -> f64 {
+    if !(period.is_finite() && period > 0.0 && phase_s.is_finite() && from_s <= to_s) {
+        return 0.0;
+    }
+    let times: Vec<f64> = onsets.iter().map(|o| o.time_s).collect();
+    phase::slot_hits(&times, period, phase_s, (from_s, to_s), SHARE_WINDOW_S)
+}
+
+/// The share (0 to 1) of `onsets` within `from_s..=to_s` seconds that lie within 20 ms (a
+/// quarter beat at most) of a line of the lattice of `period` seconds through `phase_s`; 0 when
+/// none lies there. The counterpart of [`lattice_share`]: lines without an attack (a breakdown)
+/// leave it alone, attacks drifting off the lines (a tempo change) lower it.
+#[must_use]
+pub fn lattice_precision(
+    period: f64,
+    phase_s: f64,
+    onsets: &[TimedOnset],
+    from_s: f64,
+    to_s: f64,
+) -> f64 {
+    if !(period.is_finite() && period > 0.0 && phase_s.is_finite() && from_s <= to_s) {
+        return 0.0;
+    }
+    let window = SHARE_WINDOW_S.min(period / 4.0);
+    let (mut on, mut all) = (0_usize, 0_usize);
+    for t in onsets.iter().map(|o| o.time_s) {
+        if !(from_s..=to_s).contains(&t) {
+            continue;
+        }
+        all += 1;
+        if phase::lattice_distance(t, period, phase_s).abs() <= window {
+            on += 1;
+        }
+    }
+    if all == 0 {
+        0.0
+    } else {
+        count_f64(on) / count_f64(all)
+    }
 }
 
 /// The global phase of the attacks on the model's beat lattice: the comb is tried around the

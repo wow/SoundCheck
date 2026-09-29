@@ -7,9 +7,10 @@
 //! after the range setting changes. A confirmation counts only while that grid is still the one
 //! the user confirmed: a new beat model or solver that moves it sends the row back to review.
 
-use sc_analysis::grid::Solved;
-use sc_analysis::refit::{self, Context, timed};
-use sc_core::analysis::{AnalysisRecord, Grid, GridEdit};
+use sc_analysis::grid::{self, Solved};
+use sc_analysis::refit::{self, Context};
+use sc_core::analysis::{AnalysisRecord, Grid, GridEdit, GridFit, Verdict};
+use sc_core::ipc::FitChoice;
 use sc_core::{Bpm, Result};
 use sc_io::edits::{AudioIdentity, EDIT_SCHEMA, EditStore, GridPin, SavedEdit};
 
@@ -25,6 +26,8 @@ pub struct EditState {
     pub edited: bool,
     /// The user confirmed this grid by ear.
     pub confirmed: bool,
+    /// The part of the track the applied edit fits the grid to (whole when no edit applied).
+    pub fit: GridFit,
 }
 
 /// The audio `record` describes.
@@ -81,13 +84,81 @@ pub fn snap_onsets(record: &AnalysisRecord) -> Vec<f64> {
     let Some(ev) = &record.evidence else {
         return Vec::new();
     };
-    let kick = timed(&ev.kick_onsets);
-    let onsets = if kick.len() * 4 >= ev.beats_s.len() || ev.broadband_onsets.frames.is_empty() {
-        kick
+    refit::grid_attacks(ev).iter().map(|o| o.time_s).collect()
+}
+
+/// A start fit is offered for a whole-track grid that does not drift when it holds at least
+/// this much more of the start window's lines: the verdict counts only the attacks that match a
+/// line, so a track whose start the whole-track grid misses can still read static.
+const OFFER_SHARE_GAIN: f32 = 0.2;
+
+/// The whole-track and the start fit of `record` under `edit` (made with `bpm_range`), compared
+/// on the start of the music: the share of each grid's lines in the start window
+/// ([`refit::start_window_s`]) that hold an attack (the attacks bar 1 snaps to). `Some` when
+/// the edit fits the start, when its whole-track grid drifts, or when the start fit holds
+/// [`OFFER_SHARE_GAIN`] more of the window than the whole-track fit. `None` without evidence,
+/// without a start fit (no run of attacks, or too few, at the start: a start edit then gives the
+/// whole-track grid, so there is nothing to compare) or when either fit gives no grid.
+/// `solved` is the edit's own grid when the caller has it (it is refitted otherwise); the other
+/// fit is refitted with the rest of the edit unchanged.
+#[must_use]
+pub fn fit_choice(
+    record: &AnalysisRecord,
+    bpm_range: (Bpm, Bpm),
+    edit: &GridEdit,
+    solved: Option<&Solved>,
+) -> Option<FitChoice> {
+    let evidence = record.evidence.as_ref()?;
+    let window = refit::start_window_s(evidence)?;
+    let own_refit;
+    let current = if let Some(s) = solved {
+        s
     } else {
-        timed(&ev.broadband_onsets)
+        own_refit = refit_record(record, bpm_range, edit)?;
+        &own_refit
     };
-    onsets.iter().map(|o| o.time_s).collect()
+    let other_fit = match edit.fit {
+        GridFit::Whole => GridFit::Start,
+        GridFit::Start => GridFit::Whole,
+    };
+    let other = refit_record(
+        record,
+        bpm_range,
+        &GridEdit {
+            fit: other_fit,
+            ..edit.clone()
+        },
+    )?;
+    let (whole, start) = match edit.fit {
+        GridFit::Whole => (current, &other),
+        GridFit::Start => (&other, current),
+    };
+    let attacks = refit::grid_attacks(evidence);
+    let rate = record.spec.sample_rate;
+    let share = |s: &Solved| {
+        to_f32(grid::line_share(
+            &s.grid,
+            &attacks,
+            rate,
+            window.from_s,
+            window.to_s,
+        ))
+    };
+    let choice = FitChoice {
+        whole_share: share(whole),
+        start_share: share(start),
+        window_end_s: window.to_s,
+    };
+    let offered = edit.fit == GridFit::Start
+        || whole.grid.verdict == Verdict::Drifts
+        || choice.start_share >= choice.whole_share + OFFER_SHARE_GAIN;
+    offered.then_some(choice)
+}
+
+/// A share (0 to 1) as `f32`.
+#[allow(clippy::cast_possible_truncation)] // a share in 0..=1 fits f32
+fn to_f32(share: f64) -> f32 {
+    share as f32
 }
 
 /// An edit that gives no grid for a file that has one (or a file without evidence).
@@ -137,6 +208,7 @@ pub fn apply_saved(record: &mut AnalysisRecord, store: &EditStore) -> EditState 
     let state = EditState {
         edited: grid != record.grid,
         confirmed: saved.confirmed && same_grid(saved.grid.as_ref(), grid.as_ref()),
+        fit: saved.edit.fit,
     };
     if grid.is_some() {
         record.grid_skipped = None;
@@ -179,5 +251,6 @@ pub fn save_edit(
     Ok(EditState {
         edited: grid != record.grid,
         confirmed,
+        fit: edit.fit,
     })
 }

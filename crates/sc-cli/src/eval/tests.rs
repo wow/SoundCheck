@@ -34,3 +34,29 @@ fn labels_parse_with_quotes_and_optional_columns() {
     );
     assert!(parse_labels("file,bpm\nx.flac,fast\n").is_err());
 }
+
+#[test]
+fn the_fit_column_is_optional_and_whole_by_default() {
+    let labels = parse_labels(
+        "file,bpm,fit\nA.flac,117.00,start\nB.flac,120,\nC.flac,121,Whole\nD.flac,122,START\n",
+    )
+    .unwrap();
+    let fits: Vec<GridFit> = labels.iter().map(|l| l.fit).collect();
+    assert_eq!(
+        fits,
+        [
+            GridFit::Start,
+            GridFit::Whole,
+            GridFit::Whole,
+            GridFit::Start
+        ]
+    );
+    let old = parse_labels("file,bpm\nA.flac,117.00\n").unwrap();
+    assert_eq!(
+        old[0].fit,
+        GridFit::Whole,
+        "an old labels file has no fit column"
+    );
+    let err = parse_labels("file,fit\nA.flac,middle\n").unwrap_err();
+    assert!(err.contains("row 2") && err.contains("middle"), "{err}");
+}

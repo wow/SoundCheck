@@ -146,3 +146,22 @@ fn a_labels_file_without_a_file_column_is_an_error() {
     assert!(!ok);
     assert!(out.contains("file"), "{out}");
 }
+
+#[test]
+fn a_start_fit_label_is_scored_against_the_start_fit() {
+    let Some(_) = models() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let clicks = testsig::click_track(AudioSpec::CD, sc_core::Bpm(120.0), 120, 15.0);
+    write_wav(&dir.path().join("click.wav"), &clicks, 0.5, 0.5);
+    let (ok, out) = run_eval(
+        dir.path(),
+        "file,bpm,bar1_s,meter,grouping,confirmed,fit\nclick.wav,120.00,0.500,4/4,,yes,start\n",
+        &[],
+    );
+    assert!(ok, "{out}");
+    assert!(out.contains("(start fit)"), "{out}");
+    assert!(out.contains("bpm within 0.02: 1/1"), "{out}");
+    assert!(out.contains("bar 1 within 15 ms: 1/1"), "{out}");
+    let (ok, out) = run_eval(dir.path(), "file,bpm,fit\nclick.wav,120.00,middle\n", &[]);
+    assert!(!ok && out.contains("middle"), "{out}");
+}

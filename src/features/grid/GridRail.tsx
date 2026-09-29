@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
-import type { Grid } from '@/lib/ipc';
+import type { EditFit, FitChoice, Grid } from '@/lib/ipc';
 import { REASON_TEXT } from '@/lib/format';
 import { useLibrary } from '@/state/library';
 import { ConfidenceRing, MeterBadge } from '@/features/library/cells';
-import { chooseMeter, octave } from './actions';
+import { chooseFit, chooseMeter, octave } from './actions';
 import { changes } from './edit';
 import { TONE_TEXT, VERDICT, VERDICT_TONE } from './fitText';
 import { barOf, fitTones } from './geometry';
@@ -94,6 +94,8 @@ export function GridDetails() {
           matched={fit?.header.matched}
           attacks={fit?.header.attacks}
           worst={fit?.header.worstLine ?? null}
+          choice={fit?.header.fitChoice ?? null}
+          fitTo={edit.fit}
         />
       ) : (
         <NoGrid />
@@ -159,11 +161,15 @@ function FitCard({
   matched,
   attacks,
   worst,
+  choice,
+  fitTo,
 }: {
   grid: Grid;
   matched: number | undefined;
   attacks: number | undefined;
   worst: number | null;
+  choice: FitChoice | null;
+  fitTo: EditFit;
 }) {
   const bpb = Math.max(1, grid.meter.beatsPerBar);
   const tones = fitTones(grid.residualP95Ms, grid.residualMaxMs);
@@ -216,6 +222,7 @@ function FitCard({
           )}
         </span>
       </Row>
+      {(choice || fitTo === 'start') && <FitChooser choice={choice} fitTo={fitTo} />}
       {grid.meter.unit === 'eighth' && <Row label="Pulse">♪ {Math.round(grid.bpm)} / min</Row>}
       {/* Coloured by the limits the verdict below comes from. */}
       <Row label="Residual P95">
@@ -246,6 +253,58 @@ function FitCard({
         </Chip>
       </Row>
     </Card>
+  );
+}
+
+const FIT_LABEL: Record<EditFit, string> = { whole: 'Whole track', start: 'Start' };
+
+/** `m:ss` of a time in seconds. */
+function clock(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/**
+ * For a track whose tempo changes: the grid fitted to the whole track or to its start (where a
+ * DJ mixes in), each with the share of kicks it holds at the start. A start fit chosen before
+ * stays switchable when the engine finds no start to fit (then the grid follows the whole
+ * track).
+ */
+function FitChooser({ choice, fitTo }: { choice: FitChoice | null; fitTo: EditFit }) {
+  const share = choice && { whole: choice.wholeShare, start: choice.startShare };
+  const pct = (f: EditFit) => (share ? `${Math.round(share[f] * 100)} %` : '');
+  return (
+    <div role="group" aria-labelledby="fit-choice-label" className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
+        <span id="fit-choice-label" className="text-fg-2">
+          Fit to
+        </span>
+        <span className="text-[11.5px] text-fg-2">
+          {choice
+            ? `kicks on the grid to ${clock(choice.windowEndS)}`
+            : 'no start to fit: whole track used'}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        {(['whole', 'start'] as const).map((f) => (
+          <button
+            key={f}
+            type="button"
+            aria-pressed={fitTo === f}
+            aria-label={share ? `${FIT_LABEL[f]}, ${pct(f)} of kicks on the grid` : FIT_LABEL[f]}
+            onClick={() => chooseFit(f)}
+            className={`flex items-baseline justify-between gap-2 rounded-md border px-2 py-1 text-[12px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-2 ${
+              fitTo === f
+                ? 'border-accent-2 bg-bg-2 text-fg-0'
+                : 'border-line text-fg-1 hover:bg-bg-2'
+            }`}
+          >
+            <span>{FIT_LABEL[f]}</span>
+            {share && <span className="font-mono tabular-nums">{pct(f)}</span>}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
