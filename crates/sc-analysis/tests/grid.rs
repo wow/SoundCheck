@@ -419,3 +419,114 @@ fn regression_half_beat_phase_jump_of_the_model() {
     );
     assert_eq!(g.verdict, Verdict::Static, "{g:?}");
 }
+
+/// Bar 1 on the bar lattice through `first` (seconds per bar `bar_s`), within 5 ms.
+fn on_bar_lattice(g: &Grid, first: f64, bar_s: f64) -> bool {
+    let x = (anchor_s(g) - first) / bar_s;
+    (x - x.round()).abs() * bar_s <= 0.005
+}
+
+/// Off-beat bass onsets `half` after every kick, `rise_db` strong, merged into the kick band.
+fn add_off_beat_bass(s: &mut Synth, half: f64, rise_db: f32) {
+    let bass: Vec<TimedOnset> = s
+        .onsets
+        .iter()
+        .map(|o| TimedOnset {
+            time_s: ((o.time_s + half) * 1000.0).round() / 1000.0,
+            rise_db,
+            level_db: 0.0,
+        })
+        .collect();
+    s.onsets.extend(bass);
+    s.onsets.sort_by(|a, b| a.time_s.total_cmp(&b.time_s));
+}
+
+/// Moves the model's beats between `from` and `to` seconds onto the off-beat; its downbeats
+/// stay snapped to its beats (as the model's post-processing does), its downbeat activation
+/// stays on the bar.
+fn model_on_off_beat(s: &mut Synth, half: f64, from: f64, to: f64) {
+    for b in s.beats.iter_mut().chain(s.downbeats.iter_mut()) {
+        if *b > from && *b < to {
+            *b = ((*b + half) * 50.0).round() / 50.0;
+        }
+    }
+}
+
+/// The model follows the off-beat for a section and an off-beat bass out-attacks the kick in
+/// the kick band, so the comb takes the section's phase (seen on 92 and 97 BPM pop tracks):
+/// the downbeat activation puts the grid back on the kick.
+#[test]
+fn regression_off_beat_bass_follows_the_downbeat_activation() {
+    let mut s = synth(&Spec {
+        seconds: 120.0,
+        ..Spec::steady(92.0)
+    });
+    let period = 60.0 / 92.0;
+    model_on_off_beat(&mut s, period / 2.0, 20.0, 60.0);
+    add_off_beat_bass(&mut s, period / 2.0, 40.0);
+    let g = run(&s, &SolveSettings::default());
+    assert!((g.bpm.0 - 92.0).abs() <= 0.02, "{}", g.bpm.0);
+    assert!(
+        on_bar_lattice(&g, 0.5, 4.0 * period),
+        "bar 1 at {:.4}",
+        anchor_s(&g)
+    );
+}
+
+/// The eurodance case above with an off-beat bass weaker than the kick: bar 1 stays on the
+/// kicks.
+#[test]
+fn a_model_on_the_off_beat_over_kicks_and_bass_keeps_the_kicks() {
+    let mut s = synth(&Spec {
+        seconds: 200.0,
+        ..Spec::steady(141.03)
+    });
+    let half = 60.0 / 141.03 / 2.0;
+    model_on_off_beat(&mut s, half, 8.0, f64::INFINITY);
+    add_off_beat_bass(&mut s, half, 18.0);
+    let g = run(&s, &SolveSettings::default());
+    assert!((g.bpm.0 - 141.03).abs() <= 0.02, "{}", g.bpm.0);
+    assert!(
+        (anchor_s(&g) - 0.5).abs() <= 0.005,
+        "bar 1 at {:.4}",
+        anchor_s(&g)
+    );
+}
+
+/// The model runs at double time and the range asks for half: the slower lattice's parity is
+/// the one the downbeats sit on, not the one with more attacks (an off-beat bass on every
+/// slot, the kick missing from some).
+#[test]
+fn regression_half_tempo_parity_follows_the_downbeats() {
+    let mut s = synth(&Spec {
+        seconds: 120.0,
+        downbeat_every: 8,
+        ..Spec::steady(180.0)
+    });
+    // The model's downbeat activation between downbeats is near zero on real tracks (summed
+    // over a track, under 0.02 per line); the synthetic -2 on every beat would blur the parity.
+    for x in s.logits.iter_mut().filter(|x| **x < 0.0) {
+        *x = -6.0;
+    }
+    s.onsets = s
+        .onsets
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % 2 == 1 || (i / 2) % 4 != 3)
+        .map(|(i, o)| TimedOnset {
+            rise_db: if i % 2 == 1 { 40.0 } else { 30.0 },
+            ..*o
+        })
+        .collect();
+    let settings = SolveSettings {
+        bpm_range: (70.0, 100.0),
+        ..SolveSettings::default()
+    };
+    let g = run(&s, &settings);
+    assert!((g.bpm.0 - 90.0).abs() <= 0.02, "{}", g.bpm.0);
+    assert!(
+        on_bar_lattice(&g, 0.5, 4.0 * 60.0 / 90.0),
+        "bar 1 at {:.4}",
+        anchor_s(&g)
+    );
+}

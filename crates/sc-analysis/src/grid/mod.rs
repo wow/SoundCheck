@@ -9,9 +9,12 @@
 //! 2. **Phase**: one global offset from correlating the onset train with a comb at the fitted
 //!    period, within +/-40 ms of the beats' own phase (the model's beats can sit a frame or two
 //!    off the attacks), then centred on the median offset of the attacks near the comb peak.
+//!    The lattice then moves half a beat when the model's downbeat activation clearly sits
+//!    there: a bass line on the off-beats can out-attack the kick in the kick band.
 //! 3. **Octave**: inside the user's DJ-app BPM range first, then the file's BPM tag (2 %), the
 //!    genre's usual range; when both octaves still fit the range the faster one is taken (what DJ
-//!    apps do), marked uncertain unless the kicks also fill the faster lattice.
+//!    apps do), marked uncertain unless the kicks also fill the faster lattice. Half tempo takes
+//!    the parity the downbeat activation sits on, or else the one on more onsets.
 //! 4. **Round BPM** only when the round value lies within max(3 sigma, 0.002) BPM of the fit: a
 //!    true 127.98 exported as 128.00 drifts 56 ms over six minutes.
 //! 5. **Bar 1**: the meter's downbeat phase from the model's downbeats (each votes for the bar
@@ -38,7 +41,7 @@ use bar::{Downbeat, downbeat_phase, first_bar_line, first_downbeat, nearest_inde
 use fitness::{Assessment, assess, fitness, line_residuals, verdict};
 use num::{count_f64, index_f64, to_f32};
 use octave::{TempoChoice, choose_tempo};
-use phase::phase_from_onsets;
+use phase::beat_phase;
 use tempo::{clean_beats, fit_tempo};
 
 /// Fewest beats (after removing double detections) a grid is fitted to.
@@ -53,6 +56,15 @@ const REJECT_S: f64 = 0.040;
 const COMB_RANGE_S: f64 = 0.040;
 const COMB_STEPS: i32 = 80;
 const COMB_KERNEL_S: f64 = 0.006;
+/// Half-beat parity by the model's downbeat activation: the window around a lattice line
+/// read, the least summed activation (about eight confident downbeats) the other lattice needs,
+/// and how many times the current lattice's sum. Measured on hand-corrected grids: where an
+/// off-beat bass pulled the grid half a beat off, the corrected lines held 3.5 to several
+/// thousand times the activation of the analysed ones; on correct grids the other lattice held
+/// at most 1.1 times.
+const PARITY_WINDOW_S: f64 = 0.040;
+const PARITY_MIN_ACTIVATION: f64 = 8.0;
+const PARITY_RATIO: f64 = 3.0;
 /// Window around the bar-1 lattice point in which the anchor onset is sought.
 const ANCHOR_WINDOW_S: f64 = 0.040;
 /// A rise within this many dB of the strongest one in the window counts as significant.
@@ -216,9 +228,17 @@ pub fn solve_detailed(
     };
 
     let (coverage, recall) = (tempo.coverage, tempo.recall);
-    let phase = phase_from_onsets(tempo.period, tempo.phase, tempo.alt_phase, span, onsets);
+    let phase = beat_phase(
+        tempo.period,
+        tempo.phase,
+        tempo.alt_phase,
+        span,
+        onsets,
+        ev.downbeat_logits,
+    );
 
-    let TempoChoice { base, chosen, bpm } = choose_tempo(&tempo, phase, settings, onsets, span);
+    let TempoChoice { base, chosen, bpm } =
+        choose_tempo(&tempo, phase, settings, onsets, ev.downbeat_logits, span);
     let period = 60.0 / bpm;
     let bar = usize::from(settings.meter.beats_per_bar.max(1));
     // A slower lattice the user chose (half tempo, a slower tap) runs through the bar 1 of the
@@ -393,9 +413,18 @@ pub fn fit_beats(beats_s: &[f64]) -> Option<BeatFit> {
 /// model's majority phase and, when the model itself followed another phase for a sustained
 /// section, around that one too; the better one wins (the alternative needs a 20 % better score)
 /// and is centred on the attacks' median offset. Without attacks the model's phase stands.
+/// The lattice then moves half a beat when the model's downbeat activation (logits at 50 frames
+/// per second) clearly sits there.
 #[must_use]
-pub fn onset_phase(fit: &BeatFit, onsets: &[TimedOnset]) -> f64 {
-    phase_from_onsets(fit.period, fit.phase, fit.alt_phase, fit.span, onsets)
+pub fn onset_phase(fit: &BeatFit, onsets: &[TimedOnset], downbeat_logits: &[f32]) -> f64 {
+    beat_phase(
+        fit.period,
+        fit.phase,
+        fit.alt_phase,
+        fit.span,
+        onsets,
+        downbeat_logits,
+    )
 }
 
 /// Samples of a grid line: `anchor + i * 60 * sample_rate / bpm`, rounded.

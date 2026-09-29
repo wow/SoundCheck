@@ -1,7 +1,69 @@
 //! Step 2, phase: the comb over the onsets at the fitted period, centred on the attacks.
 
-use super::num::{count_f64, median};
-use super::{COMB_KERNEL_S, COMB_RANGE_S, COMB_STEPS, INLIER_S, TimedOnset};
+use super::bar::sigmoid;
+use super::num::{count_f64, frame_index, median};
+use super::{
+    COMB_KERNEL_S, COMB_RANGE_S, COMB_STEPS, INLIER_S, MODEL_FPS, PARITY_MIN_ACTIVATION,
+    PARITY_RATIO, PARITY_WINDOW_S, TimedOnset,
+};
+
+/// The beat phase: the comb over the attacks, then the half-beat parity by the model's
+/// downbeat activation. A bass line on the off-beats can out-attack the kick in the kick band
+/// and pull the comb half a beat off (through the model's alternative phase); the downbeat
+/// activation, read before the model's post-processing snaps downbeats onto its beats, stays
+/// on the bar.
+pub(super) fn beat_phase(
+    period: f64,
+    phase: f64,
+    alt_phase: Option<f64>,
+    span: (f64, f64),
+    onsets: &[TimedOnset],
+    logits: &[f32],
+) -> f64 {
+    let combed = phase_from_onsets(period, phase, alt_phase, span, onsets);
+    let other = combed + period / 2.0;
+    if activation_prefers(period, combed, other, span, logits) {
+        phase_from_onsets(period, other, None, span, onsets)
+    } else {
+        combed
+    }
+}
+
+/// Whether the model's downbeat activation (logits at [`MODEL_FPS`]) puts the lattice of
+/// `period` at phase `other` rather than `current`: summed over the lines within `span`, the
+/// strongest activation within [`PARITY_WINDOW_S`] of each line must reach
+/// [`PARITY_MIN_ACTIVATION`] and [`PARITY_RATIO`] times the sum on `current`'s lines.
+pub(super) fn activation_prefers(
+    period: f64,
+    current: f64,
+    other: f64,
+    span: (f64, f64),
+    logits: &[f32],
+) -> bool {
+    let reach = (PARITY_WINDOW_S.min(period / 4.0) * MODEL_FPS).floor();
+    let activation = |phase: f64| -> f64 {
+        let first = ((span.0 - phase) / period).ceil();
+        let last = ((span.1 - phase) / period).floor();
+        let mut sum = 0.0;
+        let mut k = first;
+        while k <= last {
+            let frame = ((phase + period * k) * MODEL_FPS).round();
+            let mut d = -reach;
+            let mut best = 0.0_f64;
+            while d <= reach {
+                if let Some(&x) = frame_index(frame + d).and_then(|i| logits.get(i)) {
+                    best = best.max(sigmoid(x));
+                }
+                d += 1.0;
+            }
+            sum += best;
+            k += 1.0;
+        }
+        sum
+    };
+    let on_other = activation(other);
+    on_other >= PARITY_MIN_ACTIVATION && on_other >= PARITY_RATIO * activation(current)
+}
 
 pub(super) fn phase_from_onsets(
     period: f64,
@@ -114,3 +176,6 @@ pub(super) fn slot_hits(
     hit.dedup_by(|a, b| (*a - *b).abs() < 0.5);
     count_f64(hit.len()) / slots
 }
+
+#[cfg(test)]
+mod tests;

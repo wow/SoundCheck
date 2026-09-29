@@ -91,7 +91,7 @@ fn solve(evidence: &GridEvidence, ctx: &Context<'_>, edit: &GridEdit) -> Option<
     } else {
         &broadband
     };
-    let phase = grid::onset_phase(&fit, anchor_onsets);
+    let phase = grid::onset_phase(&fit, anchor_onsets, &evidence.downbeat_logits_50fps);
     let hint = [&ctx.tags.genre, &ctx.tags.title, &ctx.tags.artist]
         .iter()
         .filter_map(|s| s.as_deref())
