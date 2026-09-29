@@ -1,7 +1,7 @@
 //! Steps 3 and 4, octave and round BPM: the octave choice, the user's tempo and octave steps,
 //! and the snap to a round BPM within the fit's noise.
 
-use super::phase::slot_hits;
+use super::phase::{activation_prefers, slot_hits};
 use super::tempo::Tempo;
 use super::{INLIER_S, SolveSettings, TimedOnset};
 
@@ -19,6 +19,7 @@ pub(super) fn choose_tempo(
     phase: f64,
     settings: &SolveSettings,
     onsets: &[TimedOnset],
+    logits: &[f32],
     span: (f64, f64),
 ) -> TempoChoice {
     let user = |period| Octave {
@@ -36,7 +37,7 @@ pub(super) fn choose_tempo(
         },
         _ => match settings.fixed_period {
             Some(period) if period > 0.0 => user(period),
-            _ => choose_octave(tempo, phase, settings, onsets, span),
+            _ => choose_octave(tempo, phase, settings, onsets, logits, span),
         },
     };
     let chosen = match settings.tempo_period {
@@ -124,20 +125,25 @@ pub(super) fn choose_octave(
     phase: f64,
     settings: &SolveSettings,
     onsets: &[TimedOnset],
+    logits: &[f32],
     span: (f64, f64),
 ) -> Octave {
     let onset_times: Vec<f64> = onsets.iter().map(|o| o.time_s).collect();
-    // Candidates slow to fast. Half tempo has two possible parities: keep the one on more onsets.
+    // Candidates slow to fast. Half tempo has two possible parities: the one the model's
+    // downbeat activation sits on or, when it does not decide, the one on more onsets (an
+    // off-beat bass can hold more of them than the kick).
     let slow_phase = {
-        let a = slot_hits(&onset_times, tempo.period * 2.0, phase, span, INLIER_S);
-        let b = slot_hits(
-            &onset_times,
-            tempo.period * 2.0,
-            phase + tempo.period,
-            span,
-            INLIER_S,
-        );
-        if b > a { phase + tempo.period } else { phase }
+        let slow = tempo.period * 2.0;
+        let other = phase + tempo.period;
+        if activation_prefers(slow, phase, other, span, logits) {
+            other
+        } else if activation_prefers(slow, other, phase, span, logits) {
+            phase
+        } else {
+            let a = slot_hits(&onset_times, slow, phase, span, INLIER_S);
+            let b = slot_hits(&onset_times, slow, other, span, INLIER_S);
+            if b > a { other } else { phase }
+        }
     };
     let candidates = [
         (tempo.period * 2.0, slow_phase),
