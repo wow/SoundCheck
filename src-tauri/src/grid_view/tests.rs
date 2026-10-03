@@ -127,8 +127,12 @@ fn a_row_opens_refits_saves_a_confirmed_edit_and_closes() {
 
     // 100 bins of 1,024 frames: 400 bytes of min/max pairs.
     assert_eq!(shell.peaks(id, 1024, 0, 100).unwrap().len(), 400);
-    assert!(!shell.onsets(id).unwrap().is_empty());
-    assert!(shell.cover(id).unwrap().is_empty());
+    assert_ne!(
+        shell.onsets(id).unwrap().len(),
+        0,
+        "the kick onsets are sent"
+    );
+    assert_eq!(shell.cover(id).unwrap(), Vec::<u8>::new());
 
     let (fit, residuals) = parse_fit(&shell.refit(id, &GridEdit::default()).unwrap());
     assert_eq!(

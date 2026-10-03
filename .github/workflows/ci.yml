@@ -44,6 +44,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          # The action's container no longer installs the toolchain named in
+          # rust-toolchain.toml on its own.
+          rust-version: stable
 
   web:
     name: typecheck, lint, vitest

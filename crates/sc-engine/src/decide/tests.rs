@@ -359,9 +359,8 @@ fn a_confirmed_grid_leaves_review_whatever_its_flags() {
 fn a_short_file_without_a_grid_needs_no_review() {
     let mut r = record(Some(-9.0), None, -1.0);
     r.grid_skipped = Some("shorter than 10 s".into());
-    assert!(
-        unconfirmed(&r, Codec::Flac, &DecideSettings::dj())
-            .review
-            .is_empty()
+    assert_eq!(
+        unconfirmed(&r, Codec::Flac, &DecideSettings::dj()).review,
+        Vec::new()
     );
 }
