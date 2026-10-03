@@ -168,7 +168,7 @@ fn a_cleared_list_takes_the_same_files_again() {
     let first = shell.expand(vec![dir.path().display().to_string()]);
     assert_eq!(first.len(), 1);
     shell.clear();
-    assert!(shell.restore().rows.is_empty());
+    assert_eq!(shell.restore().rows, Vec::new());
     let again = shell.expand(vec![dir.path().display().to_string()]);
     assert_eq!(again.len(), 1);
     assert_ne!(again[0].file_id, first[0].file_id, "ids are not reused");
