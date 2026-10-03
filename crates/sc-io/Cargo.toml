@@ -27,3 +27,9 @@ hound = { workspace = true }
 tempfile = { workspace = true }
 sha2 = { workspace = true }
 md-5 = { workspace = true }
+proptest = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "iff"
+harness = false
