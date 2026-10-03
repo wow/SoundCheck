@@ -97,7 +97,7 @@ fn json_carries_the_plan_as_the_app_receives_it() {
     assert_eq!(doc["plan"]["gain"]["type"], "gain");
     assert!((doc["plan"]["gain"]["gainDb"].as_f64().unwrap() - 9.0).abs() < 0.05);
     assert_eq!(doc["plan"]["status"], "analysed");
-    assert!(doc["plan"]["review"].as_array().unwrap().is_empty());
+    assert_eq!(doc["plan"]["review"], serde_json::json!([]));
 }
 
 #[test]

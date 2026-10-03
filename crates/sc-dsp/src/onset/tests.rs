@@ -11,5 +11,5 @@ fn median_of_odd_and_even_lengths() {
 fn silence_has_no_onsets() {
     let det = OnsetDetector::new(22_050);
     assert_eq!(det.hop_frames(), 22);
-    assert!(det.detect(&vec![0.0; 22_050]).is_empty());
+    assert_eq!(det.detect(&vec![0.0; 22_050]), Vec::new());
 }

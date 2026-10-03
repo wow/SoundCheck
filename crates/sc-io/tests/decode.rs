@@ -101,7 +101,7 @@ fn streaming_blocks_concatenate_to_the_whole_file() {
     let mut blocks = 0_usize;
     let delivered = decoder
         .for_each_block(|block| {
-            assert!(!block.is_empty());
+            assert_ne!(block.len(), 0, "no empty blocks");
             assert_eq!(block.len() % channels, 0, "blocks are whole frames");
             streamed.extend_from_slice(block);
             blocks += 1;
