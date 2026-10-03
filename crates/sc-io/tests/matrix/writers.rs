@@ -1,0 +1,174 @@
+//! The writer tests and the runner they share with the self-tests.
+//!
+//! Each writer test is `#[ignore]`d and additionally returns early unless `SC_FILE_WRITERS=1`,
+//! so a nightly `--include-ignored` run stays green until the `sc-io` writers exist. The same
+//! [`run`] drives the reference writer in `selftest.rs`, so every assertion here is already
+//! exercised on a correct output.
+
+use std::path::Path;
+
+use super::apply::{
+    self, Applied, ApplyArgs, IDENTITY, TagEdit, apply, apply_with_tags, grid, writers_enabled,
+};
+use super::cases::{Fixture, matrix};
+use super::check::check_output;
+use super::expect::refusal;
+use super::parse;
+
+/// What a writer returns: output bytes and report, or its refusal.
+pub type Written = Result<(Vec<u8>, Applied), String>;
+
+/// A writer under test.
+pub type Writer<'a> = dyn Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written + 'a;
+
+/// Runs `writer` twice on `fx` and checks it: refused exactly when [`refusal`] says so,
+/// otherwise identical bytes and report on both runs and every check of `check_output`.
+///
+/// # Errors
+/// What went wrong, with the fixture name and row.
+pub fn run(
+    writer: &Writer,
+    fx: &Fixture,
+    args: &ApplyArgs,
+    edits: &[TagEdit],
+) -> Result<(), String> {
+    let first = writer(fx, args, edits);
+    let second = writer(fx, args, edits);
+    match (refusal(fx, args), first, second) {
+        (Some(_), Err(_), Err(_)) => Ok(()),
+        (Some(why), _, _) => Err(format!("{} {args:?}: must be refused ({why})", fx.name)),
+        (None, Ok((a, report_a)), Ok((b, report_b))) => {
+            if a != b || report_a != report_b {
+                return Err(format!("{} {args:?}: two runs differ", fx.name));
+            }
+            check_output(fx, &a, args, edits, report_a)
+        }
+        (None, Err(e), _) | (None, _, Err(e)) => {
+            Err(format!("{} {args:?}: refused unexpectedly: {e}", fx.name))
+        }
+    }
+}
+
+/// Rows for the bit-depth test: 16 and 24 bits at 0 dB, and 16 bits with gain.
+#[must_use]
+pub fn bit_depth_rows() -> Vec<ApplyArgs> {
+    vec![
+        ApplyArgs {
+            bits: Some(16),
+            ..IDENTITY
+        },
+        ApplyArgs {
+            bits: Some(24),
+            ..IDENTITY
+        },
+        ApplyArgs {
+            bits: Some(16),
+            gain_db: -3.2,
+            ..IDENTITY
+        },
+    ]
+}
+
+/// Rows for the tag tests: identity, and gain with trim and loudness.
+#[must_use]
+pub fn tag_rows() -> Vec<ApplyArgs> {
+    vec![
+        IDENTITY,
+        ApplyArgs {
+            gain_db: -3.2,
+            trim_samples: 441,
+            bits: None,
+            loudness: Some(apply::LOUDNESS),
+        },
+    ]
+}
+
+/// Fixtures that hold at least one ID3 chunk.
+#[must_use]
+pub fn has_id3(fx: &Fixture) -> bool {
+    parse::parse(&fx.bytes).is_ok_and(|p| !p.tags.is_empty())
+}
+
+/// The `sc-io` writer through the harness: writes the fixture into `dir`, applies, reads the
+/// output back; a refusal must leave no output file.
+fn sc_io(dir: &Path) -> impl Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written {
+    move |fx, args, edits| {
+        let input = dir.join(format!("{}.{}", fx.name, fx.ext));
+        std::fs::write(&input, &fx.bytes).map_err(|e| e.to_string())?;
+        let out = dir.join(format!("{}-out.{}", fx.name, fx.ext));
+        let _ = std::fs::remove_file(&out);
+        let result = if edits.is_empty() {
+            apply(&input, &out, args)
+        } else {
+            apply_with_tags(&input, &out, args, edits)
+        };
+        match result {
+            Ok(applied) => Ok((std::fs::read(&out).map_err(|e| e.to_string())?, applied)),
+            Err(e) => {
+                assert!(!out.exists(), "{}: a refusal left an output file", fx.name);
+                Err(e)
+            }
+        }
+    }
+}
+
+fn run_all(test: &str, fixtures: &[Fixture], rows: &[ApplyArgs], edits: &[TagEdit]) {
+    if !writers_enabled(test) {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let writer = sc_io(dir.path());
+    for fx in fixtures {
+        for args in rows {
+            run(&writer, fx, args, edits).unwrap_or_else(|e| panic!("{e}"));
+        }
+    }
+}
+
+#[test]
+#[ignore = "arrives with the IFF writer"]
+fn iff_apply_carries_every_chunk_and_writes_dj_safe_headers() {
+    let fixtures: Vec<_> = matrix().into_iter().filter(Fixture::is_iff).collect();
+    run_all(
+        "iff_apply_carries_every_chunk_and_writes_dj_safe_headers",
+        &fixtures,
+        &grid(),
+        &[],
+    );
+}
+
+#[test]
+#[ignore = "arrives with the IFF writer"]
+fn iff_apply_writes_the_requested_bit_depth() {
+    let fixtures: Vec<_> = matrix().into_iter().filter(Fixture::is_iff).collect();
+    run_all(
+        "iff_apply_writes_the_requested_bit_depth",
+        &fixtures,
+        &bit_depth_rows(),
+        &[],
+    );
+}
+
+#[test]
+#[ignore = "arrives with the ID3 editor"]
+fn id3_edit_adds_our_frames_and_keeps_every_other_frame() {
+    let fixtures: Vec<_> = matrix().into_iter().filter(has_id3).collect();
+    run_all(
+        "id3_edit_adds_our_frames_and_keeps_every_other_frame",
+        &fixtures,
+        &tag_rows(),
+        &apply::id3_edits(),
+    );
+}
+
+#[test]
+#[ignore = "arrives with the FLAC writer"]
+fn flac_apply_carries_blocks_and_rebuilds_streaminfo() {
+    let fixtures: Vec<_> = matrix().into_iter().filter(|f| !f.is_iff()).collect();
+    run_all(
+        "flac_apply_carries_blocks_and_rebuilds_streaminfo",
+        &fixtures,
+        &grid(),
+        &apply::vorbis_edits(),
+    );
+}
