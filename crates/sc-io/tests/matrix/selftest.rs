@@ -56,12 +56,25 @@ fn reference_writer_passes_bit_depth_and_id3_rows() {
     passes(&tagged, &tag_rows(), &apply::id3_edits());
 }
 
-/// Asserts that the reference writer with `opts` fails the checks on `name` with `args`.
-fn rejects(name: &str, args: &ApplyArgs, edits: &[TagEdit], opts: Options, what: &str) {
+/// Asserts that the reference writer with `opts` fails the checks on `name` with `args`, and
+/// for the intended reason: the failure message contains `needle`.
+fn rejects(
+    name: &str,
+    args: &ApplyArgs,
+    edits: &[TagEdit],
+    opts: Options,
+    (what, needle): (&str, &str),
+) {
     let fx = fixture(name);
     match run(&reference(opts), &fx, args, edits) {
         Ok(()) => panic!("{what} on {name} went unnoticed"),
-        Err(e) => eprintln!("{what}: rejected with: {e}"),
+        Err(e) => {
+            assert!(
+                e.contains(needle),
+                "{what}: rejected for another reason: {e}"
+            );
+            eprintln!("{what}: rejected with: {e}");
+        }
     }
 }
 
@@ -100,20 +113,32 @@ fn pcm_checks_reject_floor_offset_missing_dither_and_inexact_widening() {
     // Truncation is exact float-to-integer here: the values are within the 24-bit range.
     #[allow(clippy::cast_possible_truncation)]
     let floor = samples(w24, &GAIN, |_, _, r| r.floor() as i32);
-    rejects(w24, &GAIN, &[], floor, "floor instead of round");
+    rejects(
+        w24,
+        &GAIN,
+        &[],
+        floor,
+        ("floor instead of round", "mean error -0.4"),
+    );
     rejects(
         w24,
         &GAIN,
         &[],
         samples(w24, &GAIN, |_, y, _| y + 1),
-        "+1 LSB everywhere",
+        ("+1 LSB everywhere", "mean error 0.9"),
     );
     let widen = ApplyArgs {
         bits: Some(24),
         ..IDENTITY
     };
     let inexact = samples("wav16-mono", &widen, |i, y, _| y + i32::from(i % 97 == 0));
-    rejects("wav16-mono", &widen, &[], inexact, "16 -> 24 not exact");
+    rejects(
+        "wav16-mono",
+        &widen,
+        &[],
+        inexact,
+        ("16 -> 24 not exact", "sample 0 is 192001"),
+    );
     #[allow(clippy::cast_possible_truncation)]
     let undithered = samples("wav16-mono", &GAIN, |_, _, r| r.round() as i32);
     rejects(
@@ -121,7 +146,7 @@ fn pcm_checks_reject_floor_offset_missing_dither_and_inexact_widening() {
         &GAIN,
         &[],
         undithered,
-        "16-bit gain without dither",
+        ("16-bit gain without dither", "RMS error 0.28"),
     );
 }
 
@@ -135,32 +160,59 @@ fn unpatched(id: &'static str) -> Options {
 #[test]
 fn patch_checks_reject_unshifted_positions_stale_lengths_and_missing_loudness() {
     let w24 = "wav24-bwf-ixml-cue-smpl-id3v24";
-    rejects(w24, &TRIM, &[], unpatched("cue "), "cue points not shifted");
-    rejects(w24, &TRIM, &[], unpatched("smpl"), "loop not shifted");
+    rejects(
+        w24,
+        &TRIM,
+        &[],
+        unpatched("cue "),
+        ("cue points not shifted", "\"cue \" patch"),
+    );
+    rejects(
+        w24,
+        &TRIM,
+        &[],
+        unpatched("smpl"),
+        ("loop not shifted", "\"smpl\" patch"),
+    );
     rejects(
         w24,
         &TRIM,
         &[],
         unpatched("bext"),
-        "TimeReference not moved",
+        ("TimeReference not moved", "byte 338"),
     );
-    rejects(w24, &LOUD, &[], unpatched("bext"), "loudness not written");
+    rejects(
+        w24,
+        &LOUD,
+        &[],
+        unpatched("bext"),
+        ("loudness not written", "byte 412"),
+    );
     rejects(
         "wav16-mono-bext-v0",
         &LOUD,
         &[],
         unpatched("bext"),
-        "v0 not upgraded",
+        ("v0 not upgraded", "byte 346"),
     );
     let ext = "wav24-extensible-bext-v1-fact";
-    rejects(ext, &TRIM, &[], unpatched("fact"), "stale fact length");
+    rejects(
+        ext,
+        &TRIM,
+        &[],
+        unpatched("fact"),
+        ("stale fact length", "\"fact\" patch"),
+    );
     rejects(
         "aiff24-48k-mark",
         &TRIM,
         &[],
         unpatched("MARK"),
-        "markers not shifted",
+        ("markers not shifted", "\"MARK\" patch"),
     );
+    // Gain without new loudness must not leave the old values standing.
+    let stale = ("stale loudness after gain", "byte 412");
+    rejects(w24, &GAIN, &[], unpatched("bext"), stale);
     let edits = apply::vorbis_edits();
     let cue = unpatched("CUESHEET");
     rejects(
@@ -168,7 +220,7 @@ fn patch_checks_reject_unshifted_positions_stale_lengths_and_missing_loudness() 
         &TRIM,
         &edits,
         cue,
-        "CUESHEET not shifted",
+        ("CUESHEET not shifted", "\"CUESHEET\" patch"),
     );
 }
 
@@ -180,12 +232,24 @@ fn tag_checks_reject_wrong_encoding_flags_duplicates_and_growth() {
         text_encoding: Some(3),
         ..Options::default()
     };
-    rejects(w16, &IDENTITY, &id3, utf8.clone(), "UTF-8 in a v2.3 tag");
+    rejects(
+        w16,
+        &IDENTITY,
+        &id3,
+        utf8.clone(),
+        ("UTF-8 in a v2.3 tag", "text encoding 3 in v2.3"),
+    );
     let flags = Options {
         frame_flags: [0x40, 0],
         ..Options::default()
     };
-    rejects(w16, &IDENTITY, &id3, flags, "frame flags on our frames");
+    rejects(
+        w16,
+        &IDENTITY,
+        &id3,
+        flags,
+        ("frame flags on our frames", "has frame flags"),
+    );
     let dup = Options {
         append_existing: true,
         ..Options::default()
@@ -195,7 +259,7 @@ fn tag_checks_reject_wrong_encoding_flags_duplicates_and_growth() {
         &IDENTITY,
         &id3,
         dup.clone(),
-        "existing frames appended again",
+        ("existing frames appended again", "carried or replaced and"),
     );
     let grow = Options {
         grow_tag: true,
@@ -206,7 +270,7 @@ fn tag_checks_reject_wrong_encoding_flags_duplicates_and_growth() {
         &IDENTITY,
         &id3,
         grow,
-        "tag grown although padding fits",
+        ("tag grown although padding fits", "padding could hold"),
     );
     let flac_edits = apply::vorbis_edits();
     rejects(
@@ -214,16 +278,24 @@ fn tag_checks_reject_wrong_encoding_flags_duplicates_and_growth() {
         &IDENTITY,
         &flac_edits,
         dup,
-        "Vorbis fields appended again",
+        ("Vorbis fields appended again", "carried or replaced and"),
     );
     // UTF-8 is a valid encoding in v2.4, so the same option passes there.
     let v24 = fixture("wav24-bwf-ixml-cue-smpl-id3v24");
     run(&reference(utf8), &v24, &IDENTITY, &id3).expect("UTF-8 in v2.4");
-    // A writer that reports "tags added" for a tag it must not edit is caught.
-    let unsync = fixture("wav16-mono-id3v24-tag-unsync");
-    let (bytes, _) = oracle::write(&unsync, &IDENTITY, &id3, &Options::default()).expect("write");
+    // A writer that reports "tags added" for a file it must not edit is caught, and so is one
+    // that edits the tag anyway (here: the reference writer told the tag is editable).
     let wrong = Applied { tags_added: true };
-    assert!(check_output(&unsync, &bytes, &IDENTITY, &id3, wrong).is_err());
+    for name in [
+        "wav16-mono-id3v24-tag-unsync",
+        "wav16-mono-two-id3-chunks-ext-headers",
+        "wav16-mono-id3v24-ext-crc",
+    ] {
+        let fx = fixture(name);
+        let (bytes, _) = oracle::write(&fx, &IDENTITY, &id3, &Options::default()).expect("write");
+        let result = check_output(&fx, &bytes, &IDENTITY, &id3, wrong);
+        assert!(result.is_err_and(|e| e.contains("tags_added")), "{name}");
+    }
 }
 
 #[test]

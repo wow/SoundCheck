@@ -7,7 +7,7 @@
 use super::apply::{Applied, ApplyArgs, TagEdit};
 use super::cases::{Expect, Fixture};
 use super::check_audio::{check_flac_stream, check_pcm};
-use super::expect::{edited_tag, out_bits, out_frames, patched};
+use super::expect::{edited_tag, out_bits, out_frames, patched, same_label};
 use super::inspect;
 use super::parse::{self, Block, Container, Kind, Parsed, frame_text, vorbis_value};
 
@@ -185,13 +185,7 @@ pub fn check_tag(
     edits: &[TagEdit],
 ) -> Result<(), String> {
     let vorbis = input.container == Container::Flac;
-    let same = |a: &str, b: &str| {
-        if vorbis {
-            a.eq_ignore_ascii_case(b)
-        } else {
-            a == b
-        }
-    };
+    let same = |a: &str, b: &str| same_label(vorbis, a, b);
     let tags = |p: &Parsed, chunk: usize| p.tags.iter().find(|t| t.chunk == chunk).cloned();
     let (tin, tout) = if vorbis {
         (None, None)
@@ -245,7 +239,7 @@ pub fn check_tag(
         }
     }
     for (edit, o) in appended.iter().zip(&outs[ins.len()..]) {
-        if o.id != edit.label {
+        if !same(&o.id, edit.label) {
             return Err(format!("appended {:?}, want {}", o.id, edit.label));
         }
         check_ours(o, edit, version)?;

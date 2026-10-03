@@ -55,7 +55,11 @@ pub fn wav16_info_id3(frames: &[Frame], padding: usize) -> Fixture {
 
 fn wav24_bwf_id3v24() -> Fixture {
     let src = pcm::int_samples(44_100, 2, FRAMES, 24, 2);
-    let tag = id3::tag(Version::V24, &id3::frames(Version::V24, true, false), 0);
+    let tag = id3::tag(
+        Version::V24,
+        &id3::frames(Version::V24, true, Some("replaygain_track_gain")),
+        0,
+    );
     let chunks = [
         riff::bext(
             2,
@@ -100,7 +104,7 @@ fn wav_float32(name: &'static str, ch: u16, factor: f64, seed: u64) -> Fixture {
 
 fn wav16_chunks_after_data() -> Fixture {
     let src = pcm::int_samples(44_100, 2, FRAMES, 16, 5);
-    let tag = id3::tag(Version::V23, &id3::frames(Version::V23, true, false), 0);
+    let tag = id3::tag(Version::V23, &id3::frames(Version::V23, true, None), 0);
     let chunks = [
         riff::fmt(WavFormat::Pcm, 2, 44_100, 16),
         riff::data(&src),
@@ -171,8 +175,9 @@ fn two_id3_chunks() -> Fixture {
             padding: 128,
             ext: true,
             unsync: false,
+            crc: false,
         },
-        &id3::frames(Version::V23, false, true),
+        &id3::frames(Version::V23, false, Some("REPLAYGAIN_TRACK_GAIN")),
     );
     let second_frames = [
         id3::text(Version::V24, *b"TIT2", "Matrix Tone (second tag)"),
@@ -184,6 +189,7 @@ fn two_id3_chunks() -> Fixture {
             padding: 0,
             ext: true,
             unsync: false,
+            crc: false,
         },
         &second_frames,
     );
@@ -220,16 +226,40 @@ fn id3v24_tag_unsync() -> Fixture {
         padding: 32,
         ext: false,
         unsync: true,
+        crc: false,
     };
     let chunks = vec![tag_chunk(*b"ID3 ", id3::tag_with(layout, &frames))];
     mono_wav("wav16-mono-id3v24-tag-unsync", 18, chunks)
+}
+
+/// A v2.4 tag whose extended header carries a CRC-32: editing would invalidate it, so the tag
+/// is carried and no tags are added.
+fn id3v24_ext_crc() -> Fixture {
+    let v = Version::V24;
+    let frames = [
+        id3::text(v, *b"TIT2", "Matrix Tone"),
+        id3::text(v, *b"TBPM", "128"),
+        id3::txxx(v, "SOURCE", "crc-protected tag"),
+    ];
+    let layout = Layout {
+        version: v,
+        padding: 16,
+        ext: true,
+        unsync: false,
+        crc: true,
+    };
+    let chunks = vec![tag_chunk(*b"ID3 ", id3::tag_with(layout, &frames))];
+    mono_wav("wav16-mono-id3v24-ext-crc", 24, chunks)
 }
 
 /// The WAV fixtures.
 #[must_use]
 pub fn wav_fixtures() -> Vec<Fixture> {
     vec![
-        wav16_info_id3(&id3::frames(Version::V23, true, true), 512),
+        wav16_info_id3(
+            &id3::frames(Version::V23, true, Some("REPLAYGAIN_TRACK_GAIN")),
+            512,
+        ),
         wav24_bwf_id3v24(),
         wav24_extensible(),
         wav_float32("wav-float32-fact", 2, 1.0, 4),
@@ -253,6 +283,7 @@ pub fn wav_fixtures() -> Vec<Fixture> {
         two_id3_chunks(),
         id3v24_frame_flags(),
         id3v24_tag_unsync(),
+        id3v24_ext_crc(),
     ]
 }
 
@@ -270,7 +301,7 @@ fn aiff(name: &'static str, form: Form, src: pcm::Samples, rate: u32, chunks: &[
 
 fn aiff16_serato() -> Fixture {
     let src = pcm::int_samples(44_100, 2, FRAMES, 16, 8);
-    let tag = id3::tag(Version::V23, &id3::frames(Version::V23, true, false), 256);
+    let tag = id3::tag(Version::V23, &id3::frames(Version::V23, true, None), 256);
     let chunks = [
         aiff::comm(2, frames_u32(FRAMES), 16, 44_100, None),
         aiff::text(*b"NAME", "Matrix Tone"),

@@ -6,11 +6,13 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use super::apply::{ApplyArgs, grid};
 use super::cases::{Expect, Fixture};
-use super::parse::sha256_hex;
+use super::expect::patched;
+use super::parse::{self, sha256_hex};
 
 /// Manifest schema version; bump when the layout of the JSON changes.
-const SCHEMA: u32 = 2;
+const SCHEMA: u32 = 3;
 
 /// The whole manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +26,59 @@ pub struct Manifest {
     /// output shows up as a reviewed diff.
     #[serde(default)]
     pub outputs: Vec<OutputEntry>,
+    /// SHA-256 of every patched block's expected payload per fixture and grid row, so a change
+    /// of the patch rules shows up as a reviewed diff.
+    pub patched: Vec<PatchedEntry>,
+}
+
+/// The expected payload of one patched block for one grid row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchedEntry {
+    /// Fixture name.
+    pub fixture: String,
+    /// The apply arguments, as text.
+    pub row: String,
+    /// Block id.
+    pub id: String,
+    /// SHA-256 of the expected payload.
+    pub sha256: String,
+}
+
+/// A grid row as text.
+#[must_use]
+pub fn row_label(args: &ApplyArgs) -> String {
+    format!(
+        "gain {:+.1} dB, trim {}, bits {}, loudness {}",
+        args.gain_db,
+        args.trim_samples,
+        args.bits.map_or("source".into(), |b| b.to_string()),
+        if args.loudness.is_some() {
+            "given"
+        } else {
+            "none"
+        }
+    )
+}
+
+fn patched_entries(fixtures: &[Fixture]) -> Vec<PatchedEntry> {
+    let mut out = Vec::new();
+    for fx in fixtures {
+        let input = parse::parse(&fx.bytes).expect("fixtures parse");
+        for args in grid() {
+            for (block, e) in input.blocks.iter().zip(&fx.expected) {
+                if let Expect::Patched { .. } = e.expect {
+                    let payload = patched(&block.id, &block.bytes, fx, &args).expect("patch");
+                    out.push(PatchedEntry {
+                        fixture: fx.name.into(),
+                        row: row_label(&args),
+                        id: block.id.clone(),
+                        sha256: sha256_hex(&payload),
+                    });
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The output of one writer run.
@@ -119,6 +174,7 @@ pub fn manifest(fixtures: &[Fixture]) -> Manifest {
             })
             .collect(),
         outputs: Vec::new(),
+        patched: patched_entries(fixtures),
     }
 }
 
@@ -154,10 +210,17 @@ fn first_difference(want: &Manifest, got: &Manifest) -> String {
             g.sha256
         );
     }
+    for (w, g) in want.patched.iter().zip(&got.patched) {
+        if w != g {
+            return format!("patched payload differs: golden {w:?}, built {g:?}");
+        }
+    }
     format!(
-        "golden has {} fixtures, built {}",
+        "golden has {} fixtures and {} patched payloads, built {} and {}",
         want.fixtures.len(),
-        got.fixtures.len()
+        want.patched.len(),
+        got.fixtures.len(),
+        got.patched.len()
     )
 }
 

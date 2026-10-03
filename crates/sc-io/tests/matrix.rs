@@ -49,6 +49,8 @@ mod golden;
 mod id3;
 #[path = "matrix/inspect.rs"]
 mod inspect;
+#[path = "matrix/literals.rs"]
+mod literals;
 #[path = "matrix/oracle.rs"]
 mod oracle;
 #[path = "matrix/parse.rs"]

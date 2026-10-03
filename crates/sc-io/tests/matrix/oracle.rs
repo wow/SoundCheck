@@ -6,7 +6,7 @@
 use super::aiff::{self, Form};
 use super::apply::{Applied, ApplyArgs, TagEdit};
 use super::cases::{Expect, Fixture};
-use super::expect::{edited_tag, out_bits, out_frames, patched, refusal};
+use super::expect::{edited_tag, out_bits, out_frames, patched, refusal, same_label};
 use super::flac;
 use super::id3::{self, Version};
 use super::inspect::seektable;
@@ -185,7 +185,7 @@ fn edit_id3(
         items.iter().partition(|b| b.kind == Kind::Id3ExtHeader);
     let mut body = Vec::new();
     for f in &frames {
-        match edits.iter().find(|e| e.label == f.id) {
+        match edits.iter().find(|e| same_label(false, &f.id, e.label)) {
             Some(edit) if !opts.append_existing => {
                 body.extend(id3::frame_bytes(version, &our_frame(version, edit, opts)));
             }
@@ -193,7 +193,7 @@ fn edit_id3(
         }
     }
     for edit in edits {
-        if opts.append_existing || !frames.iter().any(|f| f.id == edit.label) {
+        if opts.append_existing || !frames.iter().any(|f| same_label(false, &f.id, edit.label)) {
             body.extend(id3::frame_bytes(version, &our_frame(version, edit, opts)));
         }
     }
@@ -218,7 +218,7 @@ fn edit_id3(
 }
 
 fn vorbis_edit(vendor: &[u8], fields: &[&Block], edits: &[TagEdit], opts: &Options) -> Vec<u8> {
-    let same = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
+    let same = |a: &str, b: &str| same_label(true, a, b);
     let mut out: Vec<String> = Vec::new();
     for f in fields {
         let text = String::from_utf8_lossy(&f.bytes).into_owned();

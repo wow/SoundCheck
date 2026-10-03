@@ -232,18 +232,18 @@ pub fn serato_beatgrid(position_s: f32, bpm: f32) -> Vec<u8> {
 
 /// The common frame set: title, artist (UTF-16 in v2.3), BPM, key, comment, `TXXX:SOURCE`,
 /// cover, a Windows Media `PRIV`; with `serato` the three Serato GEOB objects (all longer than
-/// 127 bytes, so v2.3 and v2.4 sizes differ); with `replaygain` an existing
-/// `TXXX:REPLAYGAIN_TRACK_GAIN` written by another tool.
+/// 127 bytes, so v2.3 and v2.4 sizes differ); with `replaygain` an existing `ReplayGain` `TXXX`
+/// frame written by another tool, with that description (any letter case).
 #[must_use]
-pub fn frames(version: Version, serato: bool, replaygain: bool) -> Vec<Frame> {
+pub fn frames(version: Version, serato: bool, replaygain: Option<&str>) -> Vec<Frame> {
     let mut v = vec![text(version, *b"TIT2", "Matrix Tone")];
     v.push(match version {
         Version::V23 => text_utf16(*b"TPE1", "SoundCheck Ensemble"),
         Version::V24 => text(version, *b"TPE1", "SoundCheck Ensemble"),
     });
     v.push(text(version, *b"TBPM", "128"));
-    if replaygain {
-        v.push(txxx(version, "REPLAYGAIN_TRACK_GAIN", "-4.10 dB"));
+    if let Some(desc) = replaygain {
+        v.push(txxx(version, desc, "-4.10 dB"));
     }
     v.push(text(version, *b"TKEY", "8A"));
     v.push(comm(version, "", "carried byte for byte"));
@@ -312,17 +312,42 @@ pub fn frame_bytes(version: Version, f: &Frame) -> Vec<u8> {
     out
 }
 
-/// An extended header: v2.3 with a padding-size field, v2.4 with one empty flag byte.
+/// CRC-32 (ISO 3309 / ITU-T V.42, reflected polynomial 0xEDB88320), as `ID3v2` uses it.
 #[must_use]
-pub fn ext_header(version: Version, padding: usize) -> Vec<u8> {
-    match version {
-        Version::V23 => {
-            let mut v = vec![0, 0, 0, 6, 0, 0];
-            let pad = u32::try_from(padding).expect("small padding");
-            v.extend_from_slice(&pad.to_be_bytes());
+pub fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for b in bytes {
+        crc ^= u32::from(*b);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
+/// An extended header: v2.3 with a padding-size field (and a CRC-32 of the frames when `crc` is
+/// given, flag 0x8000), v2.4 with one flag byte (0x20 when `crc` is given, followed by the flag
+/// data: length byte 5 and a 35-bit syncsafe CRC-32 of frames and padding).
+#[must_use]
+pub fn ext_header(version: Version, padding: usize, crc: Option<u32>) -> Vec<u8> {
+    let pad = u32::try_from(padding).expect("small padding").to_be_bytes();
+    match (version, crc) {
+        (Version::V23, None) => [&[0, 0, 0, 6, 0, 0][..], &pad].concat(),
+        (Version::V23, Some(c)) => [&[0, 0, 0, 10, 0x80, 0][..], &pad, &c.to_be_bytes()].concat(),
+        (Version::V24, None) => vec![0, 0, 0, 6, 1, 0],
+        (Version::V24, Some(c)) => {
+            let c = u64::from(c);
+            // Size 12: size, flag-byte count, flags, then the CRC flag's data length (5) and data.
+            let mut v = vec![0, 0, 0, 12, 1, 0x20, 5];
+            // Each byte is masked to 7 bits, so the narrowing is exact.
+            #[allow(clippy::cast_possible_truncation)]
+            v.extend((0..5).rev().map(|k| ((c >> (7 * k)) & 0x7F) as u8));
             v
         }
-        Version::V24 => vec![0, 0, 0, 6, 1, 0],
     }
 }
 
@@ -351,6 +376,8 @@ pub struct Layout {
     /// Set the tag-level unsynchronisation flag 0x80 (v2.4: every frame must carry format flag
     /// 0x02 then).
     pub unsync: bool,
+    /// Put a CRC-32 into the extended header (needs `ext`).
+    pub crc: bool,
 }
 
 /// Writes a tag: header, frames, `padding` zero bytes.
@@ -362,6 +389,7 @@ pub fn tag(version: Version, frames: &[Frame], padding: usize) -> Tag {
             padding,
             ext: false,
             unsync: false,
+            crc: false,
         },
         frames,
     )
@@ -372,18 +400,6 @@ pub fn tag(version: Version, frames: &[Frame], padding: usize) -> Tag {
 pub fn tag_with(layout: Layout, frames: &[Frame]) -> Tag {
     let mut body = Vec::new();
     let mut listing = Vec::new();
-    let ext = if layout.ext {
-        let ext = ext_header(layout.version, layout.padding);
-        listing.push(Listed {
-            kind: Kind::Id3ExtHeader,
-            id: "ext-header".into(),
-            sha256: sha256_hex(&ext),
-            pad: None,
-        });
-        ext
-    } else {
-        Vec::new()
-    };
     for f in frames {
         let bytes = frame_bytes(layout.version, f);
         listing.push(Listed {
@@ -394,6 +410,25 @@ pub fn tag_with(layout: Layout, frames: &[Frame]) -> Tag {
         });
         body.extend(bytes);
     }
+    let ext = if layout.ext {
+        let crc = layout.crc.then(|| match layout.version {
+            Version::V23 => crc32(&body),
+            Version::V24 => crc32(&[&body[..], &vec![0; layout.padding]].concat()),
+        });
+        let ext = ext_header(layout.version, layout.padding, crc);
+        listing.insert(
+            0,
+            Listed {
+                kind: Kind::Id3ExtHeader,
+                id: "ext-header".into(),
+                sha256: sha256_hex(&ext),
+                pad: None,
+            },
+        );
+        ext
+    } else {
+        Vec::new()
+    };
     let major = match layout.version {
         Version::V23 => 3,
         Version::V24 => 4,

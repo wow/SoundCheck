@@ -156,8 +156,10 @@ fn frame(number: u64, block: &[i32], channels: u16, bits: u8, sample_rate: u32) 
     f
 }
 
-/// CUESHEET (not CD-DA): track 1 at sample 0 (index 1 at 0), track 2 at sample 2205 (index 0
-/// at 0, index 1 at 588, both relative to the track), lead-out track 255 at `total_samples`.
+/// CUESHEET: track 1 at sample 0 with a pregap (index 00 at 0, index 01 at 588), track 2 at
+/// sample 2205 (index 00 at 0, index 01 at 588; index offsets are relative to the track), and
+/// the lead-out track 255 at `total_samples`. The sheet is not CD-DA (flag 0), so offsets need
+/// not be multiples of 588 samples; a CD-DA sheet would require that.
 #[must_use]
 pub fn cuesheet(total_samples: u64) -> Vec<u8> {
     let mut p = vec![0_u8; 128]; // media catalog number: none
@@ -177,7 +179,7 @@ pub fn cuesheet(total_samples: u64) -> Vec<u8> {
             p.extend_from_slice(&[0_u8; 3]);
         }
     };
-    track(0, 1, &[(0, 1)]);
+    track(0, 1, &[(0, 0), (588, 1)]);
     track(2205, 2, &[(0, 0), (588, 1)]);
     track(total_samples, 255, &[]);
     p

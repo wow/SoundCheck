@@ -123,7 +123,7 @@ fn flac16_mono() -> Fixture {
 /// which an edit replaces in place.
 fn flac16_id3_wrapped() -> Fixture {
     let src = pcm::int_samples(44_100, 1, FRAMES, 16, 23);
-    let leading = id3::tag(Version::V23, &id3::frames(Version::V23, false, false), 32).bytes;
+    let leading = id3::tag(Version::V23, &id3::frames(Version::V23, false, None), 32).bytes;
     let wrap = Wrap {
         leading,
         trailing: riff::id3v1("Matrix Tone", "SoundCheck Ensemble"),
