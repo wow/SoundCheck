@@ -2,8 +2,8 @@
 //!
 //! 1. Random valid chunk soups (RIFF, RF64 with `ds64`, FORM AIFF; random printable ids,
 //!    payloads of 0..300 bytes including odd ones with random pad values, `fmt `/`data` or
-//!    `COMM`/`SSND` at random places, an optional missing pad after an odd last chunk, optional
-//!    stray bytes after the container): the walk returns exactly the generator's record and the
+//!    `COMM`/`SSND` at random places, optionally no pad after the odd last chunk or after every
+//!    odd chunk in the middle, optional stray bytes or an `ID3v1`-like tag after the container): the walk returns exactly the generator's record and the
 //!    PCM reader returns the generated samples.
 //! 2. Arbitrary bytes (raw or behind a valid container header), and random truncations and
 //!    single-byte mutations of the matrix fixtures: walk, format and PCM never panic, never read
@@ -118,6 +118,7 @@ struct Soup {
     samples: Vec<i16>,
     ssnd_offset: u8,
     omit_last_pad: bool,
+    drop_mid_pads: bool,
     trailing: Vec<u8>,
 }
 
@@ -160,11 +161,11 @@ fn soup() -> impl Strategy<Value = Soup> {
         any::<Index>(),
         prop::collection::vec(any::<i16>(), 0..120),
         0_u8..16,
-        any::<bool>(),
-        prop::collection::vec(any::<u8>(), 0..40),
+        (any::<bool>(), any::<bool>()),
+        trailing(),
     )
         .prop_map(
-            |(kind, chunks, fmt_at, data_at, mut samples, ssnd_offset, omit_last_pad, trailing)| {
+            |(kind, chunks, fmt_at, data_at, mut samples, ssnd_offset, pads, trailing)| {
                 samples.truncate(samples.len() / 2 * 2);
                 Soup {
                     kind,
@@ -173,11 +174,31 @@ fn soup() -> impl Strategy<Value = Soup> {
                     data_at,
                     samples,
                     ssnd_offset,
-                    omit_last_pad,
+                    omit_last_pad: pads.0,
+                    drop_mid_pads: pads.1,
                     trailing,
                 }
             },
         )
+}
+
+/// Bytes after the container that never form a whole chunk: none, stray bytes starting with a
+/// control byte (no chunk id starts with one), or an `ID3v1`-like tag (`TAG` and printable
+/// text, so its would-be size is far larger than the file).
+fn trailing() -> impl Strategy<Value = Vec<u8>> {
+    prop_oneof![
+        Just(Vec::new()),
+        (0_u8..0x20, prop::collection::vec(any::<u8>(), 0..40)).prop_map(|(first, rest)| {
+            let mut v = vec![first];
+            v.extend(rest);
+            v
+        }),
+        prop::collection::vec(b' '..=b'~', 125).prop_map(|text| {
+            let mut v = b"TAG".to_vec();
+            v.extend(text);
+            v
+        }),
+    ]
 }
 
 fn put_size(out: &mut Vec<u8>, size: u32, big: bool) {
@@ -263,7 +284,12 @@ fn build(s: &Soup) -> (Vec<u8>, Record) {
         );
         body.extend_from_slice(&c.payload);
         let last = i + 1 == chunks.len();
-        let pad = (len % 2 == 1 && !(last && s.omit_last_pad)).then_some(c.pad);
+        let dropped = if last {
+            s.omit_last_pad
+        } else {
+            s.drop_mid_pads
+        };
+        let pad = (len % 2 == 1 && !dropped).then_some(c.pad);
         if let Some(p) = pad {
             body.push(p);
         }
@@ -341,23 +367,42 @@ fn exercise(bytes: &[u8]) {
     }
     let mut prev_end = 12;
     for c in &table.chunks {
-        assert!(
-            c.header_offset >= prev_end,
-            "chunks in order without overlap"
-        );
+        assert_eq!(c.header_offset, prev_end, "chunks are contiguous");
         assert_eq!(c.payload.start, c.header_offset + 8);
         assert!(c.payload.start <= c.payload.end && c.end() <= len);
         assert!(c.payload_len() <= c.size_declared);
-        assert_eq!(c.pad_missing, c.size_declared % 2 == 1 && c.pad.is_none());
+        let odd = c.size_declared % 2 == 1;
+        assert!(c.pad.is_none() || odd, "a pad byte implies an odd size");
+        assert_eq!(c.pad_missing, odd && c.pad.is_none());
+        assert_eq!(c.beyond_container, c.end() > table.container_end());
         prev_end = c.end();
     }
-    if let Some(t) = &table.trailing {
-        assert!(t.start >= prev_end && t.start < t.end && t.end == len);
+    match &table.trailing {
+        // Nothing at or after `trailing.start` was walked.
+        Some(t) => assert!(t.start == prev_end && t.start < t.end && t.end == len),
+        None => assert_eq!(prev_end, len, "everything was walked"),
     }
     let Ok(format) = iff::read_format(&mut Strict::new(bytes), &table, path) else {
         return;
     };
     assert!(format.data.start <= format.data.end && format.data.end <= len);
+    let format_id = table.chunks[format.format_chunk].id;
+    assert!(&format_id == b"fmt " || &format_id == b"COMM");
+    match format.audio_chunk {
+        Some(i) => {
+            let audio = &table.chunks[i];
+            assert!(&audio.id == b"data" || &audio.id == b"SSND");
+            assert!(
+                audio.payload.start <= format.data.start,
+                "data inside its chunk"
+            );
+            assert!(
+                format.data.end <= audio.payload.end,
+                "data inside its chunk"
+            );
+        }
+        None => assert_eq!(format.frames, 0),
+    }
     assert_eq!(
         format.data.end - format.data.start,
         format.frames * u64::from(format.block_align)
@@ -425,10 +470,15 @@ proptest! {
         prop_assert_eq!(t.container, container);
         prop_assert_eq!(record_of(t), want);
         prop_assert!(!t.truncated);
-        let got = iff::read_all_int(Strict::new(&bytes), &header.format, Path::new(PATH))
+        let mut pcm = PcmReader::new(Strict::new(&bytes), &header.format, Path::new(PATH))
             .unwrap_or_else(|e| panic!("{e}"));
+        let (mut got, mut block) = (Vec::new(), Vec::new());
+        while pcm.next_block_int(&mut block).unwrap_or_else(|e| panic!("{e}")) > 0 {
+            got.extend_from_slice(&block);
+        }
         let want: Vec<i32> = s.samples.iter().map(|v| i32::from(*v)).collect();
         prop_assert_eq!(got, want);
+        prop_assert_eq!(pcm.padding_bits_nonzero(), 0);
     }
 
     #[test]

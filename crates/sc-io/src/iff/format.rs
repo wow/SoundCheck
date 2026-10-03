@@ -74,9 +74,17 @@ pub struct AudioFormat {
     pub frames_declared: Option<u64>,
     /// `COMM` and `SSND` disagree on the frame count.
     pub frames_mismatch: bool,
-    /// Byte range of exactly `frames` frames of audio (after the `SSND` offset and block-size
-    /// fields and its offset bytes; excludes any partial trailing frame).
+    /// Byte range of exactly `frames` frames of audio, inside the payload of the chunk at
+    /// `audio_chunk` (after the `SSND` offset and block-size fields and its offset bytes;
+    /// excludes any partial trailing frame). An AIFF with no frames may have no `SSND` chunk
+    /// (AIFF 1.3); its range is then empty at the end of the `COMM` payload, so the invariant
+    /// below holds without a special case and `audio_chunk` says the chunk is absent.
     pub data: Range<u64>,
+    /// Index in [`ChunkTable::chunks`] of the `fmt ` or `COMM` chunk that was decoded.
+    pub format_chunk: usize,
+    /// Index in [`ChunkTable::chunks`] of the `data` or `SSND` chunk holding `data`; `None`
+    /// only for an AIFF without frames and without `SSND`.
+    pub audio_chunk: Option<usize>,
     /// `WAVEFORMATEXTENSIBLE` `dwChannelMask`.
     pub channel_mask: Option<u32>,
     /// WAV `wFormatTag` (0x0001 PCM, 0x0003 IEEE float, 0xFFFE extensible).

@@ -41,12 +41,13 @@ pub(super) fn read<R: Read + Seek>(
     table: &ChunkTable,
 ) -> Result<AudioFormat> {
     let path = src.path();
-    let fmt = table
-        .find(b"fmt ")
+    let format_chunk = table
+        .position(b"fmt ")
         .ok_or_else(|| corrupt(path, 12, "no fmt chunk"))?;
-    let data = table
-        .find(b"data")
+    let audio_chunk = table
+        .position(b"data")
         .ok_or_else(|| corrupt(path, 12, "no data chunk"))?;
+    let (fmt, data) = (&table.chunks[format_chunk], &table.chunks[audio_chunk]);
     let mut p = [0_u8; EXTENSIBLE_BYTES];
     let n = capped(fmt.payload_len(), EXTENSIBLE_BYTES);
     if n < 16 {
@@ -100,6 +101,8 @@ pub(super) fn read<R: Read + Seek>(
         channel_mask,
         format_tag: Some(tag),
         aifc_compression: None,
+        format_chunk,
+        audio_chunk: Some(audio_chunk),
     })
 }
 

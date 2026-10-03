@@ -7,19 +7,25 @@
 //! 1.3 (1989, `FORM`/`AIFF`, `COMM` with its 80-bit IEEE 754 extended sample rate, `SSND` with
 //! offset and block size) and the Apple AIFF-C draft (1991, compression types).
 //!
-//! - [`walk`] lists every chunk with its header offset, payload byte range and pad byte, never
-//!   trusting a size: nothing is allocated from a declared size and nothing is read past the end
-//!   of the file. It tolerates what real files do: an odd-length last chunk (often `data`)
-//!   without its pad byte, stray bytes after the container (an `ID3v1` tag), a container size
-//!   that disagrees with the file length, and a file cut inside a chunk (clamped, flagged).
+//! - [`walk`] lists every chunk with its header offset, raw size field, payload byte range and
+//!   pad byte, never trusting a size: nothing is allocated from a declared size and nothing is
+//!   read past the end of the file. It tolerates what real files do: an odd-length chunk
+//!   (often `data`) without its pad byte, stray bytes after the container (an `ID3v1` tag), a
+//!   container size that disagrees with the file length (chunks past it are still walked), and
+//!   a file cut inside a chunk (clamped, flagged).
 //! - [`read_format`] decodes `fmt ` (PCM, IEEE float, extensible) or `COMM` + `SSND` into an
 //!   [`AudioFormat`] whose `data` range holds exactly the audio bytes.
-//! - [`PcmReader`] streams the samples in fixed blocks of [`BLOCK_FRAMES`] frames: integers at
-//!   their valid bit depth as `i32`, floats as `f64`.
+//! - [`PcmReader`] streams the samples in fixed blocks of [`BLOCK_FRAMES`] frames: floats as
+//!   `f64` (bit-exact), integers as `i32` at their valid bit depth. Bits below the valid depth
+//!   (container padding, which the specifications require to be zero) are dropped, and every
+//!   sample where they were not zero is counted, so a non-standard layout (a right-justified
+//!   24-in-32 file, data in padding bits) is detected rather than silently read.
 
 mod aiff;
+mod ds64;
 mod extended;
 mod format;
+mod pad;
 mod pcm;
 mod walk;
 mod wave;
@@ -36,8 +42,10 @@ pub use extended::{ExtendedRateError, sample_rate_from_extended};
 pub use format::{
     AudioFormat, MAX_SAMPLE_RATE_HZ, MIN_SAMPLE_RATE_HZ, SampleEncoding, read_format,
 };
-pub use pcm::{BLOCK_FRAMES, PcmReader, read_all_float, read_all_int};
-pub use walk::{Chunk, ChunkTable, Ds64, Ds64Entry, walk, walk_bytes};
+pub use pcm::{BLOCK_FRAMES, PcmReader};
+pub use walk::{
+    Chunk, ChunkTable, Ds64, Ds64Entry, MAX_CHUNKS, MAX_DS64_ENTRIES, walk, walk_bytes,
+};
 
 /// Path used in errors for data read from memory.
 pub const MEMORY_PATH: &str = "<memory>";

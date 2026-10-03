@@ -4,19 +4,22 @@ use std::path::Path;
 use sc_core::Error;
 
 use super::super::read_header;
-use super::super::test_build::{Form, comm, fmt, fmt_extensible, fmt_pcm, ssnd};
+use super::super::test_build::{
+    Form, comm, fmt, fmt_extensible, fmt_pcm, read_floats, read_ints, read_ints_with, ssnd,
+};
 use super::*;
 
 const PATH: &str = "t";
 
+/// The integer samples of a standard file, whose padding bits must all be zero.
 fn ints(bytes: &[u8]) -> Vec<i32> {
-    let h = read_header(&mut Cursor::new(bytes), Path::new(PATH)).unwrap();
-    read_all_int(Cursor::new(bytes), &h.format, Path::new(PATH)).unwrap()
+    let (samples, padding_nonzero) = read_ints(bytes).unwrap();
+    assert_eq!(padding_nonzero, 0);
+    samples
 }
 
 fn floats(bytes: &[u8]) -> Vec<f64> {
-    let h = read_header(&mut Cursor::new(bytes), Path::new(PATH)).unwrap();
-    read_all_float(Cursor::new(bytes), &h.format, Path::new(PATH)).unwrap()
+    read_floats(bytes).unwrap()
 }
 
 fn wav(fmt_payload: &[u8], data: &[u8]) -> Vec<u8> {
@@ -181,14 +184,7 @@ fn the_wrong_sample_kind_is_refused() {
     let r = pcm.next_block_float(&mut Vec::new());
     assert!(matches!(r, Err(Error::InvalidArgument(_))));
     let bytes = wav(&fmt(3, 1, 44_100, 4, 32), &[0; 4]);
-    let r = read_all_int(
-        Cursor::new(&bytes),
-        &read_header(&mut Cursor::new(&bytes), Path::new(PATH))
-            .unwrap()
-            .format,
-        Path::new(PATH),
-    );
-    assert!(matches!(r, Err(Error::InvalidArgument(_))));
+    assert!(matches!(read_ints(&bytes), Err(Error::InvalidArgument(_))));
 }
 
 #[test]
@@ -229,6 +225,40 @@ fn inconsistent_formats_and_short_files_are_errors() {
     }
     // The file shrank after the walk: the read fails cleanly.
     let cut = &bytes[..bytes.len() - 3];
-    let r = read_all_int(Cursor::new(cut), &good, Path::new(PATH));
+    let r = read_ints_with(cut, &good);
     assert!(matches!(r, Err(Error::Corrupt { .. })));
+}
+
+#[test]
+fn data_in_extensible_padding_bits_is_counted() {
+    // 20 valid bits in a 24-bit container; the low nibble should be zero but is not.
+    let stored = [0x0F, 0x12_3450, 0x7F_FFF3, 0];
+    let bytes = wav(&fmt_extensible(2, 48_000, 24, 20, 1), &le(&stored, 3));
+    let (samples, padding_nonzero) = read_ints(&bytes).unwrap();
+    assert_eq!(samples, [0, 0x1_2345, 0x7_FFFF, 0]);
+    assert_eq!(padding_nonzero, 2);
+}
+
+#[test]
+fn a_right_justified_24_in_32_file_is_counted() {
+    // Plain PCM, 24 bits in a 4-byte block: read as left-justified, so right-justified data
+    // (the value in the low three bytes, sign-extended) has non-zero padding bits.
+    let v24 = [-8_388_608, 8_388_607, 0x12_3456, 0x100, 0];
+    let bytes = wav(&fmt(1, 1, 44_100, 4, 24), &le(&v24, 4));
+    let (samples, padding_nonzero) = read_ints(&bytes).unwrap();
+    assert_eq!(samples, [-32_768, 32_767, 0x1234, 1, 0]);
+    assert_eq!(padding_nonzero, 2);
+    // The same values stored left-justified read back exactly with no count.
+    let left: Vec<i32> = v24.iter().map(|v| v << 8).collect();
+    assert_eq!(ints(&wav(&fmt(1, 1, 44_100, 4, 24), &le(&left, 4))), v24);
+}
+
+#[test]
+fn the_padding_mask_covers_exactly_the_bits_below_the_valid_ones() {
+    assert_eq!(padding_mask(16, 16), 0);
+    assert_eq!(padding_mask(24, 20), 0x0000_0F00);
+    assert_eq!(padding_mask(32, 24), 0x0000_00FF);
+    assert_eq!(padding_mask(16, 12), 0x000F_0000);
+    assert_eq!(padding_mask(8, 1), 0x7F00_0000);
+    assert_eq!(padding_mask(32, 1), 0x7FFF_FFFF);
 }

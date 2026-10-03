@@ -108,7 +108,10 @@ fn a_chunk_running_past_a_short_container_size_is_kept_whole() {
     // The container size stops 4 bytes into the data payload.
     let bytes = f.build_with_size(4 + 24 + 8 + 4);
     let t = walk_bytes(&bytes).unwrap();
-    assert_eq!(t.find(b"data").unwrap().payload, 44..52);
+    let data = t.find(b"data").unwrap();
+    assert_eq!(data.payload, 44..52);
+    assert!(data.beyond_container);
+    assert!(!t.find(b"fmt ").unwrap().beyond_container);
     assert_eq!(t.trailing, None);
     assert!(!t.truncated);
 }
@@ -220,7 +223,9 @@ fn rf64_sizes_come_from_ds64() {
     assert_eq!(ids(&t), ["ds64", "bext", "data"]);
     assert_eq!(t.find(b"bext").unwrap().payload_len(), 6);
     let data = t.find(b"data").unwrap();
-    assert_eq!(data.size_declared, 6);
+    assert_eq!((data.size_field, data.size_declared), (u32::MAX, 6));
+    assert_eq!(t.find(b"bext").unwrap().size_field, u32::MAX);
+    assert_eq!(t.chunks[0].size_field, 28 + 12);
     assert_eq!(data.payload.end, bytes.len() as u64);
     assert!(!t.truncated);
     assert_eq!(t.trailing, None);
@@ -252,4 +257,151 @@ fn rf64_without_ds64_is_corrupt() {
     let mut short = b"RF64\xFF\xFF\xFF\xFFWAVEds64\x08\0\0\0".to_vec();
     short.extend_from_slice(&[0; 8]);
     assert!(matches!(walk_bytes(&short), Err(Error::Corrupt { .. })));
+}
+
+/// A 24-bit mono WAV whose odd `data` chunk (3 frames) has no pad byte, followed by `next`.
+fn odd_data_then(next: &[u8], payload: &[u8]) -> Vec<u8> {
+    Form::riff()
+        .chunk(b"fmt ", &fmt_pcm(1, 44_100, 24))
+        .chunk_pad(b"data", &[1, 2, 3, 4, 5, 6, 7, 8, 9], None)
+        .chunk(next, payload)
+        .build()
+}
+
+#[test]
+fn a_missing_pad_before_list_is_not_taken_from_the_next_id() {
+    // "LIST" with size 0x68: shifted by one byte the header reads "ISTh", a valid-looking id.
+    let mut info = b"INFO".to_vec();
+    info.resize(0x68, b'x');
+    let bytes = odd_data_then(b"LIST", &info);
+    let t = walk_bytes(&bytes).unwrap();
+    assert_eq!(ids(&t), ["fmt ", "data", "LIST"]);
+    let data = t.find(b"data").unwrap();
+    assert!(data.pad.is_none() && data.pad_missing);
+    let list = t.find(b"LIST").unwrap();
+    assert_eq!(
+        (list.header_offset, list.payload_len()),
+        (data.payload.end, 0x68)
+    );
+    assert!(!t.truncated);
+    assert_eq!(t.trailing, None);
+}
+
+#[test]
+fn a_missing_pad_before_an_id3_chunk_keeps_the_tag() {
+    // "id3 " with size 0x2041: shifted by one byte the header reads "d3 A".
+    let mut tag = b"ID3\x03\0\0".to_vec();
+    tag.resize(0x2041, 0);
+    let bytes = odd_data_then(b"id3 ", &tag);
+    let t = walk_bytes(&bytes).unwrap();
+    assert_eq!(ids(&t), ["fmt ", "data", "id3 "]);
+    assert!(t.find(b"data").unwrap().pad_missing);
+    let id3 = t.find(b"id3 ").unwrap();
+    assert_eq!((id3.payload_len(), id3.pad), (0x2041, Some(0)));
+    assert!(!t.truncated);
+    assert_eq!(t.trailing, None);
+}
+
+#[test]
+fn a_printable_pad_before_a_valid_header_is_a_pad() {
+    for pad in [b'Q', b' ', b'd', 0xFF] {
+        let bytes = Form::riff()
+            .chunk_pad(b"xodd", b"abc", Some(pad))
+            .chunk(b"data", &[0; 4])
+            .build();
+        let t = walk_bytes(&bytes).unwrap();
+        assert_eq!(ids(&t), ["xodd", "data"], "pad {pad:#x}");
+        assert_eq!(t.chunks[0].pad, Some(pad));
+        assert_eq!(t.chunks[1].header_offset, 12 + 8 + 4);
+    }
+}
+
+#[test]
+fn a_missing_pad_in_aiff_is_found_too() {
+    let bytes = Form::aiff()
+        .chunk_pad(b"NAME", b"odd", None)
+        .chunk(b"ANNO", b"even")
+        .chunk_pad(b"AUTH", b"abc", None)
+        .chunk(b"SSND", &[0; 8])
+        .build();
+    let t = walk_bytes(&bytes).unwrap();
+    assert_eq!(ids(&t), ["NAME", "ANNO", "AUTH", "SSND"]);
+    assert!(t.chunks[0].pad_missing && t.chunks[2].pad_missing);
+    assert_eq!(t.trailing, None);
+}
+
+#[test]
+fn a_container_size_of_zero_still_yields_the_chunks() {
+    let bytes = Form::riff()
+        .chunk(b"fmt ", &fmt_pcm(2, 44_100, 16))
+        .chunk(b"data", &[0; 8])
+        .build_with_size(0);
+    let t = walk_bytes(&bytes).unwrap();
+    assert_eq!(t.form_size_declared, 0);
+    assert_eq!(ids(&t), ["fmt ", "data"]);
+    assert!(t.chunks.iter().all(|c| c.beyond_container));
+    assert_eq!(t.trailing, None);
+    assert!(!t.truncated);
+}
+
+#[test]
+fn an_id3_chunk_appended_after_a_stale_riff_size_is_walked() {
+    let mut bytes = Form::riff()
+        .chunk(b"fmt ", &fmt_pcm(2, 44_100, 16))
+        .chunk(b"data", &[0; 8])
+        .build();
+    let riff_end = bytes.len() as u64;
+    bytes.extend_from_slice(b"id3 \x0B\0\0\0ID3\x03\0\0\0\0\0\0x\0");
+    let id3_end = bytes.len() as u64;
+    let mut v1 = b"TAG".to_vec();
+    v1.resize(128, b'a');
+    bytes.extend_from_slice(&v1);
+    let t = walk_bytes(&bytes).unwrap();
+    assert_eq!(t.container_end(), riff_end);
+    assert_eq!(ids(&t), ["fmt ", "data", "id3 "]);
+    let id3 = t.find(b"id3 ").unwrap();
+    assert!(id3.beyond_container && !t.chunks[1].beyond_container);
+    assert_eq!(
+        (id3.payload_len(), id3.pad, id3.end()),
+        (11, Some(0), id3_end)
+    );
+    assert_eq!(t.trailing, Some(id3_end..bytes.len() as u64));
+}
+
+#[test]
+fn past_the_container_end_only_whole_chunks_count() {
+    let mut bytes = Form::riff().chunk(b"data", &[0; 4]).build();
+    let riff_end = bytes.len() as u64;
+    bytes.extend_from_slice(b"JUNK\xE8\x03\0\0 only ten");
+    let t = walk_bytes(&bytes).unwrap();
+    assert_eq!(ids(&t), ["data"]);
+    assert!(!t.truncated);
+    assert_eq!(t.trailing, Some(riff_end..bytes.len() as u64));
+}
+
+#[test]
+fn more_than_65536_chunks_is_corrupt() {
+    let empty = b"JUNK\0\0\0\0";
+    let many = |n: usize| Form::riff().raw(&empty.repeat(n)).build();
+    assert_eq!(
+        walk_bytes(&many(MAX_CHUNKS)).unwrap().chunks.len(),
+        MAX_CHUNKS
+    );
+    assert!(matches!(
+        walk_bytes(&many(MAX_CHUNKS + 1)),
+        Err(Error::Corrupt { .. })
+    ));
+}
+
+#[test]
+fn more_than_65536_ds64_entries_is_corrupt() {
+    let n = usize::try_from(MAX_DS64_ENTRIES).unwrap();
+    let entries = vec![(*b"bext", 6_u64); n + 1];
+    let count = u32::try_from(n + 1).unwrap();
+    assert!(matches!(
+        walk_bytes(&rf64(count, &entries)),
+        Err(Error::Corrupt { .. })
+    ));
+    let t = walk_bytes(&rf64(count - 1, &entries[..n])).unwrap();
+    assert_eq!(t.ds64.unwrap().table.len(), n);
 }

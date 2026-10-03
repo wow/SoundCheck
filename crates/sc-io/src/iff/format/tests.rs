@@ -284,5 +284,22 @@ fn aiff_without_frames_needs_no_ssnd() {
         .chunk(b"COMM", &comm(2, 0, 16, 44_100, None))
         .build();
     let f = format_of(&bytes);
-    assert_eq!((f.frames, f.data), (0, 0..0));
+    // FORM header 12 + COMM header 8 + 18 bytes: an empty range at the end of COMM.
+    assert_eq!((f.frames, f.data), (0, 38..38));
+    assert_eq!((f.format_chunk, f.audio_chunk), (0, None));
+}
+
+#[test]
+fn the_chunks_used_are_recorded_by_index() {
+    let bytes = Form::riff()
+        .chunk(b"JUNK", &[0; 4])
+        .chunk(b"data", &[0; 8])
+        .chunk(b"LIST", b"INFO")
+        .chunk(b"fmt ", &fmt_pcm(2, 44_100, 16))
+        .build();
+    let f = format_of(&bytes);
+    assert_eq!((f.format_chunk, f.audio_chunk), (3, Some(1)));
+    let bytes = aiff(&comm(1, 3, 16, 44_100, None), &ssnd(0, &[0; 6]));
+    let f = format_of(&bytes);
+    assert_eq!((f.format_chunk, f.audio_chunk), (0, Some(1)));
 }

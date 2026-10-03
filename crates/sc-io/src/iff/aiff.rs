@@ -26,9 +26,10 @@ pub(super) fn read<R: Read + Seek>(
     table: &ChunkTable,
 ) -> Result<AudioFormat> {
     let path = src.path();
-    let comm = table
-        .find(b"COMM")
+    let format_chunk = table
+        .position(b"COMM")
         .ok_or_else(|| corrupt(path, 12, "no COMM chunk"))?;
+    let comm = &table.chunks[format_chunk];
     let aifc = table.container == Container::Aifc;
     let need = if aifc { COMM_AIFC_BYTES } else { COMM_BYTES };
     let mut p = [0_u8; COMM_AIFC_BYTES];
@@ -85,7 +86,13 @@ pub(super) fn read<R: Read + Seek>(
                 format!("{channels} channels of {container_bits} bits"),
             )
         })?;
-    let (frames, data, mismatch) = sound_data(src, table, block_align, frames_declared)?;
+    let audio_chunk = table.position(b"SSND");
+    let (frames, data, mismatch) = match audio_chunk {
+        Some(i) => sound_data(src, &table.chunks[i], block_align, frames_declared)?,
+        // AIFF 1.3: the SSND chunk may be absent when numSampleFrames is zero.
+        None if frames_declared == 0 => (0, comm.payload.end..comm.payload.end, false),
+        None => return Err(corrupt(path, 12, "no SSND chunk")),
+    };
     Ok(AudioFormat {
         sample_rate,
         channels,
@@ -100,24 +107,19 @@ pub(super) fn read<R: Read + Seek>(
         channel_mask: None,
         format_tag: None,
         aifc_compression: compression,
+        format_chunk,
+        audio_chunk,
     })
 }
 
 /// Frames, audio byte range and whether `COMM` disagrees with `SSND`.
 fn sound_data<R: Read + Seek>(
     src: &mut Source<'_, R>,
-    table: &ChunkTable,
+    ssnd: &Chunk,
     block_align: u16,
     frames_declared: u64,
 ) -> Result<(u64, std::ops::Range<u64>, bool)> {
     let path = src.path();
-    let Some(ssnd) = table.find(b"SSND") else {
-        // AIFF 1.3: the SSND chunk may be absent when numSampleFrames is zero.
-        if frames_declared == 0 {
-            return Ok((0, 0..0, false));
-        }
-        return Err(corrupt(path, 12, "no SSND chunk"));
-    };
     if ssnd.payload_len() < SSND_FIELDS_BYTES {
         return Err(corrupt(
             path,

@@ -4,9 +4,15 @@
 //!
 //! Units: integer samples are returned as `i32` holding the stored value at its valid bit depth
 //! (a 24-bit sample is in -8388608..=8388607; 24 valid bits in a 32-bit container are shifted
-//! down by 8; WAV 8-bit offset binary becomes -128..=127), never rescaled. Float samples are
-//! returned as `f64` holding the stored value exactly (an `f32` widens losslessly), nominal
-//! full scale -1.0..1.0 but not clamped. Blocks are interleaved, `channels` values per frame.
+//! down by 8; WAV 8-bit offset binary becomes -128..=127), never rescaled. Both specifications
+//! store the valid bits left-justified with the padding bits below them set to zero; the
+//! padding bits are dropped, and every sample whose padding bits are not zero is counted
+//! ([`PcmReader::padding_bits_nonzero`]). A non-zero count means a non-standard layout (data
+//! in the padding bits, or a right-justified 24-in-32 file that would read 256 times too
+//! quiet), so the samples are not what the file means; the renderer refuses such files.
+//! Float samples are returned as `f64` holding the stored value exactly (an `f32` widens
+//! losslessly), nominal full scale -1.0..1.0 but not clamped. Blocks are interleaved,
+//! `channels` values per frame.
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -28,6 +34,10 @@ pub struct PcmReader<R> {
     width: usize,
     /// Right shift that brings a left-aligned `i32` to the valid bit depth.
     shift: u32,
+    /// The container's padding bits within a left-aligned `i32` (0 when there are none).
+    padding_mask: i32,
+    /// Samples read so far whose padding bits were not zero.
+    padding_nonzero: u64,
     channels: usize,
     block_align: usize,
     block_frames: usize,
@@ -75,6 +85,8 @@ impl<R: Read + Seek> PcmReader<R> {
             encoding: format.encoding,
             width,
             shift: 32 - u32::from(format.valid_bits).min(32),
+            padding_mask: padding_mask(format.bits_per_sample, format.valid_bits),
+            padding_nonzero: 0,
             channels,
             block_align,
             block_frames,
@@ -93,6 +105,13 @@ impl<R: Read + Seek> PcmReader<R> {
     #[must_use]
     pub fn frames_remaining(&self) -> u64 {
         self.frames_left
+    }
+
+    /// Integer samples read so far whose padding bits (below the valid bits, inside the
+    /// container) were not zero; always 0 for floats and for samples without padding bits.
+    #[must_use]
+    pub fn padding_bits_nonzero(&self) -> u64 {
+        self.padding_nonzero
     }
 
     /// Size of the internal block buffer, bytes: never more than the audio bytes in the file.
@@ -117,18 +136,23 @@ impl<R: Read + Seek> PcmReader<R> {
         let bytes = &self.buf[..frames * self.block_align];
         out.clear();
         out.resize(frames * self.channels, 0);
-        let s = self.shift;
-        match (self.encoding, self.width) {
-            (SampleEncoding::UnsignedInt8, _) => fill_int::<1, false>(bytes, out, s, 0x80),
-            (SampleEncoding::IntLe, 1) => fill_int::<1, false>(bytes, out, s, 0),
-            (SampleEncoding::IntLe, 2) => fill_int::<2, false>(bytes, out, s, 0),
-            (SampleEncoding::IntLe, 3) => fill_int::<3, false>(bytes, out, s, 0),
-            (SampleEncoding::IntLe, _) => fill_int::<4, false>(bytes, out, s, 0),
-            (SampleEncoding::IntBe, 1) => fill_int::<1, true>(bytes, out, s, 0),
-            (SampleEncoding::IntBe, 2) => fill_int::<2, true>(bytes, out, s, 0),
-            (SampleEncoding::IntBe, 3) => fill_int::<3, true>(bytes, out, s, 0),
-            _ => fill_int::<4, true>(bytes, out, s, 0),
-        }
+        let d = Decode {
+            shift: self.shift,
+            mask: self.padding_mask,
+            flip: 0,
+        };
+        let u8_d = Decode { flip: 0x80, ..d };
+        self.padding_nonzero += match (self.encoding, self.width) {
+            (SampleEncoding::UnsignedInt8, _) => fill_int::<1, false>(bytes, out, u8_d),
+            (SampleEncoding::IntLe, 1) => fill_int::<1, false>(bytes, out, d),
+            (SampleEncoding::IntLe, 2) => fill_int::<2, false>(bytes, out, d),
+            (SampleEncoding::IntLe, 3) => fill_int::<3, false>(bytes, out, d),
+            (SampleEncoding::IntLe, _) => fill_int::<4, false>(bytes, out, d),
+            (SampleEncoding::IntBe, 1) => fill_int::<1, true>(bytes, out, d),
+            (SampleEncoding::IntBe, 2) => fill_int::<2, true>(bytes, out, d),
+            (SampleEncoding::IntBe, 3) => fill_int::<3, true>(bytes, out, d),
+            _ => fill_int::<4, true>(bytes, out, d),
+        };
         Ok(frames)
     }
 
@@ -180,23 +204,48 @@ impl<R: Read + Seek> PcmReader<R> {
     }
 }
 
+/// The padding bits of a `container_bits`-bit container holding `valid_bits` bits, as they sit
+/// in an `i32` with the container left-aligned: the `container_bits - valid_bits` bits just below
+/// the valid ones.
+fn padding_mask(container_bits: u16, valid_bits: u16) -> i32 {
+    let container = u32::from(container_bits).min(32);
+    let valid = u32::from(valid_bits).min(container);
+    let below_valid = (1_u64 << (32 - valid)) - 1;
+    let below_container = (1_u64 << (32 - container)) - 1;
+    let mask = u32::try_from(below_valid & !below_container).unwrap_or(0);
+    i32::from_ne_bytes(mask.to_ne_bytes())
+}
+
+/// How [`fill_int`] turns a left-aligned container into a sample.
+#[derive(Clone, Copy)]
+struct Decode {
+    /// Arithmetic right shift to the valid depth (sign-extends).
+    shift: u32,
+    /// Padding bits to check.
+    mask: i32,
+    /// XOR on the most significant byte (0x80 turns offset binary into two's complement).
+    flip: u8,
+}
+
 /// Decodes `W`-byte integers: the bytes go to the top of an `i32` (most significant first),
-/// `flip` turns offset binary into two's complement, an arithmetic shift drops the container
-/// padding and sign-extends.
-fn fill_int<const W: usize, const BIG: bool>(bytes: &[u8], out: &mut [i32], shift: u32, flip: u8) {
+/// then [`Decode`] applies. Returns the samples whose padding bits were not zero.
+fn fill_int<const W: usize, const BIG: bool>(bytes: &[u8], out: &mut [i32], d: Decode) -> u64 {
+    let mut nonzero = 0_u64;
     for (c, o) in bytes.as_chunks::<W>().0.iter().zip(out.iter_mut()) {
         let mut a = [0_u8; 4];
         let v = if BIG {
             a[..W].copy_from_slice(c);
-            a[0] ^= flip;
+            a[0] ^= d.flip;
             i32::from_be_bytes(a)
         } else {
             a[4 - W..].copy_from_slice(c);
-            a[3] ^= flip;
+            a[3] ^= d.flip;
             i32::from_le_bytes(a)
         };
-        *o = v >> shift;
+        nonzero += u64::from(v & d.mask != 0);
+        *o = v >> d.shift;
     }
+    nonzero
 }
 
 fn fill_f32<const BIG: bool>(bytes: &[u8], out: &mut [f64]) {
@@ -219,42 +268,6 @@ fn fill_f64<const BIG: bool>(bytes: &[u8], out: &mut [f64]) {
             f64::from_le_bytes(a)
         };
     }
-}
-
-/// Every integer sample of a file, interleaved (wraps [`PcmReader::next_block_int`]).
-///
-/// # Errors
-/// As for [`PcmReader::new`] and [`PcmReader::next_block_int`].
-pub fn read_all_int<R: Read + Seek>(
-    reader: R,
-    format: &AudioFormat,
-    path: &Path,
-) -> Result<Vec<i32>> {
-    let mut pcm = PcmReader::new(reader, format, path)?;
-    let mut all = Vec::new();
-    let mut block = Vec::new();
-    while pcm.next_block_int(&mut block)? > 0 {
-        all.extend_from_slice(&block);
-    }
-    Ok(all)
-}
-
-/// Every float sample of a file, interleaved (wraps [`PcmReader::next_block_float`]).
-///
-/// # Errors
-/// As for [`PcmReader::new`] and [`PcmReader::next_block_float`].
-pub fn read_all_float<R: Read + Seek>(
-    reader: R,
-    format: &AudioFormat,
-    path: &Path,
-) -> Result<Vec<f64>> {
-    let mut pcm = PcmReader::new(reader, format, path)?;
-    let mut all = Vec::new();
-    let mut block = Vec::new();
-    while pcm.next_block_float(&mut block)? > 0 {
-        all.extend_from_slice(&block);
-    }
-    Ok(all)
 }
 
 #[cfg(test)]

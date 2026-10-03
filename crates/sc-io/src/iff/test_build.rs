@@ -163,3 +163,39 @@ pub fn ssnd(offset: u32, audio: &[u8]) -> Vec<u8> {
     p.extend_from_slice(audio);
     p
 }
+
+/// Every integer sample of a file in memory and the count of samples with non-zero padding
+/// bits.
+pub fn read_ints(bytes: &[u8]) -> sc_core::Result<(Vec<i32>, u64)> {
+    use std::io::Cursor;
+    let path = std::path::Path::new("t");
+    let format = super::read_header(&mut Cursor::new(bytes), path)?.format;
+    read_ints_with(bytes, &format)
+}
+
+/// As [`read_ints`] with a given format.
+pub fn read_ints_with(
+    bytes: &[u8],
+    format: &super::AudioFormat,
+) -> sc_core::Result<(Vec<i32>, u64)> {
+    let path = std::path::Path::new("t");
+    let mut pcm = super::PcmReader::new(std::io::Cursor::new(bytes), format, path)?;
+    let (mut all, mut block) = (Vec::new(), Vec::new());
+    while pcm.next_block_int(&mut block)? > 0 {
+        all.extend_from_slice(&block);
+    }
+    Ok((all, pcm.padding_bits_nonzero()))
+}
+
+/// Every float sample of a file in memory.
+pub fn read_floats(bytes: &[u8]) -> sc_core::Result<Vec<f64>> {
+    use std::io::Cursor;
+    let path = std::path::Path::new("t");
+    let format = super::read_header(&mut Cursor::new(bytes), path)?.format;
+    let mut pcm = super::PcmReader::new(Cursor::new(bytes), &format, path)?;
+    let (mut all, mut block) = (Vec::new(), Vec::new());
+    while pcm.next_block_float(&mut block)? > 0 {
+        all.extend_from_slice(&block);
+    }
+    Ok(all)
+}
