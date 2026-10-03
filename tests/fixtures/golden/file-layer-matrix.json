@@ -1,0 +1,2223 @@
+{
+  "schema": 3,
+  "fixtures": [
+    {
+      "name": "wav16-info-id3v23-pad512",
+      "bytes": 81678,
+      "sha256": "c37fbc23e5c4cfed46d493185a2fbdd21dd7c6fcdfeddc2b772fe1a266b12af1",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "3b9b8f3ae2f92cd966db8fa02134f6f6b7ac1db3a8a7734c053c17e45d14d12b",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "LIST",
+          "sha256": "0f9f48b7ead5238707dda4ab573d75edb45c6ec63b01171e7bb2b472dc050bea",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "id3 ",
+          "sha256": "e848f72d5a1c639edba72169c38c382b13604931f57920b3b91eb3a9fd3b00cb",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TIT2",
+          "sha256": "dbc53838a76b83266d4ca0fd954f5e38c1a1a9fc07d07cf3a85136fd8dd1cf26",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TPE1",
+          "sha256": "78c8972733b40574a10d80ec674e50a66e43c686fda8ca1b7d353b97977d4036",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TBPM",
+          "sha256": "2a09dc367cbde48a7ab12d4e1a26d3be32de235f26684a63e72473a2114662ed",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:REPLAYGAIN_TRACK_GAIN",
+          "sha256": "c85c3973473cc766e72ece805d6628cf8b8234ec3a0a60ebc0eadd78edd4d5e3",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TKEY",
+          "sha256": "7db7eb995c17cfb1612babbc80c50bfd733deb7e861afeea4a5afd05e1e7a9d2",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "COMM",
+          "sha256": "d5fd64d8028c568086a1a4fe276ff92a97b8e8b69de5da60a4307f2a25822945",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:SOURCE",
+          "sha256": "9a9a182f31521a8e0a492c3c0696a43f6be83751a44259eca871e73d85c5870e",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "APIC",
+          "sha256": "2eb33133c2cf548b8ef05cbb9ad6d34ce6f1e2a926fe919139a0db6d3245807c",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "PRIV:WM/MediaClassPrimaryID",
+          "sha256": "01554ee1dda7b20db4cbf10a40cad080e2aae70940fdf9b5ac069c18928882ca",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "GEOB:Serato Autotags",
+          "sha256": "240650fba37ef2e6d2df1238b616eb6105361f00f09b87a0282b0101b38e9882",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "GEOB:Serato Markers2",
+          "sha256": "2b8a96b889f6eeabfdab6c1019be4aa89b6be627c26c81d25c55075bfc13a735",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "GEOB:Serato BeatGrid",
+          "sha256": "bf0780ff5e5ff1e367720894134ba241868066e8eff084452c6b28f43cb56f80",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "6be477e343a203421b14ebddc37cb6289f7e995f27ec4aa488dfb4ab2c35b517",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "bytes": 122068,
+      "sha256": "e57c52f23eb9438baaa128fb8ba7a277257d6aa9ee91930966f4f99843ca2ce9",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 24,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "bext",
+          "sha256": "f27398c6d276bdbc5ec768dc50f757cce16d3c33e1d099a50191657cd5650008",
+          "pad": 0,
+          "expect": "patched",
+          "fields": [
+            "TimeReference",
+            "Version",
+            "LoudnessValue",
+            "LoudnessRange",
+            "MaxTruePeakLevel",
+            "MaxMomentaryLoudness",
+            "MaxShortTermLoudness"
+          ]
+        },
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "6a6e02c319b7ce0325b46d9f90c8b23cf122a1caee08b653e5ead51b6cad693c",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "iXML",
+          "sha256": "1ac182c6393979d493f8fd1cf310799c9ecb7e3ddcc8e47160cd951c969b71cd",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "cue ",
+          "sha256": "b0ac4856e83cca9f323b10a11e4a2f898588605e9dd2a4547fab6725989f076c",
+          "expect": "patched",
+          "fields": [
+            "dwPosition",
+            "dwSampleOffset"
+          ]
+        },
+        {
+          "kind": "chunk",
+          "id": "smpl",
+          "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495",
+          "expect": "patched",
+          "fields": [
+            "dwStart",
+            "dwEnd"
+          ]
+        },
+        {
+          "kind": "chunk",
+          "id": "ID3 ",
+          "sha256": "fa74fede203e7e9f0d58f6dd612802dcf8181bfcde10f57c79577bec0e604301",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TIT2",
+          "sha256": "39f7d7d99bb2571346c59b74f4507ad5990a12863d28738d325ce46cc4902bc1",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TPE1",
+          "sha256": "7a7eaf4699cba0fa9267d19f758bb704d22465aa4cb85eb26b60bf17d03c78c5",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TBPM",
+          "sha256": "4b6d7837d358f88cae55c8781c48c52eaef939140ef56428fd06353559d9bbdf",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:replaygain_track_gain",
+          "sha256": "e516b0e92efe20dd5e780b4f79906621a0548400d213aebc381c49ce28b7b800",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TKEY",
+          "sha256": "170a1d69d8c6b4dbb7d93812936d5c083414a37e08f8035a8e42ed8c1511f5aa",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "COMM",
+          "sha256": "9df97eacd27127db4f0670cb331924f980be7beb72c556582b831cd46d345a73",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:SOURCE",
+          "sha256": "eb4d84529352b82cdf0bdf7b46d9fcf5c22f88fcc41eaccff75e7b592be6c70b",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "APIC",
+          "sha256": "2eb33133c2cf548b8ef05cbb9ad6d34ce6f1e2a926fe919139a0db6d3245807c",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "PRIV:WM/MediaClassPrimaryID",
+          "sha256": "01554ee1dda7b20db4cbf10a40cad080e2aae70940fdf9b5ac069c18928882ca",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "GEOB:Serato Autotags",
+          "sha256": "240650fba37ef2e6d2df1238b616eb6105361f00f09b87a0282b0101b38e9882",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "GEOB:Serato Markers2",
+          "sha256": "49b966926067ba1f047a1fe88c04304d20c4537fe78a61bf05f8bbb8c69e4878",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "GEOB:Serato BeatGrid",
+          "sha256": "bf0780ff5e5ff1e367720894134ba241868066e8eff084452c6b28f43cb56f80",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "xodd",
+          "sha256": "4b8d81778556b66c32605f7315e2fb1a2a07309c607b70c1c833b7ef1d520b5f",
+          "pad": 32,
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "8cfbb89507bcbe066cea493f7e52451613e1df2c3ca49f766fd6d43b29e14a47",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "wav24-extensible-bext-v1-fact",
+      "bytes": 120762,
+      "sha256": "12a46e9777d58ad6149fcd707b3c7066ed8e3bcb39db329f8ec60f5426a36bcb",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 24,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "JUNK",
+          "sha256": "3addfb141cd7c9c4c6543a82191a3707ac29c7a041217782e61d4d91c691aee8",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "bext",
+          "sha256": "d4c88c4ba861d78aa75d73378276635e89381aafa381cce7169fce2bd19cc66e",
+          "expect": "patched",
+          "fields": [
+            "TimeReference",
+            "Version",
+            "LoudnessValue",
+            "LoudnessRange",
+            "MaxTruePeakLevel",
+            "MaxMomentaryLoudness",
+            "MaxShortTermLoudness"
+          ]
+        },
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "d3eb435f79c7c569564ffddae7bde343e9eb8fdf282aeb4ff9988a28ce9f648f",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "fact",
+          "sha256": "7675d751523648d13d45b6b1e904054baa8dc8f3705ed896432498e86aaee36a",
+          "expect": "patched",
+          "fields": [
+            "dwSampleLength"
+          ]
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "505d41f19985416e0020a107b38b7080a8ecd4020bac23cedcbbfafb642788af",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "wav-float32-fact",
+      "bytes": 160058,
+      "sha256": "530696330d4fe9e0c5580a57f8991dd6070e0225476d47e9116c86a24860f33d",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 32,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "9c9f6464f077974082f84a0f7e7a940f16c77c345d467a4554230d1da4eb4e1a",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "fact",
+          "sha256": "7675d751523648d13d45b6b1e904054baa8dc8f3705ed896432498e86aaee36a",
+          "expect": "dropped",
+          "reason": "fact describes non-PCM data; the output is integer PCM"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "20721e8c7c3242d0811b3e8bcdbe78a9d62439418a263b1a93bebafd60991a71",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "wav-float32-mono-over-full-scale",
+      "bytes": 80058,
+      "sha256": "4f66196ea5848f84332b6ce796cfd139357b78566b92d801157fb097e1cb4ac4",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 1,
+      "bits": 32,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "c931a4f976ff2dd648ecc0d47cf4c3bbbd421dc45eebb342e9aec67548115e01",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "fact",
+          "sha256": "7675d751523648d13d45b6b1e904054baa8dc8f3705ed896432498e86aaee36a",
+          "expect": "dropped",
+          "reason": "fact describes non-PCM data; the output is integer PCM"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "698a797447853336bf08c5dca7b3e6acbba929eae2e7a66d33e94c04bdaaca47",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "wav16-chunks-after-data-odd-last",
+      "bytes": 81140,
+      "sha256": "703915ae00506d66b748733b06dc53e35386fefc01616b4549f1464162c88679",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "3b9b8f3ae2f92cd966db8fa02134f6f6b7ac1db3a8a7734c053c17e45d14d12b",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "b8275547be4ff214e3d4dfba5f378f3ca84f1f5d3808a4ee4e8bfec66e4564f3",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "id3 ",
+          "sha256": "fc48d0d5a735236400ae001ed8e6582424ec3b6be27133e66342e85933f7e322",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TIT2",
+          "sha256": "dbc53838a76b83266d4ca0fd954f5e38c1a1a9fc07d07cf3a85136fd8dd1cf26",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TPE1",
+          "sha256": "78c8972733b40574a10d80ec674e50a66e43c686fda8ca1b7d353b97977d4036",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TBPM",
+          "sha256": "2a09dc367cbde48a7ab12d4e1a26d3be32de235f26684a63e72473a2114662ed",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TKEY",
+          "sha256": "7db7eb995c17cfb1612babbc80c50bfd733deb7e861afeea4a5afd05e1e7a9d2",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "COMM",
+          "sha256": "d5fd64d8028c568086a1a4fe276ff92a97b8e8b69de5da60a4307f2a25822945",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:SOURCE",
+          "sha256": "9a9a182f31521a8e0a492c3c0696a43f6be83751a44259eca871e73d85c5870e",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "APIC",
+          "sha256": "2eb33133c2cf548b8ef05cbb9ad6d34ce6f1e2a926fe919139a0db6d3245807c",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "PRIV:WM/MediaClassPrimaryID",
+          "sha256": "01554ee1dda7b20db4cbf10a40cad080e2aae70940fdf9b5ac069c18928882ca",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "GEOB:Serato Autotags",
+          "sha256": "240650fba37ef2e6d2df1238b616eb6105361f00f09b87a0282b0101b38e9882",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "GEOB:Serato Markers2",
+          "sha256": "2b8a96b889f6eeabfdab6c1019be4aa89b6be627c26c81d25c55075bfc13a735",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "GEOB:Serato BeatGrid",
+          "sha256": "bf0780ff5e5ff1e367720894134ba241868066e8eff084452c6b28f43cb56f80",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "LIST",
+          "sha256": "0f9f48b7ead5238707dda4ab573d75edb45c6ec63b01171e7bb2b472dc050bea",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "xodd",
+          "sha256": "4b8d81778556b66c32605f7315e2fb1a2a07309c607b70c1c833b7ef1d520b5f",
+          "pad": 0,
+          "expect": "carried"
+        }
+      ]
+    },
+    {
+      "name": "wav24-mono-odd-data-no-pad-id3v1",
+      "bytes": 60169,
+      "sha256": "1dd50b04de279642334c808100c99a330e338d210e5bc1fcd401ea55957e2c99",
+      "frames": 19999,
+      "sample_rate": 44100,
+      "channels": 1,
+      "bits": 24,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "fc6d7c3c47ed8d7189eb8f3e38ad075e3a2d09b743becbb1917d0e0ba163d031",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "fa0675d33ea5ce807dd62cc24e398f703045e3dd163a853aa7ccf33101cd430d",
+          "expect": "replaced"
+        },
+        {
+          "kind": "trailing",
+          "id": "trailing",
+          "sha256": "36095fca4523857b15e2975ef864561c98d8c56f0852b39f56eca19440e1a18b",
+          "expect": "carried"
+        }
+      ]
+    },
+    {
+      "name": "rf64-24-48k",
+      "bytes": 120740,
+      "sha256": "230f84a488b8774512e78852a624efa477211351da1db91e8504703bff8676fe",
+      "frames": 20000,
+      "sample_rate": 48000,
+      "channels": 2,
+      "bits": 24,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "ds64",
+          "sha256": "cf449fbf94d0e8b3df4bd40b6864637e5c96bafc0676a51e3233d00f93fb8b8f",
+          "expect": "dropped",
+          "reason": "RF64 input is written as RIFF/WAVE, which has no ds64"
+        },
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "45e617ceb1057c44459f38ea2111b9a400d6dedcc478b9b7cb155b2281d40137",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "bext",
+          "sha256": "67f28edf7d3af393085c793b7cb1c5e14cf30944c544399b3a98a8e95a4a4676",
+          "pad": 0,
+          "expect": "patched",
+          "fields": [
+            "TimeReference",
+            "Version",
+            "LoudnessValue",
+            "LoudnessRange",
+            "MaxTruePeakLevel",
+            "MaxMomentaryLoudness",
+            "MaxShortTermLoudness"
+          ]
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "ed4ca775832b26faadaeb0a86ee40ede45047c1db9e577d2fb5c29dcc88f241f",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "wav16-mono",
+      "bytes": 40044,
+      "sha256": "f33b768ff5f9a7734af0570ff6df5ddadb8037ddba91d5497f10919b4a0af86b",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 1,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "3beeeb72b2810efb96fb1d86fc633d64d10fb1b4f1cb2f22878aba0495ccd05d",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "9920fba12e5449c6d961f59c1a42d4e2f1451c0f9412e21d03215f9f5c038021",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "wav16-mono-bext-v0",
+      "bytes": 40682,
+      "sha256": "8cec807656e4817b12a98e75f7f36f98e9f598685f9dc27fdd9856877a9411ec",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 1,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "3beeeb72b2810efb96fb1d86fc633d64d10fb1b4f1cb2f22878aba0495ccd05d",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "bext",
+          "sha256": "4f6648fa454f307077f642848f0b42cd222694cf470e5a2eff6b26129b2647f1",
+          "pad": 0,
+          "expect": "patched",
+          "fields": [
+            "TimeReference",
+            "Version",
+            "LoudnessValue",
+            "LoudnessRange",
+            "MaxTruePeakLevel",
+            "MaxMomentaryLoudness",
+            "MaxShortTermLoudness"
+          ]
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "cd813072c91f82be7c45f53e70d9cefc433081fa3262402faf1ec15af702e19c",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "wav16-mono-smpl-loop-in-head",
+      "bytes": 40112,
+      "sha256": "3d839cdfada3df8b26cb799963c77c1135f475739eb81a29cbe1395dd7a67856",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 1,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "3beeeb72b2810efb96fb1d86fc633d64d10fb1b4f1cb2f22878aba0495ccd05d",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "smpl",
+          "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018",
+          "expect": "patched",
+          "fields": [
+            "dwStart",
+            "dwEnd"
+          ]
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "109508a77deaf0589ba7bbb3d1dff762f860a4d0ffbbec4147ce1eed8c83461f",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "wav16-mono-two-id3-chunks-ext-headers",
+      "bytes": 40644,
+      "sha256": "10d6a2ee0351094ab62318669e221a56713ba86c2fe9ee7076ee435042d7a3ab",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 1,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "3beeeb72b2810efb96fb1d86fc633d64d10fb1b4f1cb2f22878aba0495ccd05d",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "id3 ",
+          "sha256": "beb485d9041c4b5df0a7fb98959cdb105cc77cf6f388a36139f59dc9738a9d07",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-ext-header",
+          "id": "ext-header",
+          "sha256": "a9148b2795027368b664611c0b0b5558506cc53b857b89ba461b90088813e2c6",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TIT2",
+          "sha256": "dbc53838a76b83266d4ca0fd954f5e38c1a1a9fc07d07cf3a85136fd8dd1cf26",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TPE1",
+          "sha256": "78c8972733b40574a10d80ec674e50a66e43c686fda8ca1b7d353b97977d4036",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TBPM",
+          "sha256": "2a09dc367cbde48a7ab12d4e1a26d3be32de235f26684a63e72473a2114662ed",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:REPLAYGAIN_TRACK_GAIN",
+          "sha256": "c85c3973473cc766e72ece805d6628cf8b8234ec3a0a60ebc0eadd78edd4d5e3",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TKEY",
+          "sha256": "7db7eb995c17cfb1612babbc80c50bfd733deb7e861afeea4a5afd05e1e7a9d2",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "COMM",
+          "sha256": "d5fd64d8028c568086a1a4fe276ff92a97b8e8b69de5da60a4307f2a25822945",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:SOURCE",
+          "sha256": "9a9a182f31521a8e0a492c3c0696a43f6be83751a44259eca871e73d85c5870e",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "APIC",
+          "sha256": "2eb33133c2cf548b8ef05cbb9ad6d34ce6f1e2a926fe919139a0db6d3245807c",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "PRIV:WM/MediaClassPrimaryID",
+          "sha256": "01554ee1dda7b20db4cbf10a40cad080e2aae70940fdf9b5ac069c18928882ca",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "ID3 ",
+          "sha256": "54069c9f5be6bb33c5bdb114a51951610230a4f6d4b320773212bd360f50b3a2",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-ext-header",
+          "id": "ext-header",
+          "sha256": "9353580b4ec8e21a6109a306331ebb86c32b9e0bef6df93b2601e7fe2ff24c16",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TIT2",
+          "sha256": "6ee49b2b56e93c12cd16e466ef7fe3b53323397ed66ccda7f3e764e5b85a9d8c",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:SOURCE",
+          "sha256": "977cc8531c7c7b74f887b12aefd8abeb36a191d329342209bce4ac15a7dccec3",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "9d591d237e28426cee8a482495bc7d0a3a8f87772c07dfa6aef0840d75c2eb08",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "wav16-mono-id3v24-frame-flags",
+      "bytes": 40246,
+      "sha256": "095cfae14cc34203d7f089d68b168b34d1e5046227a8902fb1bcc9cab90e0d7f",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 1,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "3beeeb72b2810efb96fb1d86fc633d64d10fb1b4f1cb2f22878aba0495ccd05d",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "ID3 ",
+          "sha256": "59c515420a8de04bd5df8f2ec12ad5280ea23c640a5062223bbc0782af9bf2e9",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TIT2",
+          "sha256": "39f7d7d99bb2571346c59b74f4507ad5990a12863d28738d325ce46cc4902bc1",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "PRIV:com.example.flags",
+          "sha256": "5b8f33ef301cce9bf7fe026dd3c847bc600f1a9bfdc1294059ef19f26bc72197",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:DLI",
+          "sha256": "5e777616be005b154534261232e91d60a0b0bc1046aaf995cf083d950b08d490",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TBPM",
+          "sha256": "4b6d7837d358f88cae55c8781c48c52eaef939140ef56428fd06353559d9bbdf",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "2f36c07fff682a9bf38af257135d1e04f44467428805befba6b73acdcb4fc062",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "wav16-mono-id3v24-tag-unsync",
+      "bytes": 40170,
+      "sha256": "8d824f56852572a740e133276f42ac6a1e5dad8219d5702319ce7e7ad6ff678a",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 1,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "3beeeb72b2810efb96fb1d86fc633d64d10fb1b4f1cb2f22878aba0495ccd05d",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "ID3 ",
+          "sha256": "a2c5f8076c704f4af59280d496730142309ec9e072b1ab6ad5659d7e158f1b6f",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TIT2",
+          "sha256": "2fd4fd5600f94a7d4287cc3e512a131c5e27806c14e3436b31042f8f0e3495a6",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TBPM",
+          "sha256": "0b6ede1b182229a49894c4fa398691197bad73bb1f59f51278ab50b9a655eb0d",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "PRIV:com.example.flags",
+          "sha256": "52e354c5b2765437cd6909421d0528d0fbc1b8127c1a7106982c54de160097d6",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "af5e0e363eb3874e48b371f3e1f4a06726e01beb0cdc712f4645e02dcd6606b1",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "wav16-mono-id3v24-ext-crc",
+      "bytes": 40162,
+      "sha256": "e9c4f6abec8fce9b57625ebe4d01f184d80f14a929f1111e8a7e74103bb68a41",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 1,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "3beeeb72b2810efb96fb1d86fc633d64d10fb1b4f1cb2f22878aba0495ccd05d",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "ID3 ",
+          "sha256": "0d3c53d8148cc299643e4ebee1beb592f99c00a700071e9f33fd2ebdd7c9d419",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-ext-header",
+          "id": "ext-header",
+          "sha256": "89621a060a6528f5fbd265bf7d5295d73788d9718eb93148194cb865cafa34f4",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TIT2",
+          "sha256": "39f7d7d99bb2571346c59b74f4507ad5990a12863d28738d325ce46cc4902bc1",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TBPM",
+          "sha256": "4b6d7837d358f88cae55c8781c48c52eaef939140ef56428fd06353559d9bbdf",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:SOURCE",
+          "sha256": "21bc37a66537018398fbeac3174a2881c9be9a3624c8eb7b67c45877109a4f06",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "bc943c212274fa9628c16a9f5e03e11cadb35000b3fd45312cdf6a49fe449bc0",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "aiff16-serato-id3v23",
+      "bytes": 81392,
+      "sha256": "1a685e66965265c8e638c67bb80828fc47101daa1717094e6943304516248037",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "COMM",
+          "sha256": "6d4164b24aabfcb9dc29803c092d83179b5f5cbbf426bdfbf355d5b3ea027b62",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "NAME",
+          "sha256": "4c6b7244b1a660d7d27921d6f473bafed064e6480e9a3c4f5398b56c28f4060f",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "ANNO",
+          "sha256": "1d7ba8e43f9c5c4c109ae8f913556649859129bcf94c966ed9f96a56547e59f4",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "APPL",
+          "sha256": "6bf7143f4f4a9779571cea34b829a32abd986d74598bfde4808949c72ee8c1a6",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "SSND",
+          "sha256": "e9e1f802f12c9a65a2f6c631036063a80b90bc60ebdf6069568f2655523d99de",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "xodd",
+          "sha256": "4b8d81778556b66c32605f7315e2fb1a2a07309c607b70c1c833b7ef1d520b5f",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "ID3 ",
+          "sha256": "4c4f5877026265a865fed7609d4cb1bf959020f8388fba0b424cf23b58b7de94",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TIT2",
+          "sha256": "dbc53838a76b83266d4ca0fd954f5e38c1a1a9fc07d07cf3a85136fd8dd1cf26",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TPE1",
+          "sha256": "78c8972733b40574a10d80ec674e50a66e43c686fda8ca1b7d353b97977d4036",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TBPM",
+          "sha256": "2a09dc367cbde48a7ab12d4e1a26d3be32de235f26684a63e72473a2114662ed",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TKEY",
+          "sha256": "7db7eb995c17cfb1612babbc80c50bfd733deb7e861afeea4a5afd05e1e7a9d2",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "COMM",
+          "sha256": "d5fd64d8028c568086a1a4fe276ff92a97b8e8b69de5da60a4307f2a25822945",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:SOURCE",
+          "sha256": "9a9a182f31521a8e0a492c3c0696a43f6be83751a44259eca871e73d85c5870e",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "APIC",
+          "sha256": "2eb33133c2cf548b8ef05cbb9ad6d34ce6f1e2a926fe919139a0db6d3245807c",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "PRIV:WM/MediaClassPrimaryID",
+          "sha256": "01554ee1dda7b20db4cbf10a40cad080e2aae70940fdf9b5ac069c18928882ca",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "GEOB:Serato Autotags",
+          "sha256": "240650fba37ef2e6d2df1238b616eb6105361f00f09b87a0282b0101b38e9882",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "GEOB:Serato Markers2",
+          "sha256": "2b8a96b889f6eeabfdab6c1019be4aa89b6be627c26c81d25c55075bfc13a735",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "GEOB:Serato BeatGrid",
+          "sha256": "bf0780ff5e5ff1e367720894134ba241868066e8eff084452c6b28f43cb56f80",
+          "expect": "carried"
+        }
+      ]
+    },
+    {
+      "name": "aiff24-48k-mark",
+      "bytes": 120106,
+      "sha256": "5135b9e616db60e314376803dd33e581269ba095cca602ac1d2f6f9eb9922e0c",
+      "frames": 20000,
+      "sample_rate": 48000,
+      "channels": 2,
+      "bits": 24,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "COMM",
+          "sha256": "4d988c60eb30aa9ea29bf1ab8a4fd27cb5088c0adf8ba39dbb13eeb67f0a78a8",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "MARK",
+          "sha256": "970ecd4a0b92fd5ca8640ea193e8ff604b55b3c62105c533e6714dc6f0783029",
+          "expect": "patched",
+          "fields": [
+            "position"
+          ]
+        },
+        {
+          "kind": "chunk",
+          "id": "SSND",
+          "sha256": "244aec560ae370bf3ecce2404c01e653e8d1a6857e35eb2a8597441ce4960725",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "aiff16-mono-ssnd-offset",
+      "bytes": 40092,
+      "sha256": "83335e3966ff10c5a57a221dbf7d3acf6a9faae47aee7973bd671b2c49c3fadb",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 1,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "COMM",
+          "sha256": "8af423db9363beb20992663c6fb04321bd7526ba3c6916883943481b440bf607",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "NAME",
+          "sha256": "2c0d3e288236ac82eb5e6f67d007136a12f7af49b58e29fefa61301121112907",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "SSND",
+          "sha256": "25078061ccf051a81b9663cb066f646a02c3c05b94480c503fd032dc72763b55",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "aifc-none-16-chan-comt-inst",
+      "bytes": 80164,
+      "sha256": "c9971a58680ec846f7fff93209f0c4e375e43784ee3e0f0f8505e4147f792d12",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "FVER",
+          "sha256": "cdb7cf5b5c227547bbe0ec89700a5f320a79273b4232c68805c4ad8ec4725f6f",
+          "expect": "dropped",
+          "reason": "AIFF-C version chunk; the output is FORM AIFF"
+        },
+        {
+          "kind": "chunk",
+          "id": "COMM",
+          "sha256": "8623fbc0dfec9fac3ea655462a622726c240c35a9187e83ebaab5cdff780b84e",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "CHAN",
+          "sha256": "19ab785b3786c7e50643b9677c049224ac85cb722950ef1f601ea880bc30080a",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "COMT",
+          "sha256": "7585731cf2c25c80a9130079b103578cc9b5922c98222713abdbd4269d831d84",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "INST",
+          "sha256": "aa1e2602989600f92109820bb3dfcf82edbb68ab86976dddecbf77915907f43e",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "SSND",
+          "sha256": "5c8f7126e7fe943fe159c22c04b3573afd76658b65b952216d04cc9ba2eb5c9c",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "aifc-sowt-16",
+      "bytes": 80072,
+      "sha256": "f0935164dc4a357665e18ac831eecf443f8b40e080626cc275d8bdf7c2a1b6f6",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "FVER",
+          "sha256": "cdb7cf5b5c227547bbe0ec89700a5f320a79273b4232c68805c4ad8ec4725f6f",
+          "expect": "dropped",
+          "reason": "AIFF-C version chunk; the output is FORM AIFF"
+        },
+        {
+          "kind": "chunk",
+          "id": "COMM",
+          "sha256": "ddae34f74d1c018107e5d430249b45d089808eb8eb33d6b3fda8ae8aec0ee803",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "SSND",
+          "sha256": "a9604c26dc4734f18cb2305bf96c4726ecc18a678a05e45650f36d6d20a98791",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "flac16-all-blocks",
+      "bytes": 83005,
+      "sha256": "14cb47bf33248a2f5a015bb0f9becf20f136af3cf09079cebee8131a22fb8cd8",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "flac-block",
+          "id": "STREAMINFO",
+          "sha256": "8e9660a4d0c2cd8df7e4d971294ad6ab7c2768a0f2d064f387a69181594dbc1f",
+          "expect": "replaced"
+        },
+        {
+          "kind": "flac-block",
+          "id": "SEEKTABLE",
+          "sha256": "dd2d9148209e5fc7080fb67aa8893c530c70e11be1451431ac39d45249b49ed7",
+          "expect": "replaced"
+        },
+        {
+          "kind": "flac-block",
+          "id": "VORBIS_COMMENT",
+          "sha256": "03e60aa9b667e24cfcd502b59a82e368cb5cc19396de40f0f26a0ca3868a87df",
+          "expect": "replaced"
+        },
+        {
+          "kind": "vorbis-vendor",
+          "id": "vendor",
+          "sha256": "66cd61e88ae8858cadbf3a0319b56d6dc384f0be6365cb176a533f51063c93c0",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "TITLE",
+          "sha256": "e0a9bb2f802d1ed947d4aa26543285caa66dfad45a9e0df71bbef3bef0c795db",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "ARTIST",
+          "sha256": "73b381c23bdeed1732758b255e0b7d4ef5535f497fa3e098472031389f1942b0",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "ARTIST",
+          "sha256": "ee52045d6075e45889346ad49b490a63a44c9d08fb7c27170f98e54ede4519c1",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "BPM",
+          "sha256": "f5f46ca67263c8379f090e9738aab42adda6a2c5132d3a94afff02feab1bd2d7",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "REPLAYGAIN_TRACK_GAIN",
+          "sha256": "310fb7cfa873ca524678572dcd81b4df0c5128e2d0fb3a437dfbbfe245807333",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "comment",
+          "sha256": "0a876da79221d37aa338b820fdd686c613eba4f57b7120941abee36953a918f4",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "replaygain_track_peak",
+          "sha256": "fc157f0035609b7144dc78d8a98a4171f9ac1e86f09fb5ce6d2580c3840d4125",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "SERATO_MARKERS_V2",
+          "sha256": "bdeec81b8639b4e65da9cbeab58136f5c00e4f0e5a29ec72e61e50e7f99ee8a1",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "SERATO_BEATGRID",
+          "sha256": "3fdbb0fd9d3a4515cad35755033f38792cc646b495f2a1a18e6de8300a749948",
+          "expect": "carried"
+        },
+        {
+          "kind": "flac-block",
+          "id": "CUESHEET",
+          "sha256": "4921823f80a164214e13ddb29f8ece48f91548037464e22e87409f6391cf6a55",
+          "expect": "patched",
+          "fields": [
+            "track offset",
+            "lead-out offset"
+          ]
+        },
+        {
+          "kind": "flac-block",
+          "id": "APPLICATION:riff",
+          "sha256": "8d3205fc468e57aa09e3c704a7c8f53178bdee78c659a04ff73c32b853cc5d7f",
+          "expect": "carried"
+        },
+        {
+          "kind": "flac-block",
+          "id": "PICTURE",
+          "sha256": "3113e34713e9c8f164c03f68a5b4f7348c6ee102319582df55149a0450353334",
+          "expect": "carried"
+        },
+        {
+          "kind": "flac-block",
+          "id": "TYPE-100",
+          "sha256": "3d51899793476734ab5b74b3c591c5fe8a2d88916d7135ecef6dbbaea60d0803",
+          "expect": "carried"
+        },
+        {
+          "kind": "flac-block",
+          "id": "PADDING",
+          "sha256": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+          "expect": "replaced"
+        },
+        {
+          "kind": "flac-frames",
+          "id": "frames",
+          "sha256": "e5be71a9298a9661685c192ea0df1ad59d0915923b344bd1504e8b04e163086d",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "flac24-48k-minimal",
+      "bytes": 120689,
+      "sha256": "d229e4af540c58c8dad25d3010157919b9721c93148dcdc1a360872dc06e0f9c",
+      "frames": 20000,
+      "sample_rate": 48000,
+      "channels": 2,
+      "bits": 24,
+      "blocks": [
+        {
+          "kind": "flac-block",
+          "id": "STREAMINFO",
+          "sha256": "5ef1275c86f5ab418185bfaf2a021190e2da59839708a3eeb0437e21eb6680f4",
+          "expect": "replaced"
+        },
+        {
+          "kind": "flac-block",
+          "id": "VORBIS_COMMENT",
+          "sha256": "c24087ab0f1cef0785c594d9a58639ca1a24b771c01b8626a4bb6876259e0ffb",
+          "expect": "replaced"
+        },
+        {
+          "kind": "vorbis-vendor",
+          "id": "vendor",
+          "sha256": "66cd61e88ae8858cadbf3a0319b56d6dc384f0be6365cb176a533f51063c93c0",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "TITLE",
+          "sha256": "e0a9bb2f802d1ed947d4aa26543285caa66dfad45a9e0df71bbef3bef0c795db",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "BPM",
+          "sha256": "1fece43e0cce8af779c1d7700eddcf6b85d0e4caadf48bc65c5fbacf831acfe3",
+          "expect": "carried"
+        },
+        {
+          "kind": "flac-block",
+          "id": "PADDING",
+          "sha256": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+          "expect": "replaced"
+        },
+        {
+          "kind": "flac-frames",
+          "id": "frames",
+          "sha256": "02817fa8813bdfe3904b2c54c0cc25505c5a19c17b864510cfe0e7e529d78f2e",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "flac16-mono",
+      "bytes": 40519,
+      "sha256": "fd04f11efa145b507f4f4f246baf95e18dc45d8b1efd8b6d746bd00c4d211bd1",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 1,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "flac-block",
+          "id": "STREAMINFO",
+          "sha256": "f66d69fddb629a7e5ffdd20e17f002b50763aa4bf82fa4d31b6884d428fb329b",
+          "expect": "replaced"
+        },
+        {
+          "kind": "flac-block",
+          "id": "VORBIS_COMMENT",
+          "sha256": "10f5640876cd5cf8ca8da569e890d07f534c83832c2649c1b25f8ef18fec6ac2",
+          "expect": "replaced"
+        },
+        {
+          "kind": "vorbis-vendor",
+          "id": "vendor",
+          "sha256": "66cd61e88ae8858cadbf3a0319b56d6dc384f0be6365cb176a533f51063c93c0",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "TITLE",
+          "sha256": "0881c35271bfdc901973acc42351d67fc2c7d868f1309595e11c2dd4506318ec",
+          "expect": "carried"
+        },
+        {
+          "kind": "flac-block",
+          "id": "PICTURE",
+          "sha256": "3113e34713e9c8f164c03f68a5b4f7348c6ee102319582df55149a0450353334",
+          "expect": "carried"
+        },
+        {
+          "kind": "flac-block",
+          "id": "PADDING",
+          "sha256": "5341e6b2646979a70e57653007a1f310169421ec9bdd9f1a5648f75ade005af1",
+          "expect": "replaced"
+        },
+        {
+          "kind": "flac-frames",
+          "id": "frames",
+          "sha256": "1d4f27d11acdbead3779cd7d1dd1a50535fafa1563b730ef3229418165f62999",
+          "expect": "replaced"
+        }
+      ]
+    },
+    {
+      "name": "flac16-mono-id3v2-id3v1",
+      "bytes": 40938,
+      "sha256": "73915de48f3f921252a0ce18ef878e208b4670ddb3cba361cafdd9243961e012",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 1,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "leading-tag",
+          "id": "id3v2",
+          "sha256": "e5d19dc06b9f1e52b9514ed27f270e61e7b5087b529f40703dd0daa3ef575a6e",
+          "expect": "carried"
+        },
+        {
+          "kind": "flac-block",
+          "id": "STREAMINFO",
+          "sha256": "151ae4f03062946c4e684cc303f773d187ebaa8fa3751e7eff8a88213854d673",
+          "expect": "replaced"
+        },
+        {
+          "kind": "flac-block",
+          "id": "SEEKTABLE",
+          "sha256": "d1bb6c8b4c9c1ecfba3b8f5a5883d749ab9cc062b7f0500a536089195ed13b6f",
+          "expect": "replaced"
+        },
+        {
+          "kind": "flac-block",
+          "id": "VORBIS_COMMENT",
+          "sha256": "4b74398142abb49d24417cc7fe0339ed52f05bb60952aef0291a905211e211c9",
+          "expect": "replaced"
+        },
+        {
+          "kind": "vorbis-vendor",
+          "id": "vendor",
+          "sha256": "66cd61e88ae8858cadbf3a0319b56d6dc384f0be6365cb176a533f51063c93c0",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "TITLE",
+          "sha256": "e0a9bb2f802d1ed947d4aa26543285caa66dfad45a9e0df71bbef3bef0c795db",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "SOUNDCHECK",
+          "sha256": "4bd078d0a453d6a4ff84ec0df93ea1d0d17f3dec07ae991176b4d6f90aa62370",
+          "expect": "carried"
+        },
+        {
+          "kind": "vorbis-field",
+          "id": "GENRE",
+          "sha256": "82d0711ee8e4b21a2e59a68e51f18f88e6c77042972e8f2c741346b2608b7838",
+          "expect": "carried"
+        },
+        {
+          "kind": "flac-block",
+          "id": "PADDING",
+          "sha256": "38723a2e5e8a17aa7950dc008209944e898f69a7bd10a23c839d341e935fd5ca",
+          "expect": "replaced"
+        },
+        {
+          "kind": "flac-frames",
+          "id": "frames",
+          "sha256": "cb623407295899e4067a06a8abf35f7b2194f303c89a5d2a293409b638a896c3",
+          "expect": "replaced"
+        },
+        {
+          "kind": "trailing",
+          "id": "trailing",
+          "sha256": "36095fca4523857b15e2975ef864561c98d8c56f0852b39f56eca19440e1a18b",
+          "expect": "carried"
+        }
+      ]
+    }
+  ],
+  "outputs": [],
+  "patched": [
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "id": "bext",
+      "sha256": "f27398c6d276bdbc5ec768dc50f757cce16d3c33e1d099a50191657cd5650008"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "id": "cue ",
+      "sha256": "b0ac4856e83cca9f323b10a11e4a2f898588605e9dd2a4547fab6725989f076c"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "id": "smpl",
+      "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "id": "bext",
+      "sha256": "8f5e246d88a433e6bb5a89997490069c63339d8658bf62f4293aa0b8b10d4534"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "id": "cue ",
+      "sha256": "b0ac4856e83cca9f323b10a11e4a2f898588605e9dd2a4547fab6725989f076c"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "id": "smpl",
+      "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "id": "bext",
+      "sha256": "35682dfba999ee9502a6270db710779a588cd7554481eb9bfb6993dba8f78a1b"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "id": "cue ",
+      "sha256": "9517296d178d16c9578018b1dfbeccdb06ae79a9a66c2e089583e7176301661a"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "id": "smpl",
+      "sha256": "ea71232e6f432bdfcb258d935d006558024399b7214f29c736b920c4327954a1"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "id": "bext",
+      "sha256": "bbfde2e0757f2981c88807a6612ac63ec28b43548fdef08d594572a915e2f19f"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "id": "cue ",
+      "sha256": "9517296d178d16c9578018b1dfbeccdb06ae79a9a66c2e089583e7176301661a"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "id": "smpl",
+      "sha256": "ea71232e6f432bdfcb258d935d006558024399b7214f29c736b920c4327954a1"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "id": "bext",
+      "sha256": "12ead51f781ea22f58789c61b4a89cf49a6acd290096eb9512680bec0a7cb389"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "id": "cue ",
+      "sha256": "b0ac4856e83cca9f323b10a11e4a2f898588605e9dd2a4547fab6725989f076c"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "id": "smpl",
+      "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "id": "bext",
+      "sha256": "8f5e246d88a433e6bb5a89997490069c63339d8658bf62f4293aa0b8b10d4534"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "id": "cue ",
+      "sha256": "b0ac4856e83cca9f323b10a11e4a2f898588605e9dd2a4547fab6725989f076c"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "id": "smpl",
+      "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "id": "bext",
+      "sha256": "9c9970953012b57ca1cc20454a7894f5905843d0597cbff649c27ffd488a6b56"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "id": "cue ",
+      "sha256": "9517296d178d16c9578018b1dfbeccdb06ae79a9a66c2e089583e7176301661a"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "id": "smpl",
+      "sha256": "ea71232e6f432bdfcb258d935d006558024399b7214f29c736b920c4327954a1"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "id": "bext",
+      "sha256": "bbfde2e0757f2981c88807a6612ac63ec28b43548fdef08d594572a915e2f19f"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "id": "cue ",
+      "sha256": "9517296d178d16c9578018b1dfbeccdb06ae79a9a66c2e089583e7176301661a"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "id": "smpl",
+      "sha256": "ea71232e6f432bdfcb258d935d006558024399b7214f29c736b920c4327954a1"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "id": "bext",
+      "sha256": "12ead51f781ea22f58789c61b4a89cf49a6acd290096eb9512680bec0a7cb389"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "id": "cue ",
+      "sha256": "b0ac4856e83cca9f323b10a11e4a2f898588605e9dd2a4547fab6725989f076c"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "id": "smpl",
+      "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "id": "bext",
+      "sha256": "8f5e246d88a433e6bb5a89997490069c63339d8658bf62f4293aa0b8b10d4534"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "id": "cue ",
+      "sha256": "b0ac4856e83cca9f323b10a11e4a2f898588605e9dd2a4547fab6725989f076c"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "id": "smpl",
+      "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "id": "bext",
+      "sha256": "9c9970953012b57ca1cc20454a7894f5905843d0597cbff649c27ffd488a6b56"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "id": "cue ",
+      "sha256": "9517296d178d16c9578018b1dfbeccdb06ae79a9a66c2e089583e7176301661a"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "id": "smpl",
+      "sha256": "ea71232e6f432bdfcb258d935d006558024399b7214f29c736b920c4327954a1"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "id": "bext",
+      "sha256": "bbfde2e0757f2981c88807a6612ac63ec28b43548fdef08d594572a915e2f19f"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "id": "cue ",
+      "sha256": "9517296d178d16c9578018b1dfbeccdb06ae79a9a66c2e089583e7176301661a"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "id": "smpl",
+      "sha256": "ea71232e6f432bdfcb258d935d006558024399b7214f29c736b920c4327954a1"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "id": "bext",
+      "sha256": "d4c88c4ba861d78aa75d73378276635e89381aafa381cce7169fce2bd19cc66e"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "id": "fact",
+      "sha256": "7675d751523648d13d45b6b1e904054baa8dc8f3705ed896432498e86aaee36a"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "id": "bext",
+      "sha256": "4a54bb67f8de24ddbc2c5f5107c7c55eee73da2a1b5108921ca3dd1f3675d726"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "id": "fact",
+      "sha256": "7675d751523648d13d45b6b1e904054baa8dc8f3705ed896432498e86aaee36a"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "id": "bext",
+      "sha256": "fce2f7ba5de6eef2413ed901426eef85e2532dda897de270246843ec4cf501f5"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "id": "fact",
+      "sha256": "8f165aa733e270644aade66c78760145911fd3d2f9d7d447443fdf9bf9da5cba"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "id": "bext",
+      "sha256": "d515d310cd7ac588e72774c9c7cdd9684f30648b59af34689ab8e747620038fb"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "id": "fact",
+      "sha256": "8f165aa733e270644aade66c78760145911fd3d2f9d7d447443fdf9bf9da5cba"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "id": "bext",
+      "sha256": "9179fabf543461dcb59c9fce9a6729d35975dfbaf92f5e988e4907e1c3e8686d"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "id": "fact",
+      "sha256": "7675d751523648d13d45b6b1e904054baa8dc8f3705ed896432498e86aaee36a"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "id": "bext",
+      "sha256": "4a54bb67f8de24ddbc2c5f5107c7c55eee73da2a1b5108921ca3dd1f3675d726"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "id": "fact",
+      "sha256": "7675d751523648d13d45b6b1e904054baa8dc8f3705ed896432498e86aaee36a"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "id": "bext",
+      "sha256": "e54d0916701c041cc2a34851971b3efbffdcc323a08b8ea7dff4dda5a3cfde30"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "id": "fact",
+      "sha256": "8f165aa733e270644aade66c78760145911fd3d2f9d7d447443fdf9bf9da5cba"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "id": "bext",
+      "sha256": "d515d310cd7ac588e72774c9c7cdd9684f30648b59af34689ab8e747620038fb"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "id": "fact",
+      "sha256": "8f165aa733e270644aade66c78760145911fd3d2f9d7d447443fdf9bf9da5cba"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "id": "bext",
+      "sha256": "9179fabf543461dcb59c9fce9a6729d35975dfbaf92f5e988e4907e1c3e8686d"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "id": "fact",
+      "sha256": "7675d751523648d13d45b6b1e904054baa8dc8f3705ed896432498e86aaee36a"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "id": "bext",
+      "sha256": "4a54bb67f8de24ddbc2c5f5107c7c55eee73da2a1b5108921ca3dd1f3675d726"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "id": "fact",
+      "sha256": "7675d751523648d13d45b6b1e904054baa8dc8f3705ed896432498e86aaee36a"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "id": "bext",
+      "sha256": "e54d0916701c041cc2a34851971b3efbffdcc323a08b8ea7dff4dda5a3cfde30"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "id": "fact",
+      "sha256": "8f165aa733e270644aade66c78760145911fd3d2f9d7d447443fdf9bf9da5cba"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "id": "bext",
+      "sha256": "d515d310cd7ac588e72774c9c7cdd9684f30648b59af34689ab8e747620038fb"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "id": "fact",
+      "sha256": "8f165aa733e270644aade66c78760145911fd3d2f9d7d447443fdf9bf9da5cba"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "id": "bext",
+      "sha256": "67f28edf7d3af393085c793b7cb1c5e14cf30944c544399b3a98a8e95a4a4676"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "id": "bext",
+      "sha256": "26bd69b1ed7c4973e7ee6ae7e135cc81e152c9eee7e8d5786e3a52bf3bc78001"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "id": "bext",
+      "sha256": "b9bb32ccf13277da8cbc8373c9eb7073952bd714e12c9c8e5c18b77ef513fcf5"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "id": "bext",
+      "sha256": "3e4cf1bdb84c353a082a8310de3d9a41972b14bff15cfb346f2c1b02ea84ee45"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "id": "bext",
+      "sha256": "4bed42aae2477e1c078f011640a62b880666972a99a900005d9f965737f65ce1"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "id": "bext",
+      "sha256": "26bd69b1ed7c4973e7ee6ae7e135cc81e152c9eee7e8d5786e3a52bf3bc78001"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "id": "bext",
+      "sha256": "b6a91cf99df652d1486e44867cfc61e04be7f6e5d1d63954cc782cd02efab0e8"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "id": "bext",
+      "sha256": "3e4cf1bdb84c353a082a8310de3d9a41972b14bff15cfb346f2c1b02ea84ee45"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "id": "bext",
+      "sha256": "4bed42aae2477e1c078f011640a62b880666972a99a900005d9f965737f65ce1"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "id": "bext",
+      "sha256": "26bd69b1ed7c4973e7ee6ae7e135cc81e152c9eee7e8d5786e3a52bf3bc78001"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "id": "bext",
+      "sha256": "b6a91cf99df652d1486e44867cfc61e04be7f6e5d1d63954cc782cd02efab0e8"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "id": "bext",
+      "sha256": "3e4cf1bdb84c353a082a8310de3d9a41972b14bff15cfb346f2c1b02ea84ee45"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "id": "bext",
+      "sha256": "4f6648fa454f307077f642848f0b42cd222694cf470e5a2eff6b26129b2647f1"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "id": "bext",
+      "sha256": "9b08c820d13c1761c9acde8fe98450f70315732c04441900a4aa8f30b35a8a01"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "id": "bext",
+      "sha256": "390d21de3b4ecf2401a6bd1ea90e0deb494b25803ba1fd35db233fd737b3b057"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "id": "bext",
+      "sha256": "07f8f7473c4e711434b9045d07832002b95b08e517f9a6f6de78be8d87632006"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "id": "bext",
+      "sha256": "95b9751942fec467d3adc0e2979165709cf47ee69c9164418d72eefb0da16b0e"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "id": "bext",
+      "sha256": "9b08c820d13c1761c9acde8fe98450f70315732c04441900a4aa8f30b35a8a01"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "id": "bext",
+      "sha256": "3e81c2e8f3fca1dc9091774374f187918e850a66cca3fc93d1b31d15c35fcd18"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "id": "bext",
+      "sha256": "07f8f7473c4e711434b9045d07832002b95b08e517f9a6f6de78be8d87632006"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "id": "bext",
+      "sha256": "95b9751942fec467d3adc0e2979165709cf47ee69c9164418d72eefb0da16b0e"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "id": "bext",
+      "sha256": "9b08c820d13c1761c9acde8fe98450f70315732c04441900a4aa8f30b35a8a01"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "id": "bext",
+      "sha256": "3e81c2e8f3fca1dc9091774374f187918e850a66cca3fc93d1b31d15c35fcd18"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "id": "bext",
+      "sha256": "07f8f7473c4e711434b9045d07832002b95b08e517f9a6f6de78be8d87632006"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "id": "smpl",
+      "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "id": "smpl",
+      "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "id": "smpl",
+      "sha256": "bbc28ef233d66e6280b5cae4ee2a880d3c9fcd12a82ef242bf38d8f3016b8cb5"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "id": "smpl",
+      "sha256": "bbc28ef233d66e6280b5cae4ee2a880d3c9fcd12a82ef242bf38d8f3016b8cb5"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "id": "smpl",
+      "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "id": "smpl",
+      "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "id": "smpl",
+      "sha256": "bbc28ef233d66e6280b5cae4ee2a880d3c9fcd12a82ef242bf38d8f3016b8cb5"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "id": "smpl",
+      "sha256": "bbc28ef233d66e6280b5cae4ee2a880d3c9fcd12a82ef242bf38d8f3016b8cb5"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "id": "smpl",
+      "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "id": "smpl",
+      "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "id": "smpl",
+      "sha256": "bbc28ef233d66e6280b5cae4ee2a880d3c9fcd12a82ef242bf38d8f3016b8cb5"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "id": "smpl",
+      "sha256": "bbc28ef233d66e6280b5cae4ee2a880d3c9fcd12a82ef242bf38d8f3016b8cb5"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "id": "MARK",
+      "sha256": "970ecd4a0b92fd5ca8640ea193e8ff604b55b3c62105c533e6714dc6f0783029"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "id": "MARK",
+      "sha256": "970ecd4a0b92fd5ca8640ea193e8ff604b55b3c62105c533e6714dc6f0783029"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "id": "MARK",
+      "sha256": "f2ff8c13113b09cbc9e6a4bc2c7f7e3f70fc4a4a02ee4ef0d633e8da48e68309"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "id": "MARK",
+      "sha256": "f2ff8c13113b09cbc9e6a4bc2c7f7e3f70fc4a4a02ee4ef0d633e8da48e68309"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "id": "MARK",
+      "sha256": "970ecd4a0b92fd5ca8640ea193e8ff604b55b3c62105c533e6714dc6f0783029"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "id": "MARK",
+      "sha256": "970ecd4a0b92fd5ca8640ea193e8ff604b55b3c62105c533e6714dc6f0783029"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "id": "MARK",
+      "sha256": "f2ff8c13113b09cbc9e6a4bc2c7f7e3f70fc4a4a02ee4ef0d633e8da48e68309"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "id": "MARK",
+      "sha256": "f2ff8c13113b09cbc9e6a4bc2c7f7e3f70fc4a4a02ee4ef0d633e8da48e68309"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "id": "MARK",
+      "sha256": "970ecd4a0b92fd5ca8640ea193e8ff604b55b3c62105c533e6714dc6f0783029"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "id": "MARK",
+      "sha256": "970ecd4a0b92fd5ca8640ea193e8ff604b55b3c62105c533e6714dc6f0783029"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "id": "MARK",
+      "sha256": "f2ff8c13113b09cbc9e6a4bc2c7f7e3f70fc4a4a02ee4ef0d633e8da48e68309"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "id": "MARK",
+      "sha256": "f2ff8c13113b09cbc9e6a4bc2c7f7e3f70fc4a4a02ee4ef0d633e8da48e68309"
+    },
+    {
+      "fixture": "flac16-all-blocks",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "id": "CUESHEET",
+      "sha256": "4921823f80a164214e13ddb29f8ece48f91548037464e22e87409f6391cf6a55"
+    },
+    {
+      "fixture": "flac16-all-blocks",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "id": "CUESHEET",
+      "sha256": "4921823f80a164214e13ddb29f8ece48f91548037464e22e87409f6391cf6a55"
+    },
+    {
+      "fixture": "flac16-all-blocks",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "id": "CUESHEET",
+      "sha256": "9fb984ae2bfd20304161493a37c285313ee343bde025f857fa6f32712cbe6c39"
+    },
+    {
+      "fixture": "flac16-all-blocks",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "id": "CUESHEET",
+      "sha256": "9fb984ae2bfd20304161493a37c285313ee343bde025f857fa6f32712cbe6c39"
+    },
+    {
+      "fixture": "flac16-all-blocks",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "id": "CUESHEET",
+      "sha256": "4921823f80a164214e13ddb29f8ece48f91548037464e22e87409f6391cf6a55"
+    },
+    {
+      "fixture": "flac16-all-blocks",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "id": "CUESHEET",
+      "sha256": "4921823f80a164214e13ddb29f8ece48f91548037464e22e87409f6391cf6a55"
+    },
+    {
+      "fixture": "flac16-all-blocks",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "id": "CUESHEET",
+      "sha256": "9fb984ae2bfd20304161493a37c285313ee343bde025f857fa6f32712cbe6c39"
+    },
+    {
+      "fixture": "flac16-all-blocks",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "id": "CUESHEET",
+      "sha256": "9fb984ae2bfd20304161493a37c285313ee343bde025f857fa6f32712cbe6c39"
+    },
+    {
+      "fixture": "flac16-all-blocks",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "id": "CUESHEET",
+      "sha256": "4921823f80a164214e13ddb29f8ece48f91548037464e22e87409f6391cf6a55"
+    },
+    {
+      "fixture": "flac16-all-blocks",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "id": "CUESHEET",
+      "sha256": "4921823f80a164214e13ddb29f8ece48f91548037464e22e87409f6391cf6a55"
+    },
+    {
+      "fixture": "flac16-all-blocks",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "id": "CUESHEET",
+      "sha256": "9fb984ae2bfd20304161493a37c285313ee343bde025f857fa6f32712cbe6c39"
+    },
+    {
+      "fixture": "flac16-all-blocks",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "id": "CUESHEET",
+      "sha256": "9fb984ae2bfd20304161493a37c285313ee343bde025f857fa6f32712cbe6c39"
+    }
+  ]
+}
