@@ -13,13 +13,21 @@
 //!   straddles the container end, are marked `beyond_container`. The first header that is
 //!   invalid or does not fit ends the walk, and the rest of the file is `trailing` (stray bytes,
 //!   an `ID3v1` tag).
+//! - An `ID3v1` tag (the last 128 bytes start with `TAG`) is a hard end: the walk reads no
+//!   header at or after it, so the tag is `trailing` byte for byte whatever the container size
+//!   says. The one exception keeps a correct file correct: when the walk to the end of the file
+//!   is clean (no truncation, nothing left over) and the would-be tag lies inside a chunk's
+//!   payload rather than at a chunk boundary, those bytes are audio or chunk data that happen
+//!   to start with `TAG`, and the walk to the end of the file stands.
 //! - After an odd payload the pad byte is decided as described in `pad.rs`: a payload that
-//!   ends exactly at the container end or at the end of the file has none; otherwise a zero
-//!   byte is a pad and a non-zero byte is judged by which reading leads to a consistent chain
-//!   of headers.
+//!   ends at the end of the walk has none; one that ends exactly at the container end has one
+//!   only if the next byte is 0 (no chunk id starts with 0, and some writers leave the last pad
+//!   out of the container size); otherwise a zero byte is a pad and a non-zero byte is judged
+//!   by which reading leads to a consistent chain of headers.
 //!
 //! At most [`MAX_CHUNKS`] chunks and [`MAX_DS64_ENTRIES`] `ds64` table entries are read; more is
-//! treated as a corrupt file.
+//! treated as a corrupt file. Pad decisions read at most [`MAX_PAD_PROBES`] headers per walk;
+//! after that, pads are assumed present (the specifications' rule).
 
 use std::io::{Cursor, Read, Seek};
 use std::ops::Range;
@@ -33,6 +41,13 @@ pub use super::ds64::{Ds64, Ds64Entry, MAX_DS64_ENTRIES};
 
 /// Most chunks a file may have.
 pub const MAX_CHUNKS: usize = 65_536;
+
+/// Most headers the pad decisions of one walk may read (a hostile file with many odd chunks
+/// stays bounded); later odd chunks are assumed padded.
+pub const MAX_PAD_PROBES: u64 = 1_000_000;
+
+/// Length of an `ID3v1` tag, bytes.
+const ID3V1_BYTES: u64 = 128;
 
 /// One top-level chunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +147,8 @@ pub(super) struct Layout<'t> {
     pub ds64: Option<&'t Ds64>,
     /// Declared container end, bytes.
     pub container_end: u64,
+    /// Where the walk ends: the end of the file or the start of an `ID3v1` tag.
+    pub walk_end: u64,
 }
 
 /// A valid chunk header.
@@ -187,6 +204,15 @@ pub(super) fn read_header<R: Read + Seek>(
 /// [`sc_core::Error::UnsupportedFormat`] for a RIFF/FORM container that is not `WAVE`, `AIFF`
 /// or `AIFC`, or for big-endian `RIFX`; [`sc_core::Error::Io`] when reading fails.
 pub fn walk<R: Read + Seek>(reader: &mut R, path: &Path) -> Result<ChunkTable> {
+    walk_with_budget(reader, path, MAX_PAD_PROBES).map(|(table, _)| table)
+}
+
+/// [`walk`] with a given pad-probe budget; also returns the probe headers read.
+pub(super) fn walk_with_budget<R: Read + Seek>(
+    reader: &mut R,
+    path: &Path,
+    probe_budget: u64,
+) -> Result<(ChunkTable, u64)> {
     let mut src = Source::new(reader, path)?;
     let mut head = [0_u8; 12];
     if src.len < 12 {
@@ -217,8 +243,18 @@ pub fn walk<R: Read + Seek>(reader: &mut R, path: &Path) -> Result<ChunkTable> {
         trailing: None,
         truncated: false,
     };
-    let stop = walk_chunks(&mut src, &mut table)?;
-    table.trailing = (stop < src.len).then_some(stop..src.len);
+    let len = src.len;
+    let mut walked = walk_chunks(&mut src, &table, len, probe_budget)?;
+    let mut probes = walked.probes;
+    if let Some(tag) = id3v1_start(&mut src)?
+        && !walked.stands_over(tag, src.len)
+    {
+        walked = walk_chunks(&mut src, &table, tag, probe_budget - probes)?;
+        probes += walked.probes;
+    }
+    table.trailing = (walked.stop < src.len).then_some(walked.stop..src.len);
+    table.chunks = walked.chunks;
+    table.truncated = walked.truncated;
     tracing::debug!(
         path = %path.display(),
         container = ?table.container,
@@ -227,7 +263,7 @@ pub fn walk<R: Read + Seek>(reader: &mut R, path: &Path) -> Result<ChunkTable> {
         trailing_bytes = table.trailing.as_ref().map_or(0, |t| t.end - t.start),
         "iff walk"
     );
-    Ok(table)
+    Ok((table, probes))
 }
 
 /// [`walk`] over bytes in memory (errors name the path `<memory>`).
@@ -258,18 +294,59 @@ fn container_of(head: &[u8; 12], path: &Path) -> Result<Container> {
     }
 }
 
-/// Walks from byte 12; returns the offset where the walk stopped.
-fn walk_chunks<R: Read + Seek>(src: &mut Source<'_, R>, table: &mut ChunkTable) -> Result<u64> {
+/// Start of an `ID3v1` tag: the last 128 bytes, after the 12-byte header, start with `TAG`.
+fn id3v1_start<R: Read + Seek>(src: &mut Source<'_, R>) -> Result<Option<u64>> {
+    if src.len < 12 + ID3V1_BYTES {
+        return Ok(None);
+    }
+    let at = src.len - ID3V1_BYTES;
+    let mut magic = [0_u8; 3];
+    src.read_at(at, &mut magic)?;
+    Ok((&magic == b"TAG").then_some(at))
+}
+
+/// The result of one walk over the chunks.
+struct Walked {
+    chunks: Vec<Chunk>,
+    truncated: bool,
+    /// Offset where the walk stopped.
+    stop: u64,
+    /// Pad-probe headers read.
+    probes: u64,
+}
+
+impl Walked {
+    /// Whether a walk to the end of the file (`len`) stands although the last 128 bytes look
+    /// like an `ID3v1` tag starting at `tag`: it is clean and the tag lies inside a payload.
+    fn stands_over(&self, tag: u64, len: u64) -> bool {
+        self.stop == len
+            && !self.truncated
+            && self
+                .chunks
+                .iter()
+                .any(|c| c.payload.start <= tag && tag < c.payload.end)
+    }
+}
+
+/// Walks from byte 12 up to `walk_end` (the end of the file or the start of an `ID3v1` tag).
+fn walk_chunks<R: Read + Seek>(
+    src: &mut Source<'_, R>,
+    table: &ChunkTable,
+    walk_end: u64,
+    probe_budget: u64,
+) -> Result<Walked> {
     let container_end = table.container_end();
     let layout = Layout {
         big: table.container.is_big_endian(),
         ds64: table.ds64.as_ref(),
         container_end,
+        walk_end,
     };
+    let mut budget = probe_budget;
     let mut chunks = Vec::new();
     let mut truncated = false;
     let mut pos = 12_u64;
-    while src.len - pos >= 8 {
+    while walk_end.saturating_sub(pos) >= 8 {
         let Some(header) = read_header(src, &layout, pos)? else {
             break;
         };
@@ -283,15 +360,17 @@ fn walk_chunks<R: Read + Seek>(src: &mut Source<'_, R>, table: &mut ChunkTable) 
         let start = pos + 8;
         let declared_end = start.saturating_add(header.size);
         let inside = pos < container_end;
-        if declared_end > src.len && !inside {
+        if declared_end > walk_end && !inside {
             break;
         }
-        let end = declared_end.min(src.len);
+        let end = declared_end.min(walk_end);
         let odd = header.size % 2 == 1;
-        let pad = if odd && end < src.len && end != container_end {
-            pad::decide(src, &layout, end)?
-        } else {
+        let pad = if !odd || end >= walk_end {
             None
+        } else if end == container_end {
+            zero_byte(src, end)?
+        } else {
+            pad::decide(src, &layout, end, &mut budget)?
         };
         let chunk_end = end + u64::from(pad.is_some());
         chunks.push(Chunk {
@@ -305,14 +384,24 @@ fn walk_chunks<R: Read + Seek>(src: &mut Source<'_, R>, table: &mut ChunkTable) 
             beyond_container: chunk_end > container_end,
         });
         pos = chunk_end;
-        if declared_end > src.len {
+        if declared_end > walk_end {
             truncated = true;
             break;
         }
     }
-    table.chunks = chunks;
-    table.truncated = truncated;
-    Ok(pos)
+    Ok(Walked {
+        chunks,
+        truncated,
+        stop: pos,
+        probes: probe_budget - budget,
+    })
+}
+
+/// `Some(0)` when the byte at `at` is 0 (a pad left out of the container size).
+fn zero_byte<R: Read + Seek>(src: &mut Source<'_, R>, at: u64) -> Result<Option<u8>> {
+    let mut byte = [0_u8; 1];
+    src.read_at(at, &mut byte)?;
+    Ok((byte[0] == 0).then_some(0))
 }
 
 #[cfg(test)]

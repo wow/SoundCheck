@@ -3,7 +3,9 @@
 //! 1. Random valid chunk soups (RIFF, RF64 with `ds64`, FORM AIFF; random printable ids,
 //!    payloads of 0..300 bytes including odd ones with random pad values, `fmt `/`data` or
 //!    `COMM`/`SSND` at random places, optionally no pad after the odd last chunk or after every
-//!    odd chunk in the middle, optional stray bytes or an `ID3v1`-like tag after the container): the walk returns exactly the generator's record and the
+//!    odd chunk in the middle, optional stray bytes or an `ID3v1` tag with a short or long
+//!    zero-filled title after the container, and with an `ID3v1` tag or nothing after it a
+//!    container size that is exact, includes the tag, is 8 too large or is 0): the walk returns exactly the generator's record and the
 //!    PCM reader returns the generated samples.
 //! 2. Arbitrary bytes (raw or behind a valid container header), and random truncations and
 //!    single-byte mutations of the matrix fixtures: walk, format and PCM never panic, never read
@@ -120,6 +122,19 @@ struct Soup {
     omit_last_pad: bool,
     drop_mid_pads: bool,
     trailing: Vec<u8>,
+    size: ContainerSize,
+}
+
+/// The container size field a soup is written with. Only `Exact` is used with stray bytes
+/// after the container (with any other size those bytes are inside the container or a pad
+/// candidate, and what they mean is genuinely ambiguous); an `ID3v1` tag is a hard end, so it
+/// combines with every size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContainerSize {
+    Exact,
+    IncludingTrailing,
+    EightTooLarge,
+    Zero,
 }
 
 /// One chunk as written: id, header offset, payload range, pad byte.
@@ -162,11 +177,25 @@ fn soup() -> impl Strategy<Value = Soup> {
         prop::collection::vec(any::<i16>(), 0..120),
         0_u8..16,
         (any::<bool>(), any::<bool>()),
-        trailing(),
+        (
+            trailing(),
+            prop_oneof![
+                Just(ContainerSize::Exact),
+                Just(ContainerSize::IncludingTrailing),
+                Just(ContainerSize::EightTooLarge),
+                Just(ContainerSize::Zero),
+            ],
+        ),
     )
         .prop_map(
-            |(kind, chunks, fmt_at, data_at, mut samples, ssnd_offset, pads, trailing)| {
+            |(kind, chunks, fmt_at, data_at, mut samples, ssnd_offset, pads, (trailing, size))| {
                 samples.truncate(samples.len() / 2 * 2);
+                let tag_or_nothing = trailing.is_empty() || trailing.starts_with(b"TAG");
+                let size = if tag_or_nothing {
+                    size
+                } else {
+                    ContainerSize::Exact
+                };
                 Soup {
                     kind,
                     chunks,
@@ -177,27 +206,37 @@ fn soup() -> impl Strategy<Value = Soup> {
                     omit_last_pad: pads.0,
                     drop_mid_pads: pads.1,
                     trailing,
+                    size,
                 }
             },
         )
 }
 
-/// Bytes after the container that never form a whole chunk: none, stray bytes starting with a
-/// control byte (no chunk id starts with one), or an `ID3v1`-like tag (`TAG` and printable
-/// text, so its would-be size is far larger than the file).
+/// Bytes after the container: none, stray bytes starting with a non-zero control byte (no
+/// chunk id starts with one, and a 0 right after the container would be a left-out pad), or an
+/// `ID3v1` tag whose title is 0 to 30 printable characters, zero-filled (so `TAG` plus the
+/// first title bytes can look like a chunk header of a small size), with the remaining fields
+/// zero or printable.
 fn trailing() -> impl Strategy<Value = Vec<u8>> {
     prop_oneof![
         Just(Vec::new()),
-        (0_u8..0x20, prop::collection::vec(any::<u8>(), 0..40)).prop_map(|(first, rest)| {
+        (1_u8..0x20, prop::collection::vec(any::<u8>(), 0..40)).prop_map(|(first, rest)| {
             let mut v = vec![first];
             v.extend(rest);
             v
         }),
-        prop::collection::vec(b' '..=b'~', 125).prop_map(|text| {
-            let mut v = b"TAG".to_vec();
-            v.extend(text);
-            v
-        }),
+        (
+            prop_oneof![0_usize..=3, 0_usize..=30],
+            prop::collection::vec(b' '..=b'~', 30),
+            prop::option::of(prop::collection::vec(b' '..=b'~', 95)),
+        )
+            .prop_map(|(title_len, title, rest)| {
+                let mut v = b"TAG".to_vec();
+                v.extend_from_slice(&title[..title_len]);
+                v.resize(33, 0);
+                v.extend(rest.unwrap_or_else(|| vec![0; 95]));
+                v
+            }),
     ]
 }
 
@@ -298,16 +337,24 @@ fn build(s: &Soup) -> (Vec<u8>, Record) {
         }
         record.push((c.id, header, header + 8..header + 8 + len as u64, pad));
     }
+    let header_bytes = if rf64 { 4 + 8 + 28 } else { 4 };
+    let exact = header_bytes + body.len();
+    let size = match s.size {
+        ContainerSize::Exact => exact,
+        ContainerSize::IncludingTrailing => exact + s.trailing.len(),
+        ContainerSize::EightTooLarge => exact + 8,
+        ContainerSize::Zero => 0,
+    };
     let mut out = Vec::new();
     match s.kind {
         SoupKind::Riff => {
             out.extend_from_slice(b"RIFF");
-            put_size(&mut out, small(4 + body.len()), false);
+            put_size(&mut out, small(size), false);
             out.extend_from_slice(b"WAVE");
         }
         SoupKind::Aiff => {
             out.extend_from_slice(b"FORM");
-            put_size(&mut out, small(4 + body.len()), true);
+            put_size(&mut out, small(size), true);
             out.extend_from_slice(b"AIFF");
         }
         SoupKind::Rf64 => {
@@ -316,7 +363,7 @@ fn build(s: &Soup) -> (Vec<u8>, Record) {
             out.extend_from_slice(b"WAVE");
             out.extend_from_slice(b"ds64");
             put_size(&mut out, 28, false);
-            out.extend_from_slice(&((4 + 8 + 28 + body.len()) as u64).to_le_bytes());
+            out.extend_from_slice(&(size as u64).to_le_bytes());
             out.extend_from_slice(&data_len.to_le_bytes());
             out.extend_from_slice(&(data_len / 4).to_le_bytes());
             out.extend_from_slice(&0_u32.to_le_bytes());

@@ -405,3 +405,122 @@ fn more_than_65536_ds64_entries_is_corrupt() {
     let t = walk_bytes(&rf64(count - 1, &entries[..n])).unwrap();
     assert_eq!(t.ds64.unwrap().table.len(), n);
 }
+
+/// An `ID3v1` tag with `title` (zero-filled to 30 bytes) and everything else zero.
+fn id3v1(title: &[u8]) -> Vec<u8> {
+    let mut tag = b"TAG".to_vec();
+    tag.extend_from_slice(title);
+    tag.resize(128, 0);
+    tag
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RiffSize {
+    Exact,
+    IncludingTag,
+    EightTooLarge,
+    Zero,
+}
+
+#[test]
+fn an_id3v1_tag_after_odd_data_stays_trailing_whatever_the_riff_size() {
+    let titles: [&[u8]; 5] = [b"A", b"Go", b"Ax", b"A full printable title, 30 ch", b""];
+    for size in [
+        RiffSize::Exact,
+        RiffSize::IncludingTag,
+        RiffSize::EightTooLarge,
+        RiffSize::Zero,
+    ] {
+        for padded in [false, true] {
+            for title in titles {
+                let case = format!("{size:?}, padded {padded}, title {title:?}");
+                let form = Form::riff()
+                    .chunk(b"fmt ", &fmt_pcm(1, 44_100, 24))
+                    .chunk_pad(b"data", &[1, 2, 3, 4, 5, 6, 7, 8, 9], padded.then_some(0));
+                let body = u32::try_from(4 + form.body.len()).unwrap();
+                let field = match size {
+                    RiffSize::Exact => body,
+                    RiffSize::IncludingTag => body + 128,
+                    RiffSize::EightTooLarge => body + 8,
+                    RiffSize::Zero => 0,
+                };
+                let mut bytes = form.build_with_size(field);
+                let tag = id3v1(title);
+                bytes.extend_from_slice(&tag);
+                let len = bytes.len() as u64;
+                let t = walk_bytes(&bytes).unwrap();
+                assert_eq!(ids(&t), ["fmt ", "data"], "{case}");
+                let data = t.find(b"data").unwrap();
+                assert_eq!(data.payload_len(), 9, "{case}");
+                assert_eq!(data.pad, padded.then_some(0), "{case}");
+                assert!(!t.truncated, "{case}");
+                assert_eq!(t.trailing, Some(len - 128..len), "{case}");
+                assert_eq!(&bytes[bytes.len() - 128..], tag.as_slice(), "{case}");
+            }
+        }
+    }
+}
+
+#[test]
+fn data_that_merely_starts_with_tag_128_bytes_from_the_end_is_kept() {
+    let mut audio = vec![7_u8; 200];
+    audio[200 - 128..200 - 125].copy_from_slice(b"TAG");
+    let bytes = Form::riff()
+        .chunk(b"fmt ", &fmt_pcm(2, 44_100, 16))
+        .chunk(b"data", &audio)
+        .build();
+    let t = walk_bytes(&bytes).unwrap();
+    assert_eq!(t.find(b"data").unwrap().payload_len(), 200);
+    assert_eq!(t.trailing, None);
+    assert!(!t.truncated);
+}
+
+#[test]
+fn a_zero_pad_left_out_of_the_container_size_is_a_pad() {
+    let form = Form::riff()
+        .chunk(b"fmt ", &fmt_pcm(2, 44_100, 16))
+        .chunk_pad(b"xodd", b"abc", Some(0));
+    // The RIFF size stops before the pad byte; an `id3 ` chunk follows outside the container.
+    let mut bytes = form.build_with_size(u32::try_from(4 + form.body.len() - 1).unwrap());
+    bytes.extend_from_slice(b"id3 \x04\0\0\0ID3\x04");
+    let t = walk_bytes(&bytes).unwrap();
+    assert_eq!(ids(&t), ["fmt ", "xodd", "id3 "]);
+    let odd = t.find(b"xodd").unwrap();
+    assert_eq!(odd.pad, Some(0));
+    assert!(odd.beyond_container);
+    assert_eq!(t.find(b"id3 ").unwrap().payload_len(), 4);
+    assert_eq!(t.trailing, None);
+}
+
+/// 65,536 one-byte chunks with a non-zero pad each: every pad decision reads a chain of
+/// headers.
+fn many_odd_chunks() -> Vec<u8> {
+    Form::riff()
+        .raw(&b"XXXX\x01\0\0\0ab".repeat(MAX_CHUNKS))
+        .build()
+}
+
+#[test]
+fn pad_probes_stay_within_the_walk_budget() {
+    let bytes = many_odd_chunks();
+    let (t, probes) = walk_with_budget(
+        &mut std::io::Cursor::new(&bytes),
+        Path::new(MEMORY_PATH),
+        MAX_PAD_PROBES,
+    )
+    .unwrap();
+    assert!(probes <= MAX_PAD_PROBES, "{probes} probes");
+    assert_eq!(t.chunks.len(), MAX_CHUNKS);
+    assert!(t.chunks.iter().all(|c| c.pad == Some(b'b')));
+    // With a small budget the walk still finishes; later pads are assumed present.
+    let (t, probes) = walk_with_budget(
+        &mut std::io::Cursor::new(&bytes),
+        Path::new(MEMORY_PATH),
+        1_000,
+    )
+    .unwrap();
+    assert!(probes <= 1_000, "{probes} probes");
+    assert_eq!(t.chunks.len(), MAX_CHUNKS);
+    assert!(t.chunks.iter().all(|c| c.pad == Some(b'b')));
+    assert_eq!(t.trailing, None);
+}
