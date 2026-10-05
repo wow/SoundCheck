@@ -1,5 +1,6 @@
 //! The apply harness: what a writer is asked to do, what it reports, the parameter grid every
-//! writer runs, and the stand-ins for the `sc-io` writers until they exist.
+//! writer runs, and the calls into the `sc-io` writers (stand-ins where a writer does not exist
+//! yet).
 
 use std::path::Path;
 
@@ -170,14 +171,30 @@ pub fn apply_with_tags(
     args: &ApplyArgs,
     edits: &[TagEdit],
 ) -> Result<Applied, String> {
-    let _ = (out, args);
     if input.extension().is_some_and(|e| e == "flac") {
         unimplemented!("sc-io writer arrives with the FLAC writer");
     }
-    if edits.is_empty() {
-        unimplemented!("sc-io writer arrives with the IFF writer");
+    if !edits.is_empty() {
+        unimplemented!("sc-io tag editing arrives with the ID3 editor");
     }
-    unimplemented!("sc-io tag editing arrives with the ID3 editor");
+    let request = sc_core::RenderRequest {
+        gain_db: args.gain_db,
+        trim_frames: args.trim_samples,
+        bits: args.bits,
+        loudness: args.loudness.map(|l| sc_core::BextLoudness {
+            integrated_lufs_x100: l.value,
+            range_lu_x100: l.range,
+            max_true_peak_dbtp_x100: l.max_true_peak,
+            max_momentary_lufs_x100: l.max_momentary,
+            max_short_term_lufs_x100: l.max_short_term,
+        }),
+        tag_edits: Vec::new(),
+    };
+    sc_io::render::apply_iff(input, out, &request)
+        .map(|report| Applied {
+            tags_added: report.tags_added,
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Whether the writer tests should run: they need `SC_FILE_WRITERS=1` in addition to

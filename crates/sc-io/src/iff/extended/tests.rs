@@ -85,3 +85,28 @@ fn the_classic_mac_rate_is_not_an_integer() {
     };
     assert!((hz - 22_254.545_454).abs() < 1e-3, "{hz}");
 }
+
+#[test]
+fn the_encoder_writes_the_known_bytes_and_round_trips() {
+    for (hz, bytes) in KNOWN {
+        assert_eq!(extended_from_sample_rate(hz), bytes, "{hz} Hz");
+    }
+    for hz in [
+        1,
+        2,
+        3,
+        1_000,
+        11_025,
+        44_100,
+        48_000,
+        88_200,
+        96_000,
+        352_800,
+        u32::MAX,
+    ] {
+        let bytes = extended_from_sample_rate(hz);
+        assert_eq!(bytes, super::super::test_build::extended(hz), "{hz} Hz");
+        assert_eq!(sample_rate_from_extended(bytes), Ok(hz), "{hz} Hz");
+    }
+    assert_eq!(extended_from_sample_rate(0), [0; 10]);
+}

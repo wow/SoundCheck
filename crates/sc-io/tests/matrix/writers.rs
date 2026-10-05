@@ -1,7 +1,8 @@
 //! The writer tests and the runner they share with the self-tests.
 //!
-//! Each writer test is `#[ignore]`d and additionally returns early unless `SC_FILE_WRITERS=1`,
-//! so a nightly `--include-ignored` run stays green until the `sc-io` writers exist. The same
+//! The IFF writer tests run in every `cargo test`. The tests of writers that do not exist yet
+//! are `#[ignore]`d and additionally return early unless `SC_FILE_WRITERS=1`, so a nightly
+//! `--include-ignored` run stays green until those writers exist. The same
 //! [`run`] drives the reference writer in `selftest.rs`, so every assertion here is already
 //! exercised on a correct output.
 
@@ -13,6 +14,7 @@ use super::apply::{
 use super::cases::{Fixture, matrix};
 use super::check::check_output;
 use super::expect::refusal;
+use super::golden::{OutputEntry, row_label};
 use super::parse;
 
 /// What a writer returns: output bytes and report, or its refusal.
@@ -112,10 +114,8 @@ fn sc_io(dir: &Path) -> impl Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written {
     }
 }
 
-fn run_all(test: &str, fixtures: &[Fixture], rows: &[ApplyArgs], edits: &[TagEdit]) {
-    if !writers_enabled(test) {
-        return;
-    }
+/// Runs the `sc-io` writer on every fixture and row.
+fn run_rows(fixtures: &[Fixture], rows: &[ApplyArgs], edits: &[TagEdit]) {
     let dir = tempfile::tempdir().expect("tempdir");
     let writer = sc_io(dir.path());
     for fx in fixtures {
@@ -125,28 +125,47 @@ fn run_all(test: &str, fixtures: &[Fixture], rows: &[ApplyArgs], edits: &[TagEdi
     }
 }
 
-#[test]
-#[ignore = "arrives with the IFF writer"]
-fn iff_apply_carries_every_chunk_and_writes_dj_safe_headers() {
-    let fixtures: Vec<_> = matrix().into_iter().filter(Fixture::is_iff).collect();
-    run_all(
-        "iff_apply_carries_every_chunk_and_writes_dj_safe_headers",
-        &fixtures,
-        &grid(),
-        &[],
-    );
+/// SHA-256 of the `sc-io` output of every IFF fixture for every grid and bit-depth row, in
+/// matrix order (`refused` where the writer refuses), for the golden manifest.
+#[must_use]
+pub fn iff_outputs(fixtures: &[Fixture]) -> Vec<OutputEntry> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let writer = sc_io(dir.path());
+    let rows: Vec<ApplyArgs> = grid().into_iter().chain(bit_depth_rows()).collect();
+    let mut out = Vec::new();
+    for fx in fixtures.iter().filter(|f| f.is_iff()) {
+        for args in &rows {
+            let sha256 = match writer(fx, args, &[]) {
+                Ok((bytes, _)) => parse::sha256_hex(&bytes),
+                Err(_) => "refused".into(),
+            };
+            out.push(OutputEntry {
+                fixture: fx.name.into(),
+                row: row_label(args),
+                sha256,
+            });
+        }
+    }
+    out
+}
+
+/// [`run_rows`] for a writer that does not exist yet: only with `SC_FILE_WRITERS=1`.
+fn run_all(test: &str, fixtures: &[Fixture], rows: &[ApplyArgs], edits: &[TagEdit]) {
+    if writers_enabled(test) {
+        run_rows(fixtures, rows, edits);
+    }
 }
 
 #[test]
-#[ignore = "arrives with the IFF writer"]
+fn iff_apply_carries_every_chunk_and_writes_dj_safe_headers() {
+    let fixtures: Vec<_> = matrix().into_iter().filter(Fixture::is_iff).collect();
+    run_rows(&fixtures, &grid(), &[]);
+}
+
+#[test]
 fn iff_apply_writes_the_requested_bit_depth() {
     let fixtures: Vec<_> = matrix().into_iter().filter(Fixture::is_iff).collect();
-    run_all(
-        "iff_apply_writes_the_requested_bit_depth",
-        &fixtures,
-        &bit_depth_rows(),
-        &[],
-    );
+    run_rows(&fixtures, &bit_depth_rows(), &[]);
 }
 
 #[test]

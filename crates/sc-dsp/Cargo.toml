@@ -25,3 +25,7 @@ harness = false
 [[bench]]
 name = "onset"
 harness = false
+
+[[bench]]
+name = "dither"
+harness = false

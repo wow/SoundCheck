@@ -4039,6 +4039,7 @@ dependencies = [
  "md-5",
  "proptest",
  "sc-core",
+ "sc-dsp",
  "serde",
  "serde_json",
  "sha2",

@@ -1,6 +1,6 @@
 //! The AIFF `COMM` sample rate: an 80-bit IEEE 754 extended value (Apple AIFF 1.3, "Extended"
 //! type; IEEE 754-1985 double-extended with an explicit integer bit), decoded exactly as an
-//! integer in hertz.
+//! integer in hertz, and the exact encoding of one for the writers.
 
 use std::fmt;
 
@@ -63,6 +63,24 @@ pub fn sample_rate_from_extended(bytes: [u8; 10]) -> Result<u32, ExtendedRateErr
         return Err(ExtendedRateError::NotInteger(approx(mantissa, e)));
     }
     u32::try_from(mantissa >> shift).map_err(|_| ExtendedRateError::TooLarge)
+}
+
+/// Encodes a whole number of hertz as an 80-bit extended value, exactly: the inverse of
+/// [`sample_rate_from_extended`]. The mantissa is normalised (integer bit set), as Apple's and
+/// libsndfile's writers store it; 0 Hz encodes as positive zero.
+#[must_use]
+pub fn extended_from_sample_rate(hz: u32) -> [u8; 10] {
+    let mut out = [0_u8; 10];
+    if hz == 0 {
+        return out;
+    }
+    let e = hz.ilog2();
+    // e < 32, so the exponent is far inside 15 bits.
+    let exponent = u16::try_from(BIAS.unsigned_abs() + e).unwrap_or(u16::MAX);
+    let mantissa = u64::from(hz) << (63 - e);
+    out[..2].copy_from_slice(&exponent.to_be_bytes());
+    out[2..].copy_from_slice(&mantissa.to_be_bytes());
+    out
 }
 
 /// The value as `f64`, for messages only.

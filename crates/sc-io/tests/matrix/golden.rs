@@ -1,6 +1,7 @@
 //! The golden manifest of the matrix: per fixture its size, total SHA-256 and per-block kind,
-//! id, SHA-256, pad byte and expected fate. The builders are deterministic, so the comparison
-//! is exact; `UPDATE_GOLDEN=1` rewrites the file instead of comparing.
+//! id, SHA-256, pad byte and expected fate, the expected patched payloads, and the SHA-256 of
+//! every `sc-io` writer output. The builders and writers are deterministic, so the comparison is
+//! exact; `UPDATE_GOLDEN=1` rewrites the file instead of comparing.
 
 use std::path::PathBuf;
 
@@ -21,9 +22,10 @@ pub struct Manifest {
     pub schema: u32,
     /// One entry per fixture, in matrix order.
     pub fixtures: Vec<FixtureEntry>,
-    /// SHA-256 of each writer output per fixture and grid row. Empty until the `sc-io` writers
-    /// exist; then the writer tests fill it (with `UPDATE_GOLDEN=1`) so any byte change of an
-    /// output shows up as a reviewed diff.
+    /// SHA-256 of each `sc-io` writer output per fixture and row (`refused` where it refuses),
+    /// so any byte change of an output shows up as a reviewed diff. Holds the IFF fixtures
+    /// over the grid and bit-depth rows; FLAC and tag-edit outputs join when their writers
+    /// exist.
     #[serde(default)]
     pub outputs: Vec<OutputEntry>,
     /// SHA-256 of every patched block's expected payload per fixture and grid row, so a change
@@ -173,7 +175,7 @@ pub fn manifest(fixtures: &[Fixture]) -> Manifest {
                     .collect(),
             })
             .collect(),
-        outputs: Vec::new(),
+        outputs: super::writers::iff_outputs(fixtures),
         patched: patched_entries(fixtures),
     }
 }
@@ -215,12 +217,19 @@ fn first_difference(want: &Manifest, got: &Manifest) -> String {
             return format!("patched payload differs: golden {w:?}, built {g:?}");
         }
     }
+    for (w, g) in want.outputs.iter().zip(&got.outputs) {
+        if w != g {
+            return format!("writer output differs: golden {w:?}, built {g:?}");
+        }
+    }
     format!(
-        "golden has {} fixtures and {} patched payloads, built {} and {}",
+        "golden has {} fixtures, {} patched payloads and {} outputs, built {}, {} and {}",
         want.fixtures.len(),
         want.patched.len(),
+        want.outputs.len(),
         got.fixtures.len(),
-        got.patched.len()
+        got.patched.len(),
+        got.outputs.len()
     )
 }
 

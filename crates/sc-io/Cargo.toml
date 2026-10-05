@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 sc-core = { workspace = true }
+sc-dsp = { workspace = true }
 symphonia = { workspace = true }
 lofty = { workspace = true }
 directories = { workspace = true }
@@ -32,4 +33,8 @@ criterion = { workspace = true }
 
 [[bench]]
 name = "iff"
+harness = false
+
+[[bench]]
+name = "apply"
 harness = false
