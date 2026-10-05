@@ -15,7 +15,8 @@
 //! What runs now proves the matrix itself: symphonia decodes each fixture to the generated
 //! samples (or refuses it for a documented reason), lofty and hound read what they support, an
 //! independent reader (`matrix/parse.rs`, no `sc-io` code) lists exactly the expected blocks,
-//! fixtures are small and deterministic, the golden manifest
+//! `sc_io::iff` lists the same chunks and reads the same samples (`matrix/walker.rs`, RF64
+//! included), fixtures are small and deterministic, the golden manifest
 //! `tests/fixtures/golden/file-layer-matrix.json` matches (exact; `UPDATE_GOLDEN=1` rewrites
 //! it), and a reference writer passes every check while each injected mistake fails one
 //! (`matrix/selftest.rs`). The writer tests (`matrix/writers.rs`) run the `sc-io` writers
@@ -63,6 +64,8 @@ mod pcm;
 mod riff;
 #[path = "matrix/selftest.rs"]
 mod selftest;
+#[path = "matrix/walker.rs"]
+mod walker;
 #[path = "matrix/writers.rs"]
 mod writers;
 
