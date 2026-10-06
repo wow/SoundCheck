@@ -5,8 +5,9 @@
 //! placeholder has sample number `0xFFFFFFFFFFFFFFFF` (offset and count undefined, written as
 //! 0). Points are sorted by sample number, unique, placeholders last.
 //!
-//! The rebuilt table has the source table's length, so the block keeps its size and can be
-//! written before the frames: as many real points as the source had (at most one per frame,
+//! The rebuilt table has the source table's whole points (bytes after the last whole point of a
+//! malformed table are dropped), so the block keeps its size and can be written before the
+//! frames: as many real points as the source had (at most one per frame,
 //! the rest become placeholders), at evenly spaced frames (`k * frames / real` for `k` in
 //! `0..real`, so the first frame is always a point), then the placeholders.
 
@@ -26,24 +27,19 @@ pub struct SeekShape {
 }
 
 impl SeekShape {
-    /// Counts the points of a SEEKTABLE payload.
-    ///
-    /// # Errors
-    /// When the payload length is not a multiple of [`SEEK_POINT_BYTES`].
-    pub fn of(payload: &[u8]) -> Result<Self, &'static str> {
-        if !payload.len().is_multiple_of(SEEK_POINT_BYTES) {
-            return Err("the SEEKTABLE length is not a multiple of 18 bytes");
-        }
-        let placeholders = payload
-            .as_chunks::<SEEK_POINT_BYTES>()
-            .0
+    /// Counts the whole points of a SEEKTABLE payload; bytes after the last whole point (a
+    /// length that is not a multiple of [`SEEK_POINT_BYTES`]) are not a point and are left out.
+    #[must_use]
+    pub fn of(payload: &[u8]) -> Self {
+        let (points, _) = payload.as_chunks::<SEEK_POINT_BYTES>();
+        let placeholders = points
             .iter()
             .filter(|p| p[..8] == PLACEHOLDER.to_be_bytes())
             .count();
-        Ok(Self {
-            real: payload.len() / SEEK_POINT_BYTES - placeholders,
+        Self {
+            real: points.len() - placeholders,
             placeholders,
-        })
+        }
     }
 
     /// Payload length, bytes.

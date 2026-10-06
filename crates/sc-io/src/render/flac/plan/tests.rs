@@ -26,6 +26,7 @@ fn plan_of(blocks: &[(u8, Vec<u8>)], trim: u64, edits: &[VorbisEdit]) -> Result<
             trim_frames: trim,
             frames_out: 5000 - trim,
             edits,
+            gain_changed: false,
         },
     )
 }
@@ -183,6 +184,20 @@ fn cue_sheets_are_patched_under_a_trim_and_refused_when_they_cannot_be() {
     assert!(matches!(cdda, Err(Error::InvalidArgument(_))));
     let short = plan_of(&[(5, vec![0; 100])], 441, &[]);
     assert!(matches!(short, Err(Error::Corrupt { .. })));
-    let odd_table = plan_of(&[(3, vec![0; 20])], 0, &[]);
-    assert!(matches!(odd_table, Err(Error::Corrupt { .. })));
+}
+
+#[test]
+fn a_partial_seek_point_is_left_out_and_padding_takes_its_bytes() {
+    let mut odd = table();
+    odd.extend_from_slice(&[0xAB; 7]);
+    let p = plan_of(&[(3, odd), (1, vec![0; 10])], 0, &[]).expect("plans");
+    assert_eq!(
+        p.blocks[1].body,
+        Body::SeekTable(SeekShape {
+            real: 1,
+            placeholders: 1
+        })
+    );
+    assert_eq!((p.blocks[1].len, p.blocks[2].len), (36, 17));
+    assert_eq!(p.records[1].fate, BlockFate::Replaced);
 }

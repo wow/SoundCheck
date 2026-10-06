@@ -21,7 +21,7 @@ use super::plan::{Body, Plan};
 use crate::flac::seektable::{self, SeekShape};
 use crate::flac::{
     Encoded, FlacLayout, FlacPcm, FrameEncoder, MARKER, OUTPUT_BLOCK_FRAMES, STREAMINFO_BYTES,
-    StreamInfo, block_header, decode_frames, read_layout,
+    StreamInfo, block_header, decode_frames, frame_follows, read_layout,
 };
 
 /// Zero bytes written per call for PADDING and placeholder payloads.
@@ -198,6 +198,18 @@ fn write_frames<W: Write>(src: &mut File, w: &mut W, job: &Job<'_>) -> Result<(E
         flac_encoder.push(&out[..kept], w)?;
     }
     let read = pcm.finish()?;
+    // Frames past the declared total would otherwise be carried as trailing bytes: audio at
+    // the old level and depth that players ignoring the total would play on.
+    if frame_follows(src, job.input, read.frames_end, job.layout.file_len)? {
+        return Err(Error::Corrupt {
+            path: job.input.to_path_buf(),
+            detail: format!(
+                "more audio frames than STREAMINFO declares ({} samples per channel) follow \
+                 at byte {}",
+                read.frames, read.frames_end
+            ),
+        });
+    }
     if read.frames != target.frames_in {
         return Err(Error::Corrupt {
             path: job.input.to_path_buf(),
@@ -254,8 +266,8 @@ pub(super) struct Expected {
 }
 
 /// Walks the written file `output` and decodes its frames: the metadata must be where it was
-/// planned with the STREAMINFO written, and the frames must decode to the encoded samples
-/// (count and BLAKE3) with the STREAMINFO MD5.
+/// planned with the STREAMINFO written (whose MD5 is the encoder's, computed over the same
+/// bytes as the BLAKE3), and the frames must decode to the encoded samples (count and BLAKE3).
 ///
 /// # Errors
 /// [`Error::Corrupt`] naming `output` for any difference; [`Error::Io`]; [`Error::Cancelled`].
@@ -296,12 +308,6 @@ pub(super) fn verify(output: &Path, want: &Expected, cancel: &AtomicBool) -> Res
         return Err(verify_failed(
             output,
             "the decoded samples differ from the encoded ones",
-        ));
-    }
-    if decoded.md5 != info.md5 {
-        return Err(verify_failed(
-            output,
-            "the decoded samples do not match the STREAMINFO MD5",
         ));
     }
     tracing::debug!(path = %output.display(), stage = "verify", frames = decoded.frames, "verified");

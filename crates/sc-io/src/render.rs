@@ -45,7 +45,9 @@
 //! trim that leaves no audio or starts inside a sampler loop ([`Error::InvalidArgument`]); a
 //! file cut short inside a chunk, a malformed chunk that must be rewritten
 //! ([`Error::Corrupt`]). A cancel flag, checked once per block, stops the render with
-//! [`Error::Cancelled`] and the partial output removed. The output is created new
+//! [`Error::Cancelled`] and the partial output removed (as on any error or panic). After a gain
+//! change, ID3 `TXXX:REPLAYGAIN_*` and `RVA2` frames that no edit replaces are listed in
+//! [`RenderReport::stale_loudness_tags`]. The output is created new
 //! (`create_new`), so an existing file, the source included, is never overwritten; making the
 //! write atomic is the caller's job. I/O errors name the input when reading fails and the
 //! output when writing fails.
@@ -153,6 +155,11 @@ pub struct RenderReport {
     /// (interleaved, little-endian, `bits_out / 8` bytes each), the bytes a decode of the
     /// frames gives.
     pub pcm_hash: [u8; 32],
+    /// Loudness tags the render leaves stale, by label as written: after a gain change, the
+    /// Replay Gain and R 128 items no tag edit replaces (Vorbis `REPLAYGAIN_*` and `R128_*`
+    /// fields; ID3 `TXXX:REPLAYGAIN_*` and `RVA2` frames). Empty without a gain change. They
+    /// are carried unchanged; the caller decides whether to edit them.
+    pub stale_loudness_tags: Vec<String>,
     /// Every source chunk or metadata block in source order with its fate.
     pub blocks: Vec<BlockRecord>,
     /// Bytes before the stream carried at the start of the output (`ID3v2` tags in front of
@@ -169,6 +176,36 @@ impl RenderReport {
     #[must_use]
     pub fn count(&self, fate: BlockFate) -> usize {
         self.blocks.iter().filter(|b| b.fate == fate).count()
+    }
+}
+
+/// Removes a newly created output file when dropped, unless [`OutputGuard::keep`] was called:
+/// an error or a panic while writing never leaves a partial file behind.
+#[derive(Debug)]
+pub(crate) struct OutputGuard<'a> {
+    path: &'a Path,
+    keep: bool,
+}
+
+impl<'a> OutputGuard<'a> {
+    /// Guards the file at `path`, which the caller has just created.
+    pub(crate) fn new(path: &'a Path) -> Self {
+        Self { path, keep: false }
+    }
+
+    /// Keeps the file: it is complete.
+    pub(crate) fn keep(mut self) {
+        self.keep = true;
+    }
+}
+
+impl Drop for OutputGuard<'_> {
+    fn drop(&mut self) {
+        if !self.keep
+            && let Err(rm) = std::fs::remove_file(self.path)
+        {
+            tracing::warn!(path = %self.path.display(), error = %rm, "partial output not removed");
+        }
     }
 }
 
@@ -211,6 +248,11 @@ pub fn apply_iff(
         let peaks = audio::peaks_after_trim(&mut src, input, format, req.trim_frames, cancel)?;
         check_full_scale(peaks, req.gain_db)?;
     }
+    let stale_loudness_tags = if req.gain_db == 0.0 {
+        Vec::new()
+    } else {
+        tag::stale_loudness(&mut src, input, table, &target.tag_edits)?
+    };
     let format_payload = read_format_payload(&mut src, input, table, format)?;
     let seed_request = SeedRequest {
         gain_db: req.gain_db,
@@ -242,16 +284,9 @@ pub fn apply_iff(
         seed,
         cancel,
     };
-    let written = write_file(&mut src, file, output, &layout, target.container, &job);
-    let done = match written {
-        Ok(done) => done,
-        Err(e) => {
-            if let Err(rm) = std::fs::remove_file(output) {
-                tracing::warn!(path = %output.display(), error = %rm, "partial output not removed");
-            }
-            return Err(e);
-        }
-    };
+    let guard = OutputGuard::new(output);
+    let done = write_file(&mut src, file, output, &layout, target.container, &job)?;
+    guard.keep();
     tracing::info!(
         path = %input.display(),
         output = %output.display(),
@@ -282,6 +317,7 @@ pub fn apply_iff(
         dithered: done.dithered,
         samples_saturated: done.saturated,
         pcm_hash: done.pcm_hash,
+        stale_loudness_tags,
         blocks: layout.records,
         leading_bytes: 0,
         trailing_bytes: layout.trailing.map_or(0, |t| t.end - t.start),

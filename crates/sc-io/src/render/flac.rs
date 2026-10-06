@@ -11,7 +11,8 @@
 //!   written, the sample rate and channels of the source, the output depth, the new total and
 //!   the MD5 of the output samples.
 //! - **SEEKTABLE** is rebuilt with as many points as the source table (real points on evenly
-//!   spaced frames, placeholders kept as placeholders; see [`crate::flac::seektable`]).
+//!   spaced frames, placeholders kept as placeholders; see [`crate::flac::seektable`]); bytes
+//!   after the last whole point of a malformed table go to the first PADDING block.
 //! - **`VORBIS_COMMENT`** with tag edits ([`RenderRequest::tag_edits`], Vorbis field names): the
 //!   vendor string and every field byte for byte and in order, a field with an edited name
 //!   (case-insensitive) given the new value in place, the other edits appended once (see
@@ -27,6 +28,8 @@
 //!   for 16 bits or fewer, else 24; a 24-bit source stays 24), with gain, rounding and dither
 //!   as [`sc_dsp::requantise`] specifies. The source's frames are decoded exactly (CRCs checked)
 //!   and, when STREAMINFO has an MD5 signature, checked against it.
+//! - **Stale loudness tags**: after a gain change, `REPLAYGAIN_*` and `R128_*` fields that no
+//!   edit replaces are carried and listed in [`RenderReport::stale_loudness_tags`].
 //! - **Verified**: after writing, the output is walked again and its frames decoded with an
 //!   independent decoder; the sample count, the BLAKE3 of the samples (against the hash taken
 //!   while encoding) and the MD5 (against the STREAMINFO just written) must all match, or the
@@ -37,10 +40,10 @@
 //! ([`Error::NotDjSafe`]); a sample after gain at or above +1.0 of full scale
 //! ([`Error::WouldClip`]); a trim that leaves no audio or breaks a CD-DA cue sheet, an invalid
 //! tag edit ([`Error::InvalidArgument`]); a source whose frames do not decode, do not match
-//! their count or MD5, or whose SEEKTABLE or CUESHEET (under a trim) is malformed
-//! ([`Error::Corrupt`]); no `fLaC` marker ([`Error::UnsupportedFormat`]). A cancel flag,
+//! their count or MD5, run past the total STREAMINFO declares or are followed by more frames,
+//! or whose CUESHEET (under a trim) is malformed ([`Error::Corrupt`]); no `fLaC` marker ([`Error::UnsupportedFormat`]). A cancel flag,
 //! checked once per frame, stops the render with [`Error::Cancelled`]. The output is created
-//! new (`create_new`); I/O errors name the input when reading fails and the output when
+//! new (`create_new`) and removed on any error or panic; I/O errors name the input when reading fails and the output when
 //! writing fails.
 
 mod plan;
@@ -53,7 +56,9 @@ use std::sync::atomic::AtomicBool;
 use sc_core::{Error, RenderRequest, Result};
 
 use super::audio::{Peaks, SEED_FRAMES, SeedRequest, check_cancel, seed_hasher, seed_of};
-use super::{RenderReport, check_full_scale, check_rate, check_request, io_error, output_bits};
+use super::{
+    OutputGuard, RenderReport, check_full_scale, check_rate, check_request, io_error, output_bits,
+};
 use crate::flac::{FlacLayout, FlacPcm, read_layout, vorbis};
 use plan::{PlanArgs, TagOutcome};
 
@@ -105,6 +110,7 @@ pub fn apply_flac(
             trim_frames: target.trim_frames,
             frames_out: target.frames_out,
             edits: &edits,
+            gain_changed: req.gain_db != 0.0,
         },
     )?;
     if req.gain_db > 0.0 {
@@ -125,15 +131,9 @@ pub fn apply_flac(
         target: &target,
         cancel,
     };
-    let done = match write::write_and_verify(&mut src, file, &job) {
-        Ok(done) => done,
-        Err(e) => {
-            if let Err(rm) = std::fs::remove_file(output) {
-                tracing::warn!(path = %output.display(), error = %rm, "partial output not removed");
-            }
-            return Err(e);
-        }
-    };
+    let guard = OutputGuard::new(output);
+    let done = write::write_and_verify(&mut src, file, &job)?;
+    guard.keep();
     tracing::info!(
         path = %input.display(),
         output = %output.display(),
@@ -164,6 +164,7 @@ pub fn apply_flac(
         dithered: done.dithered,
         samples_saturated: done.saturated,
         pcm_hash: done.pcm_hash,
+        stale_loudness_tags: plan.stale_loudness,
         blocks: plan.records,
         leading_bytes: layout.marker_offset,
         trailing_bytes: done.trailing_bytes,

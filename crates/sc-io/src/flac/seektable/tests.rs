@@ -18,22 +18,21 @@ fn placeholder() -> Vec<u8> {
 #[test]
 fn shape_counts_real_and_placeholder_points() {
     let p = [point(0, 0, 4096), point(8192, 900, 4096), placeholder()].concat();
+    let shape = SeekShape {
+        real: 2,
+        placeholders: 1,
+    };
+    assert_eq!(SeekShape::of(&p), shape);
+    assert_eq!(SeekShape::of(&p).bytes(), p.len());
+    let mut partial = p.clone();
+    partial.extend_from_slice(&[0xFF; 7]);
     assert_eq!(
-        SeekShape::of(&p),
-        Ok(SeekShape {
-            real: 2,
-            placeholders: 1
-        })
+        SeekShape::of(&partial),
+        shape,
+        "a partial point is not a point"
     );
-    assert_eq!(SeekShape::of(&p).expect("ok").bytes(), p.len());
-    assert!(SeekShape::of(&p[..17]).is_err());
-    assert_eq!(
-        SeekShape::of(&[]),
-        Ok(SeekShape {
-            real: 0,
-            placeholders: 0
-        })
-    );
+    assert_eq!(SeekShape::of(&p[..17]).bytes(), 0);
+    assert_eq!(SeekShape::of(&[]).bytes(), 0);
 }
 
 #[test]

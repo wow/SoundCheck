@@ -11,8 +11,9 @@
 //! index offset) moves by `-n` and clamps at 0; each track's offset becomes its first index
 //! point's new absolute position and its index offsets are rebased on it (so a pregap cut by
 //! the trim shrinks instead of the track start sliding); a track without index points keeps
-//! its offset minus `n`, clamped; the lead-out track (number 170 on CD-DA, 255 otherwise) gets
-//! the new total sample count. Every other byte is kept. A CD-DA sheet requires every offset
+//! its offset minus `n`, clamped; the lead-out track, which RFC 9639 makes the last track
+//! (numbered 170 on CD-DA, 255 otherwise, but found by its place), gets the new total sample
+//! count. Every other byte is kept. A CD-DA sheet requires every offset
 //! to be a multiple of 588 samples (one CD sector), so a trim that is not is refused rather
 //! than written into an invalid sheet.
 
@@ -59,11 +60,8 @@ pub fn shift_cuesheet(p: &mut [u8], trim: u64, total_out: u64) -> Result<bool, C
     // Every new value is computed before any byte is written, so an error leaves `p` as it was.
     let mut writes: Vec<(usize, u64)> = Vec::new();
     let mut pos = HEADER_BYTES;
-    for _ in 0..tracks {
+    for t in 0..tracks {
         let offset = be64(p, pos)?;
-        let number = *p
-            .get(pos + 8)
-            .ok_or(CuesheetError::Malformed("a track runs past the block"))?;
         let count = usize::from(
             *p.get(pos + TRACK_BYTES - 1)
                 .ok_or(CuesheetError::Malformed("a track runs past the block"))?,
@@ -76,7 +74,7 @@ pub fn shift_cuesheet(p: &mut [u8], trim: u64, total_out: u64) -> Result<bool, C
             ))?;
             absolute.push(abs.saturating_sub(trim));
         }
-        let new_offset = if number == 170 || number == 255 {
+        let new_offset = if t + 1 == tracks {
             total_out
         } else {
             absolute

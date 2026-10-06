@@ -3,9 +3,11 @@
 //! counted from 0), with the bookkeeping STREAMINFO and SEEKTABLE need.
 //!
 //! The encoder runs with its default settings (block size 4096, LPC order up to 8, residual
-//! partition order up to 5, the cheapest of independent, left/side, side/right and mid/side
-//! coding per frame) and without its optional thread pool, so it is single-threaded and the
-//! same samples always give the same bytes.
+//! partition order up to 5) except that the stereo decorrelation (independent, left/side,
+//! side/right or mid/side) is chosen per frame from the channels' summed magnitudes rather than
+//! by encoding all four (about half the encoding time for files about 1 % larger), and without
+//! its optional thread pool, so it is single-threaded and the same samples always give the same
+//! bytes.
 //!
 //! Two guards stand between the encoder and the file:
 //! - every sample must lie inside the output range (`-2^(bits-1)..2^(bits-1)`), checked
@@ -38,12 +40,14 @@ pub const OUTPUT_BLOCK_FRAMES: usize = 4096;
 const FRAME_HEADER_MAX_BYTES: usize = 16;
 
 /// The size of a frame of `block` samples per channel stored uncompressed: the longest header,
-/// per channel a subframe header byte and `bits / 8` bytes per sample, one byte of alignment
-/// and the CRC-16. No correct frame is larger.
+/// a subframe header byte per channel, `bits` per sample (one more for the side channel of a
+/// stereo frame, RFC 9639 section 9.2.2), rounded up to whole bytes, and the CRC-16. No
+/// correct frame is larger: the encoder stores a subframe VERBATIM when prediction does not pay.
 #[must_use]
 pub fn max_frame_bytes(channels: u16, block: usize, bits: u16) -> usize {
-    let per_channel = 1 + block * usize::from(bits).div_ceil(8);
-    FRAME_HEADER_MAX_BYTES + usize::from(channels) * per_channel + 1 + 2
+    let side = usize::from(channels == 2);
+    let data_bits = block * (usize::from(bits) * usize::from(channels) + side);
+    FRAME_HEADER_MAX_BYTES + usize::from(channels) + data_bits.div_ceil(8) + 2
 }
 
 /// A [`Write`] the encoder owns that the caller can still read: each frame is collected here,
@@ -128,7 +132,10 @@ impl FrameEncoder {
         }
         let frame = FrameBuf::default();
         Ok(Self {
-            writer: FlacStreamWriter::new(frame.clone(), Options::default()),
+            writer: FlacStreamWriter::new(
+                frame.clone(),
+                Options::default().fast_channel_correlation(true),
+            ),
             frame,
             sample_rate_hz,
             channels,

@@ -205,3 +205,39 @@ fn a_tag_over_the_cap_is_not_read() {
         })
     );
 }
+
+#[test]
+fn stale_loudness_frames_are_reported_after_a_gain() {
+    use crate::id3::test_build::{frame, txxx};
+    let id3 = tag(
+        3,
+        0,
+        &[],
+        &[
+            text(3, *b"TIT2", 0, "A"),
+            txxx(3, 0, "replaygain_track_gain", "-1 dB"),
+            txxx(3, 0, "REPLAYGAIN_TRACK_PEAK", "0.9"),
+            frame(3, *b"RVA2", [0, 0], b"track\0\x01\x00\x10\x00"),
+        ],
+        64,
+    );
+    let wav = Form::riff()
+        .chunk(b"fmt ", &fmt_pcm(1, 44_100, 16))
+        .chunk(b"id3 ", &id3)
+        .chunk(b"data", &[1, 0, 2, 0])
+        .build();
+    let req = RenderRequest {
+        gain_db: -1.0,
+        ..request(&[("TXXX:REPLAYGAIN_TRACK_GAIN", "-2 dB")])
+    };
+    let (_, report) = render(&wav, "wav", &req).expect("rendered");
+    assert_eq!(
+        report.stale_loudness_tags,
+        ["TXXX:REPLAYGAIN_TRACK_PEAK", "RVA2"]
+    );
+    let (_, report) = render(&wav, "wav", &request(&[])).expect("rendered");
+    assert!(
+        report.stale_loudness_tags.is_empty(),
+        "no gain, nothing stale"
+    );
+}

@@ -90,9 +90,15 @@ fn full_scale_noise_stays_within_the_verbatim_bound_and_is_deterministic() {
 }
 
 #[test]
-fn the_bound_counts_header_subframe_headers_alignment_and_crc() {
-    assert_eq!(max_frame_bytes(2, 4096, 24), 16 + 2 * (1 + 4096 * 3) + 3);
-    assert_eq!(max_frame_bytes(1, 10, 16), 16 + 21 + 3);
+fn the_bound_counts_header_subframe_headers_side_bit_and_crc() {
+    // Header, two subframe headers, 24 + 25 bits per sample pair, CRC-16.
+    assert_eq!(max_frame_bytes(2, 4096, 24), 16 + 2 + 4096 * 49 / 8 + 2);
+    assert_eq!(max_frame_bytes(1, 10, 16), 16 + 1 + 20 + 2);
+    assert_eq!(
+        max_frame_bytes(2, 3, 16),
+        16 + 2 + 13 + 2,
+        "99 bits round up to 13 bytes"
+    );
 }
 
 #[test]

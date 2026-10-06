@@ -103,9 +103,35 @@ fn malformed_sheets_are_refused_unchanged() {
     ));
     assert_eq!(cut, before);
     // Index 01 before index 00 after clamping: out of order.
-    let mut disorder = sheet(false, &[(1000, 1, vec![(500, 0), (0, 1)])]);
+    let mut disorder = sheet(
+        false,
+        &[(1000, 1, vec![(500, 0), (0, 1)]), (5000, 255, vec![])],
+    );
     assert!(matches!(
         shift_cuesheet(&mut disorder, 0, 1),
         Err(CuesheetError::Malformed(_))
     ));
+}
+
+#[test]
+fn the_lead_out_is_the_last_track_whatever_its_number() {
+    // Not CD-DA, so 170 is an ordinary track number here; the lead-out is the last track.
+    let mut p = sheet(
+        false,
+        &[
+            (0, 1, vec![(0, 1)]),
+            (3000, 170, vec![(0, 1)]),
+            (9000, 255, vec![]),
+        ],
+    );
+    shift_cuesheet(&mut p, 441, 8559).expect("shifts");
+    let want = sheet(
+        false,
+        &[
+            (0, 1, vec![(0, 1)]),
+            (2559, 170, vec![(0, 1)]),
+            (8559, 255, vec![]),
+        ],
+    );
+    assert_eq!(p, want);
 }

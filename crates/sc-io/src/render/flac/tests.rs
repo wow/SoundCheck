@@ -351,16 +351,67 @@ fn verification_catches_damage_on_disk() {
         verify(&run.output, &want, &no),
         Err(Error::Corrupt { .. })
     ));
+    // An MD5 on disk other than the encoder's: STREAMINFO is not as written.
     let mut md5 = out;
     md5[usize::try_from(l.blocks[0].payload.start).expect("small") + 20] ^= 1;
     std::fs::write(&run.output, &md5).expect("write");
-    let new_info = layout_of(&md5).streaminfo;
-    let same_info = Expected {
-        info: new_info,
-        ..want
-    };
     assert!(matches!(
-        verify(&run.output, &same_info, &no),
+        verify(&run.output, &want, &no),
         Err(Error::Corrupt { .. })
     ));
+}
+
+/// Regression: with STREAMINFO declaring fewer samples than the frames hold, the frames past
+/// the total were carried after the new ones (old level and depth); now the source is refused.
+#[test]
+fn more_frames_than_streaminfo_declares_are_refused() {
+    let data = samples(9000, 2, 16, 49);
+    let (enc, info) = encode(&data, 44_100, 2, 16);
+    for total in [8192, 5000] {
+        let short = StreamInfo {
+            total_samples: total,
+            ..info
+        };
+        let src = file(&[], &short, &[], &enc, &id3v1());
+        let req = RenderRequest {
+            bits: Some(24),
+            ..RenderRequest::default()
+        };
+        assert!(
+            matches!(refused(&src, &req), Error::Corrupt { .. }),
+            "total {total}"
+        );
+    }
+}
+
+#[test]
+fn stale_loudness_fields_are_reported_after_a_gain() {
+    let data = samples(5000, 1, 16, 51);
+    let (enc, info) = encode(&data, 44_100, 1, 16);
+    let fields = [
+        "TITLE=x",
+        "REPLAYGAIN_TRACK_GAIN=-1 dB",
+        "r128_track_gain=-256",
+        "replaygain_album_peak=0.9",
+    ];
+    let run = setup(&file(&[], &info, &[(4, vorbis("v", &fields))], &enc, &[]));
+    let req = RenderRequest {
+        gain_db: -3.2,
+        tag_edits: vec![TagEdit {
+            label: "replaygain_track_gain".into(),
+            value: "-4.2 dB".into(),
+        }],
+        ..RenderRequest::default()
+    };
+    let report = apply(&run, &req).expect("renders");
+    assert_eq!(
+        report.stale_loudness_tags,
+        ["r128_track_gain", "replaygain_album_peak"]
+    );
+    std::fs::remove_file(&run.output).expect("rm");
+    let report = apply(&run, &RenderRequest::default()).expect("renders");
+    assert!(
+        report.stale_loudness_tags.is_empty(),
+        "no gain, nothing stale"
+    );
 }

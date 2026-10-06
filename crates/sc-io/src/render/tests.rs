@@ -437,3 +437,21 @@ fn copy_errors_name_the_side_that_failed() {
     copy_range(&mut src, input, output, &(10..90), &mut out).expect("copied");
     assert_eq!(out, vec![7; 80]);
 }
+
+#[test]
+fn the_output_guard_removes_the_file_on_error_and_panic_unless_kept() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("out.wav");
+    std::fs::write(&path, b"partial").expect("write");
+    drop(OutputGuard::new(&path));
+    assert!(!path.exists(), "dropped without keep: removed");
+    std::fs::write(&path, b"complete").expect("write");
+    OutputGuard::new(&path).keep();
+    assert!(path.exists(), "kept");
+    let panicked = std::panic::catch_unwind(|| {
+        let _guard = OutputGuard::new(&path);
+        panic!("a bug while writing");
+    });
+    assert!(panicked.is_err());
+    assert!(!path.exists(), "a panic removes the partial output");
+}

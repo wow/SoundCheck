@@ -42,8 +42,7 @@ fn decodes_the_frames_by_range() {
         let mut le = Vec::new();
         crate::flac::le_sample_bytes(&data, usize::from(bits / 8), &mut le);
         assert_eq!(got.frames, 9000);
-        assert_eq!(got.md5, <[u8; 16]>::from(Md5::digest(&le)));
-        assert_eq!(got.md5, info.md5);
+        assert_eq!(<[u8; 16]>::from(Md5::digest(&le)), info.md5);
         assert_eq!(got.pcm_hash, *blake3::hash(&le).as_bytes());
     }
 }
@@ -68,7 +67,15 @@ fn damage_changes_the_result_or_fails() {
     );
     match got {
         Err(Error::Corrupt { path: p, .. }) => assert_eq!(p, path),
-        Ok(d) => assert_ne!(d.md5, info.md5, "damage must show"),
+        Ok(d) => {
+            let mut le = Vec::new();
+            crate::flac::le_sample_bytes(&data, 2, &mut le);
+            assert_ne!(
+                d.pcm_hash,
+                *blake3::hash(&le).as_bytes(),
+                "damage must show"
+            );
+        }
         Err(e) => panic!("unexpected {e}"),
     }
     let cancelled = decode_frames(

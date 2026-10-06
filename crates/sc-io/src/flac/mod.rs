@@ -43,7 +43,7 @@ mod walk;
 #[cfg(test)]
 pub(crate) mod test_build;
 
-pub use decode::FlacPcm;
+pub use decode::{FlacPcm, frame_follows, is_frame_header};
 pub use encode::{Encoded, FrameEncoder, OUTPUT_BLOCK_FRAMES, max_frame_bytes};
 pub use streaminfo::{STREAMINFO_BYTES, StreamInfo};
 pub use verify::{DecodedFrames, decode_frames};

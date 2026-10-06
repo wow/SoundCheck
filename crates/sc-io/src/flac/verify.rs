@@ -1,7 +1,7 @@
 //! Decoding a written FLAC file's frames again, with symphonia (a decoder independent of the
-//! encoder that wrote them), to verify them: the sample count, the MD5 the STREAMINFO
-//! signature must equal (RFC 9639 section 8.2) and a BLAKE3 hash of the same bytes that must
-//! equal the hash taken while encoding.
+//! encoder that wrote them), to verify them: the sample count and a BLAKE3 hash of the samples,
+//! over the bytes the STREAMINFO MD5 covers (RFC 9639 section 8.2), that must equal the hash
+//! taken while encoding (the encoder computed the MD5 over the same bytes).
 //!
 //! symphonia is fed `fLaC`, the STREAMINFO block (flagged last) and the frames, read from the
 //! file by range, so what is verified is exactly the bytes on disk, and carried metadata
@@ -13,7 +13,6 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
-use md5::{Digest, Md5};
 use sc_core::{Error, Result};
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
@@ -30,9 +29,8 @@ use super::{le_sample_bytes, stream_head};
 pub struct DecodedFrames {
     /// Samples per channel.
     pub frames: u64,
-    /// MD5 of the samples (interleaved, little-endian, `bits / 8` bytes each).
-    pub md5: [u8; 16],
-    /// BLAKE3 of the same bytes.
+    /// BLAKE3 of the samples (interleaved, little-endian, `bits / 8` bytes each: the bytes the
+    /// STREAMINFO MD5 covers).
     pub pcm_hash: [u8; 32],
 }
 
@@ -154,7 +152,7 @@ pub fn decode_frames(
         .make_audio_decoder(params, &AudioDecoderOptions::default())
         .map_err(symphonia)?;
     let shift = 32 - u32::from(bits);
-    let (mut md5, mut tee) = (Md5::new(), blake3::Hasher::new());
+    let mut tee = blake3::Hasher::new();
     let (mut ints, mut bytes) = (Vec::new(), Vec::new());
     let mut decoded = 0_u64;
     loop {
@@ -179,13 +177,11 @@ pub fn decode_frames(
             *s >>= shift;
         }
         le_sample_bytes(&ints, usize::from(bits / 8), &mut bytes);
-        md5.update(&bytes);
         tee.update(&bytes);
         decoded += (ints.len() / usize::from(channels.max(1))) as u64;
     }
     Ok(DecodedFrames {
         frames: decoded,
-        md5: md5.finalize().into(),
         pcm_hash: *tee.finalize().as_bytes(),
     })
 }
