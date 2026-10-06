@@ -1,6 +1,6 @@
 //! The apply harness: what a writer is asked to do, what it reports, the parameter grid every
-//! writer runs, and the calls into the `sc-io` writers (stand-ins where a writer does not exist
-//! yet).
+//! writer runs, and the calls into the `sc-io` writers (a stand-in for the FLAC writer, which
+//! does not exist yet).
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -220,9 +220,6 @@ pub fn apply_with_tags(
     if input.extension().is_some_and(|e| e == "flac") {
         unimplemented!("sc-io writer arrives with the FLAC writer");
     }
-    if !edits.is_empty() {
-        unimplemented!("sc-io tag editing arrives with the ID3 editor");
-    }
     let request = sc_core::RenderRequest {
         gain_db: args.gain_db,
         trim_frames: args.trim_samples,
@@ -234,7 +231,13 @@ pub fn apply_with_tags(
             max_momentary_lufs_x100: l.max_momentary,
             max_short_term_lufs_x100: l.max_short_term,
         }),
-        tag_edits: Vec::new(),
+        tag_edits: edits
+            .iter()
+            .map(|e| sc_core::TagEdit {
+                label: e.label.into(),
+                value: e.value.clone(),
+            })
+            .collect(),
     };
     sc_io::render::apply_iff(input, out, &request, &AtomicBool::new(false))
         .map(|report| Applied {

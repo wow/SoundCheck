@@ -1,6 +1,6 @@
 //! The writer tests and the runner they share with the self-tests.
 //!
-//! The IFF writer tests run in every `cargo test`. The tests of writers that do not exist yet
+//! The IFF writer and ID3 edit tests run in every `cargo test`. The tests of writers that do not exist yet
 //! are `#[ignore]`d and additionally return early unless `SC_FILE_WRITERS=1`, so a nightly
 //! `--include-ignored` run stays green until those writers exist. The same
 //! [`run`] drives the reference writer in `selftest.rs`, so every assertion here is already
@@ -158,6 +158,30 @@ pub fn iff_outputs(fixtures: &[Fixture]) -> Vec<OutputEntry> {
     out
 }
 
+/// SHA-256 of the `sc-io` output of every fixture holding an ID3 chunk for every tag row with
+/// the ID3 edits, in matrix order, for the golden manifest (after [`iff_outputs`]).
+#[must_use]
+pub fn id3_outputs(fixtures: &[Fixture]) -> Vec<OutputEntry> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let writer = sc_io(dir.path());
+    let edits = apply::id3_edits();
+    let mut out = Vec::new();
+    for fx in fixtures.iter().filter(|f| f.is_iff() && has_id3(f)) {
+        for args in &tag_rows() {
+            let sha256 = match writer(fx, args, &edits) {
+                Ok((bytes, _)) => parse::sha256_hex(&bytes),
+                Err(refusal) => format!("refused:{}", refusal.kind),
+            };
+            out.push(OutputEntry {
+                fixture: fx.name.into(),
+                row: format!("{}, id3 edits", row_label(args)),
+                sha256,
+            });
+        }
+    }
+    out
+}
+
 /// [`run_rows`] for a writer that does not exist yet: only with `SC_FILE_WRITERS=1`.
 fn run_all(test: &str, fixtures: &[Fixture], rows: &[ApplyArgs], edits: &[TagEdit]) {
     if writers_enabled(test) {
@@ -177,16 +201,14 @@ fn iff_apply_writes_the_requested_bit_depth() {
     run_rows(&fixtures, &bit_depth_rows(), &[]);
 }
 
+/// Every IFF fixture with the ID3 edits: a tagged file gets our frames (or, where the matrix
+/// says the tag cannot be edited, keeps it unchanged), an untagged one renders as without
+/// edits and reports the tags as not added.
 #[test]
-#[ignore = "arrives with the ID3 editor"]
 fn id3_edit_adds_our_frames_and_keeps_every_other_frame() {
-    let fixtures: Vec<_> = matrix().into_iter().filter(has_id3).collect();
-    run_all(
-        "id3_edit_adds_our_frames_and_keeps_every_other_frame",
-        &fixtures,
-        &tag_rows(),
-        &apply::id3_edits(),
-    );
+    let fixtures: Vec<_> = matrix().into_iter().filter(Fixture::is_iff).collect();
+    assert!(fixtures.iter().filter(|f| has_id3(f)).count() >= 8);
+    run_rows(&fixtures, &tag_rows(), &apply::id3_edits());
 }
 
 #[test]
