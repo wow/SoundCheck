@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 sc-core = { workspace = true }
 rubato = { workspace = true }
+libm = { workspace = true }
 
 [dev-dependencies]
 sc-core = { workspace = true, features = ["testsig"] }

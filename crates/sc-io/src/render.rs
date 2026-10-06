@@ -18,7 +18,9 @@
 //!   positions and AIFF `MARK` positions minus the trim, clamped at 0; a PCM `fact` takes the
 //!   new length; `bext` (EBU Tech 3285 v2) gets `TimeReference` plus the trim and, when
 //!   loudness is given, `Version` 2 and its loudness fields; after a gain without loudness the
-//!   five fields become 7FFFh ("not measured") rather than stay stale.
+//!   five fields of a version 2 `bext` become 7FFFh ("not measured") rather than stay stale
+//!   (versions 0 and 1 have none and are kept). A `bext` that needs no change is carried as it
+//!   is, even when it is shorter than the 602 bytes the specification requires.
 //! - **Dropped**: `ds64` (the output is RIFF), AIFF-C `FVER` (the output is AIFF), and the
 //!   `fact` of a float source (it describes non-PCM data).
 //! - **Carried byte for byte**, in source order with the source's pad byte value: everything
@@ -27,13 +29,18 @@
 //!
 //! Refused, with no output file left behind: more than two channels
 //! ([`Error::UnsupportedChannels`]); a sample rate other than 44,100 or 48,000 Hz, or an output
-//! past 4 GiB ([`Error::NotDjSafe`]); a peak after gain at or above full scale
-//! ([`Error::WouldClip`]: never clipped; checked by a first pass over the samples for a float
+//! past 4 GiB (WAV) or 2 GiB (AIFF, whose sizes are signed) ([`Error::NotDjSafe`]); a sample
+//! after gain at or above +1.0 or below -1.0 of full scale ([`Error::WouldClip`]: never
+//! clipped; -1.0 itself is a valid code; checked by a first pass over the samples for a float
 //! source and for a boost); data in the container's padding bits, a second format or audio
-//! chunk, tag edits ([`Error::UnsupportedFormat`]); a trim that leaves no audio or would cut a
-//! sampler loop ([`Error::InvalidArgument`]); a file cut short inside a chunk
-//! ([`Error::Corrupt`]). The output is created new (`create_new`), so an existing file, the
-//! source included, is never overwritten; making the write atomic is the caller's job.
+//! chunk, more than 16 MiB of chunks to rewrite, tag edits ([`Error::UnsupportedFormat`]); a
+//! trim that leaves no audio or starts inside a sampler loop ([`Error::InvalidArgument`]); a
+//! file cut short inside a chunk, a malformed chunk that must be rewritten
+//! ([`Error::Corrupt`]). A cancel flag, checked once per block, stops the render with
+//! [`Error::Cancelled`] and the partial output removed. The output is created new
+//! (`create_new`), so an existing file, the source included, is never overwritten; making the
+//! write atomic is the caller's job. I/O errors name the input when reading fails and the
+//! output when writing fails.
 
 mod audio;
 mod layout;
@@ -42,13 +49,15 @@ pub mod patch;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
-use sc_core::{BextLoudness, Error, RenderRequest, Result};
+use sc_core::{Error, RenderRequest, Result};
 use sc_dsp::db_to_linear;
 
 use crate::iff::{self, AudioFormat, ChunkTable, OutContainer, chunk_header, container_header};
-use audio::AudioJob;
+use audio::{AudioJob, SeedRequest};
 use layout::{Body, Layout, Target};
+use patch::BextUpdate;
 
 /// Sample rates a DJ-safe output may have, Hz.
 pub const DJ_SAFE_RATES_HZ: [u32; 2] = [44_100, 48_000];
@@ -132,13 +141,20 @@ fn io_error(path: &Path, source: std::io::Error) -> Error {
     }
 }
 
-/// Renders `input` with `req` applied into the new file `output`.
+/// Renders `input` with `req` applied into the new file `output`; `cancel` (checked once per
+/// block of audio) stops it.
 ///
 /// # Errors
 /// The refusals listed in the module documentation, [`Error::InvalidArgument`] for a request
-/// that is not valid (gain not finite, depth other than 16 or 24), [`Error::Io`] when reading
-/// or writing fails or `output` exists. On any error no output file is left.
-pub fn apply_iff(input: &Path, output: &Path, req: &RenderRequest) -> Result<RenderReport> {
+/// that is not valid (gain not finite, depth other than 16 or 24), [`Error::Cancelled`],
+/// [`Error::Io`] when reading or writing fails or `output` exists. On any error no output file
+/// is left.
+pub fn apply_iff(
+    input: &Path,
+    output: &Path,
+    req: &RenderRequest,
+    cancel: &AtomicBool,
+) -> Result<RenderReport> {
     check_request(input, req)?;
     let mut src = File::open(input).map_err(|e| io_error(input, e))?;
     let header = iff::read_header(&mut src, input)?;
@@ -153,30 +169,39 @@ pub fn apply_iff(input: &Path, output: &Path, req: &RenderRequest) -> Result<Ren
         "planned"
     );
     if format.encoding.is_float() || req.gain_db > 0.0 {
-        let peak = audio::peak_after_trim(&mut src, input, format, req.trim_frames)?;
-        let after = peak * gain_linear(req.gain_db);
-        if after >= 1.0 {
-            return Err(Error::WouldClip {
-                needed_db: req.gain_db,
-                over_db: 20.0 * after.log10(),
-            });
-        }
+        let peaks = audio::peaks_after_trim(&mut src, input, format, req.trim_frames, cancel)?;
+        check_full_scale(peaks, req.gain_db)?;
     }
     let format_payload = read_format_payload(&mut src, input, table, format)?;
+    let seed_request = SeedRequest {
+        gain_db: req.gain_db,
+        trim_frames: req.trim_frames,
+        bits: target.bits,
+    };
+    let seed = audio::dither_seed(
+        &mut src,
+        input,
+        format,
+        &format_payload,
+        seed_request,
+        cancel,
+    )?;
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(output)
         .map_err(|e| io_error(output, e))?;
     let job = AudioJob {
-        path: input,
+        input,
+        output,
         format,
         trim_frames: req.trim_frames,
         frames_out: target.frames_out,
         bits: target.bits,
         big_endian: target.container.is_big_endian(),
         gain_db: req.gain_db,
-        format_payload: &format_payload,
+        seed,
+        cancel,
     };
     let written = write_file(&mut src, file, output, &layout, target.container, &job);
     let done = match written {
@@ -215,12 +240,22 @@ pub fn apply_iff(input: &Path, output: &Path, req: &RenderRequest) -> Result<Ren
     })
 }
 
-fn gain_linear(gain_db: f64) -> f64 {
-    if gain_db == 0.0 {
+/// Refuses a gain that takes a sample to +1.0 of full scale or beyond, or below -1.0 (the most
+/// negative code is exactly -1.0, so it may stay).
+fn check_full_scale(peaks: audio::Peaks, gain_db: f64) -> Result<()> {
+    let gain = if gain_db == 0.0 {
         1.0
     } else {
         db_to_linear(gain_db)
+    };
+    let (max, min) = (peaks.max * gain, peaks.min * gain);
+    if max >= 1.0 || min < -1.0 {
+        return Err(Error::WouldClip {
+            needed_db: gain_db,
+            over_db: 20.0 * max.max(-min).log10(),
+        });
     }
+    Ok(())
 }
 
 fn check_request(input: &Path, req: &RenderRequest) -> Result<()> {
@@ -290,9 +325,11 @@ fn target(
         None if float_source || format.valid_bits > 16 => 24,
         None => 16,
     };
-    let bext_loudness = req
-        .loudness
-        .or((req.gain_db != 0.0).then_some(BextLoudness::ALL_UNMEASURED));
+    let bext_update = match (req.loudness, req.gain_db != 0.0) {
+        (Some(l), _) => BextUpdate::Set(l.to_le_bytes()),
+        (None, true) => BextUpdate::ClearIfVersion2,
+        (None, false) => BextUpdate::Keep,
+    };
     Ok(Target {
         container: if table.container.is_wave() {
             OutContainer::RiffWave
@@ -305,7 +342,7 @@ fn target(
         frames_out: format.frames - req.trim_frames,
         trim_frames: req.trim_frames,
         float_source,
-        bext_loudness,
+        bext_update,
     })
 }
 
@@ -325,25 +362,41 @@ fn read_format_payload<R: Read + Seek>(
     Ok(p)
 }
 
-/// Copies `range` of `src` into `w`.
+/// Bytes copied per read when carrying a byte range.
+const COPY_BUFFER_BYTES: usize = 64 << 10;
+
+/// Copies `range` of `src` (the file `input`) into `w` (the file `output`); read errors name
+/// the input, write errors the output.
 fn copy_range<R: Read + Seek, W: Write>(
     src: &mut R,
-    path: &Path,
+    input: &Path,
+    output: &Path,
     range: &std::ops::Range<u64>,
     w: &mut W,
 ) -> Result<()> {
-    let len = range.end - range.start;
     src.seek(SeekFrom::Start(range.start))
-        .map_err(|e| io_error(path, e))?;
-    let copied = std::io::copy(&mut src.take(len), w).map_err(|e| io_error(path, e))?;
-    if copied != len {
-        return Err(Error::Corrupt {
-            path: path.to_path_buf(),
-            detail: format!(
-                "{copied} of {len} bytes at byte {} could be read (the file changed?)",
-                range.start
-            ),
-        });
+        .map_err(|e| io_error(input, e))?;
+    let mut buf = vec![0_u8; COPY_BUFFER_BYTES];
+    let mut left = range.end - range.start;
+    while left > 0 {
+        let want = usize::try_from(left).map_or(buf.len(), |l| l.min(buf.len()));
+        let got = match src.read(&mut buf[..want]) {
+            Ok(0) => {
+                return Err(Error::Corrupt {
+                    path: input.to_path_buf(),
+                    detail: format!(
+                        "the file ends {left} bytes before the end of the range at byte {} \
+                         (the file changed?)",
+                        range.start
+                    ),
+                });
+            }
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(io_error(input, e)),
+        };
+        w.write_all(&buf[..got]).map_err(|e| io_error(output, e))?;
+        left -= got as u64;
     }
     Ok(())
 }
@@ -357,7 +410,7 @@ fn write_file(
     container: OutContainer,
     job: &AudioJob<'_>,
 ) -> Result<audio::AudioDone> {
-    let input = job.path;
+    let input = job.input;
     let out_err = |e| io_error(output, e);
     let mut w = BufWriter::with_capacity(WRITE_BUFFER_BYTES, file);
     w.write_all(&container_header(container, layout.form_size))
@@ -367,7 +420,7 @@ fn write_file(
         w.write_all(&chunk_header(container, chunk.id, chunk.len))
             .map_err(out_err)?;
         match &chunk.body {
-            Body::Copy(range) => copy_range(src, input, range, &mut w)?,
+            Body::Copy(range) => copy_range(src, input, output, range, &mut w)?,
             Body::Bytes(bytes) => w.write_all(bytes).map_err(out_err)?,
             Body::Audio => {
                 if container == OutContainer::FormAiff {
@@ -382,7 +435,7 @@ fn write_file(
         }
     }
     if let Some(range) = &layout.trailing {
-        copy_range(src, input, range, &mut w)?;
+        copy_range(src, input, output, range, &mut w)?;
     }
     let file = w.into_inner().map_err(|e| out_err(e.into_error()))?;
     let len = file.metadata().map_err(out_err)?.len();

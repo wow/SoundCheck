@@ -48,7 +48,8 @@ DECIDE (pure, about 28 ns per row): decide(AnalysisRecord, Codec, DecideSettings
 RENDER (streamed)
   lossless: decode -> [TrimHead] -> gain -> [TPDF if 16-bit] -> iff/flac writer with carried chunks/blocks -> tagcopy append
             (WAV/AIFF today: `sc_io::render::apply_iff`, one pass in 4,096-frame blocks plus a peak pass for float sources and boosts;
-             dither seeded from BLAKE3 of the source's format chunk and first block; about 0.17 s for a 6-minute 24-bit stereo WAV on an M1)
+             dither seeded from BLAKE3 of the source's format chunk, frame count and first 65,536 frames plus the gain, trim and depth;
+             gain factor from the pure-Rust `libm` pow so outputs are bit-identical across platforms; a cancel flag checked per block; about 0.17 s for a 6-minute 24-bit stereo WAV on an M1)
   mp3:      global_gain patch in place (no decode/encode) -> tagcopy append in padding
   transaction: preflight -> O_EXCL temp -> render -> fsync -> tiered verify -> backup + journal -> rename -> mtime -> sidecar
   batch artefacts: soundcheck-rekordbox.xml, grid-report.csv; per-file grid-check

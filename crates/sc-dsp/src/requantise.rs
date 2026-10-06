@@ -6,7 +6,8 @@
 //! - **Exact**: an integer source at 0 dB written at the same or a greater depth is shifted
 //!   left by the depth difference, so 0 dB is bit-identical and 16 -> 24 is `x << 8`.
 //! - **Otherwise** every sample is `r = x * g * 2^(out_bits - 1)` with `x` normalised to full
-//!   scale and `g = 10^(gain_db / 20)`, computed in `f64` (the power-of-two scaling is exact, so
+//!   scale and `g = 10^(gain_db / 20)` ([`crate::gain::db_to_linear`], a pure-Rust `pow`, so
+//!   the same bits everywhere), computed in `f64` (the power-of-two scaling is exact, so
 //!   `r` equals the product of the normalised value and the gain), then rounded to the nearest
 //!   integer with ties to even (no bias).
 //! - **Dither**: only when the result is not exact and the output has 16 bits or fewer, TPDF
@@ -57,18 +58,14 @@ pub struct Requantiser {
 }
 
 impl Requantiser {
-    /// A requantiser from `source` to `out_bits` (8..=24) with `gain_db` (finite) applied;
-    /// `dither_seed` seeds the TPDF dither when the conversion needs it.
+    /// A requantiser from `source` to `out_bits` (8..=24) with `gain_db` (finite) applied as
+    /// [`db_to_linear`]`(gain_db)` (exactly 1 at 0 dB); `dither_seed` seeds the TPDF dither when
+    /// the conversion needs it.
     ///
     /// # Errors
-    /// [`Error::InvalidArgument`] for an output depth outside 8..=24, an integer source depth
-    /// outside 1..=32, or a gain that is not finite.
+    /// [`Error::InvalidArgument`] for a gain that is not finite, otherwise as for
+    /// [`Self::with_factor`].
     pub fn new(source: SourceDepth, out_bits: u16, gain_db: f64, dither_seed: u64) -> Result<Self> {
-        if !(8..=24).contains(&out_bits) {
-            return Err(Error::InvalidArgument(format!(
-                "output depth {out_bits} bits outside 8..=24"
-            )));
-        }
         if !gain_db.is_finite() {
             return Err(Error::InvalidArgument(format!(
                 "gain {gain_db} dB is not finite"
@@ -79,6 +76,31 @@ impl Requantiser {
         } else {
             db_to_linear(gain_db)
         };
+        Self::with_factor(source, out_bits, gain, dither_seed)
+    }
+
+    /// A requantiser applying the linear `gain` factor (finite, >= 0); a factor of exactly 1
+    /// on an integer source with no loss of depth is the exact shift.
+    ///
+    /// # Errors
+    /// [`Error::InvalidArgument`] for an output depth outside 8..=24, an integer source depth
+    /// outside 1..=32, or a factor that is negative or not finite.
+    pub fn with_factor(
+        source: SourceDepth,
+        out_bits: u16,
+        gain: f64,
+        dither_seed: u64,
+    ) -> Result<Self> {
+        if !(8..=24).contains(&out_bits) {
+            return Err(Error::InvalidArgument(format!(
+                "output depth {out_bits} bits outside 8..=24"
+            )));
+        }
+        if !gain.is_finite() || gain < 0.0 {
+            return Err(Error::InvalidArgument(format!(
+                "gain factor {gain} is negative or not finite"
+            )));
+        }
         let out = i32::from(out_bits);
         let mode = match source {
             SourceDepth::Int { bits } if !(1..=32).contains(&bits) => {
@@ -86,7 +108,10 @@ impl Requantiser {
                     "integer source depth {bits} bits outside 1..=32"
                 )));
             }
-            SourceDepth::Int { bits } if gain_db == 0.0 && bits <= out_bits => {
+            // Exactly 1 (0 dB) is the identity; any other factor needs rounding.
+            SourceDepth::Int { bits }
+                if gain.to_bits() == 1.0_f64.to_bits() && bits <= out_bits =>
+            {
                 Mode::Shift(u32::from(out_bits - bits))
             }
             SourceDepth::Int { bits } => Mode::Scale(gain * 2_f64.powi(out - i32::from(bits))),

@@ -4,6 +4,7 @@
 //! f64 reference < 1e-6 of full scale.
 #![allow(clippy::float_cmp)] // exact values are intended where compared exactly
 use super::*;
+use crate::gain::db_to_linear;
 use sc_core::{AudioSpec, testsig};
 
 /// 2 s of 24-bit stereo noise at about -6 dBFS peak.
@@ -35,7 +36,7 @@ fn error_stats(
     out_bits: u16,
     gain_db: f64,
 ) -> (f64, f64, f64) {
-    let g = 10_f64.powf(gain_db / 20.0);
+    let g = db_to_linear(gain_db);
     let scale = 2_f64.powi(i32::from(out_bits) - 1) / 2_f64.powi(i32::from(src_bits) - 1);
     let (mut sum, mut sq, mut worst) = (0.0, 0.0, 0.0_f64);
     for (x, y) in input.iter().zip(out) {
@@ -74,8 +75,17 @@ fn gain_at_24_bit_rounds_without_dither() {
     let input = noise24();
     let (q, out) = run_int(24, 24, -3.2, &input);
     assert!(!q.is_exact() && !q.is_dithered());
+    // Undithered: exactly round half to even of x * g (the 24 -> 24 scale is 1).
+    let k = db_to_linear(-3.2);
+    for (i, (x, y)) in input.iter().zip(&out).enumerate() {
+        assert_eq!(
+            f64::from(*y),
+            (f64::from(*x) * k).round_ties_even(),
+            "sample {i}"
+        );
+    }
     let (mean, rms, worst) = error_stats(&input, 24, &out, 24, -3.2);
-    assert!(worst <= 1.0, "worst {worst}");
+    assert!(worst <= 0.5, "worst {worst}");
     assert!(mean.abs() < 0.05, "mean {mean}");
     assert!(rms <= 0.35, "rms {rms}");
     // As a fraction of full scale the gain path is far inside 1e-6.
@@ -123,15 +133,32 @@ fn float_source_rounds_at_24_and_dithers_at_16() {
 
 #[test]
 fn ties_round_to_even() {
-    // 24 -> 16 bits at 0 dB without dither is impossible, so check the rounding at 24 bits:
-    // a 1/2 LSB gain step on integers lands exactly on ties.
-    let mut q = Requantiser::new(SourceDepth::Int { bits: 24 }, 24, 20.0 * 0.5_f64.log10(), 0)
-        .expect("valid");
-    let mut out = [0; 4];
-    q.push_int(&[1, 3, 5, -1], &mut out)
+    // An exact factor of 0.5 on odd integers lands every value on a tie.
+    let mut q = Requantiser::with_factor(SourceDepth::Int { bits: 24 }, 24, 0.5, 0).expect("valid");
+    assert!(!q.is_exact() && !q.is_dithered());
+    let mut out = [0; 6];
+    q.push_int(&[1, 3, 5, -1, -3, -5], &mut out)
         .expect("integer source");
-    // 0.5 -> 0, 1.5 -> 2, 2.5 -> 2, -0.5 -> 0 (gain 0.5 is exact to within 1e-16 here).
-    assert_eq!(out, [0, 2, 2, 0]);
+    // 0.5 -> 0, 1.5 -> 2, 2.5 -> 2, -0.5 -> -0, -1.5 -> -2, -2.5 -> -2.
+    assert_eq!(out, [0, 2, 2, 0, -2, -2]);
+    // A factor of exactly 1 is the exact path.
+    let q = Requantiser::with_factor(SourceDepth::Int { bits: 16 }, 24, 1.0, 0).expect("valid");
+    assert!(q.is_exact());
+    assert!(Requantiser::with_factor(SourceDepth::Float, 24, -0.5, 0).is_err());
+}
+
+#[test]
+fn the_gain_factor_is_bit_identical_to_the_pure_rust_pow() {
+    // Pinned bits of 10^(-3.2/20) and 10^(2.1/20) from libm's pow (musl): a platform maths
+    // library that differs in the last bit would change rendered files.
+    assert_eq!(db_to_linear(-3.2).to_bits(), 0x3FE6_237A_B44E_9DC6);
+    assert_eq!(db_to_linear(2.1).to_bits(), 0x3FF4_6044_C445_2618);
+    assert_eq!(db_to_linear(-0.5).to_bits(), 0x3FEE_35BF_27A2_98B9);
+    assert_eq!(db_to_linear(0.0), 1.0);
+    assert_eq!(
+        db_to_linear(-6.020_599_913_279_624).to_bits(),
+        0.5_f64.to_bits()
+    );
 }
 
 #[test]

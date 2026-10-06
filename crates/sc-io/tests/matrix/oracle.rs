@@ -4,7 +4,7 @@
 //! writer and never runs on user files.
 
 use super::aiff::{self, Form};
-use super::apply::{Applied, ApplyArgs, TagEdit};
+use super::apply::{Applied, ApplyArgs, Refusal, TagEdit, gain_factor};
 use super::cases::{Expect, Fixture};
 use super::expect::{edited_tag, out_bits, out_frames, patched, refusal, same_label};
 use super::flac;
@@ -32,12 +32,12 @@ pub struct Options {
 }
 
 /// The ideal output samples: exact shifts where the reference is exact, TPDF dither (seeded,
-/// +/-1 LSB triangular) at 16-bit otherwise, plain rounding at 24-bit.
+/// +/-1 LSB triangular) at 16-bit otherwise, rounding half to even at 24-bit.
 #[must_use]
 pub fn ideal_samples(fx: &Fixture, args: &ApplyArgs) -> Vec<i32> {
     let bits = out_bits(fx, args);
     let skip = usize::try_from(args.trim_samples).expect("small") * usize::from(fx.channels);
-    let gain = 10_f64.powf(args.gain_db / 20.0);
+    let gain = gain_factor(args.gain_db);
     let scale = f64::from(1_u32 << (bits - 1));
     if let Samples::Int { bits: sb, data } = &fx.source
         && args.gain_db == 0.0
@@ -54,7 +54,7 @@ pub fn ideal_samples(fx: &Fixture, args: &ApplyArgs) -> Vec<i32> {
             }
             // Clamped to the output range, so the cast is exact.
             #[allow(clippy::cast_possible_truncation)]
-            let y = r.round().clamp(-scale, scale - 1.0) as i32;
+            let y = r.round_ties_even().clamp(-scale, scale - 1.0) as i32;
             y
         })
         .collect()
@@ -64,25 +64,30 @@ pub fn ideal_samples(fx: &Fixture, args: &ApplyArgs) -> Vec<i32> {
 ///
 /// # Errors
 /// The refusal a correct writer gives.
+///
+/// # Panics
+/// When a fixture does not parse or a patch rule fails (a bug in the matrix itself).
 pub fn write(
     fx: &Fixture,
     args: &ApplyArgs,
     edits: &[TagEdit],
     opts: &Options,
-) -> Result<(Vec<u8>, Applied), String> {
-    if let Some(why) = refusal(fx, args) {
-        return Err(why);
+) -> Result<(Vec<u8>, Applied), Refusal> {
+    if let Some(refused) = refusal(fx, args) {
+        return Err(refused);
     }
-    let input = parse::parse(&fx.bytes)?;
+    let input = parse::parse(&fx.bytes).expect("fixtures parse");
     let samples = opts
         .samples
         .clone()
         .unwrap_or_else(|| ideal_samples(fx, args));
     let edited = edited_tag(&input, edits);
     let bytes = if fx.is_iff() {
-        write_iff(fx, args, &input, edited, edits, &samples, opts)?
+        write_iff(fx, args, &input, edited, edits, &samples, opts)
+            .expect("the reference writes every fixture")
     } else {
-        write_flac(fx, args, &input, edited, edits, &samples, opts)?
+        write_flac(fx, args, &input, edited, edits, &samples, opts)
+            .expect("the reference writes every fixture")
     };
     let applied = Applied {
         tags_added: edited.is_some(),

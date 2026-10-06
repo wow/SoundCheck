@@ -5,7 +5,7 @@
 
 use super::apply::{self, ApplyArgs, IDENTITY};
 use super::cases::fixture;
-use super::expect::{patched, tags_not_added};
+use super::expect::{patched, refusal, tags_not_added};
 use super::parse::{Kind, parse};
 
 const TRIM: ApplyArgs = ApplyArgs {
@@ -60,8 +60,8 @@ fn riff_and_aiff_positions_after_a_441_sample_trim() {
     let (_, smpl) = patch(w24, "smpl", &TRIM);
     assert_eq!(
         (le32(&smpl, 44), le32(&smpl, 48)),
-        (0, 10_584),
-        "loop 0..11025"
+        (559, 10_584),
+        "loop 1000..11025"
     );
     let (_, mark) = patch("aiff24-48k-mark", "MARK", &TRIM);
     let mut at = 2;
@@ -136,6 +136,11 @@ fn bext_time_reference_version_and_loudness_are_literal() {
     assert_eq!(out[346..348], [2, 0]);
     assert_eq!(out[412..422], [0xFF, 0x7F].repeat(5)[..]);
     same_elsewhere(&input, &out, &[346..348, 412..422]);
+    // Gain without loudness on version 0 and 1: they hold no loudness, so nothing changes.
+    for name in ["wav16-mono-bext-v0", "wav24-extensible-bext-v1-fact"] {
+        let (input, out) = patch(name, "bext", &gain);
+        assert_eq!(input, out, "{name}");
+    }
     // Neither gain nor trim nor loudness: unchanged.
     let (input, out) = patch("wav24-bwf-ixml-cue-smpl-id3v24", "bext", &IDENTITY);
     assert_eq!(input, out);
@@ -172,4 +177,29 @@ fn tags_are_not_added_to_files_readers_disagree_on_or_that_a_crc_protects() {
     let tag = &parsed.find(Kind::Chunk, "ID3 ").expect("tag").bytes;
     let data = &tag[10 + ext.bytes.len()..];
     assert_eq!(stored, u64::from(super::id3::crc32(data)));
+}
+
+#[test]
+fn refusals_name_their_error_class() {
+    let partly_cut = fixture("wav16-mono-smpl-loop-in-head");
+    let kind = |name: &str, args: &ApplyArgs| refusal(&fixture(name), args).map(|r| r.kind);
+    let trim = ApplyArgs {
+        trim_samples: 441,
+        ..IDENTITY
+    };
+    // The loop runs from 100 to 10,000: it ends long after the trim but starts inside it.
+    assert_eq!(
+        refusal(&partly_cut, &trim).map(|r| r.kind).as_deref(),
+        Some("invalidArgument")
+    );
+    assert_eq!(refusal(&partly_cut, &IDENTITY), None);
+    // The loop from 1,000 lies after the trim.
+    assert_eq!(kind("wav24-bwf-ixml-cue-smpl-id3v24", &trim), None);
+    let hot = "wav-float32-mono-over-full-scale";
+    assert_eq!(kind(hot, &IDENTITY).as_deref(), Some("wouldClip"));
+    let cut = ApplyArgs {
+        gain_db: -3.2,
+        ..IDENTITY
+    };
+    assert_eq!(kind(hot, &cut), None);
 }

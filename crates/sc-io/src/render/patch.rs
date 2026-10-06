@@ -13,17 +13,26 @@
 //!
 //! A head trim of `trim` frames moves every position `p` to `max(p - trim, 0)`; `bext`
 //! `TimeReference` grows by `trim`, since it names the time of the first sample. A sampler
-//! loop that ends at or before the trim cannot survive it, and the render is refused.
+//! loop that starts inside the trimmed head (`dwStart < trim`, which includes every loop
+//! ending there) would be cut or shortened, and the render is refused.
+//!
+//! `bext` loudness: given loudness upgrades any version to 2 and writes the five fields. A
+//! gain without loudness makes the fields of a version 2 `bext` "not measured" (7FFFh) so they
+//! never go stale; a version 0 or 1 `bext` has none, so its bytes stay as they are.
 //! Multi-byte fields are little-endian in RIFF and big-endian in AIFF.
+
+use sc_core::BextLoudness;
 
 /// Why a payload could not be patched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PatchError {
     /// The payload is shorter than its own counts say.
     Malformed(&'static str),
-    /// A sampler loop ends at or before the trimmed head (its end position, in samples).
+    /// A sampler loop starts inside the trimmed head.
     LoopInTrim {
-        /// The loop's `dwEnd`.
+        /// The loop's `dwStart`, samples.
+        start: u32,
+        /// The loop's `dwEnd`, samples.
         end: u32,
     },
 }
@@ -89,7 +98,7 @@ pub fn shift_cue(p: &mut [u8], trim: u64) -> Result<(), PatchError> {
 /// `smpl`: shifts `dwStart` and `dwEnd` of every loop.
 ///
 /// # Errors
-/// [`PatchError::LoopInTrim`] when a loop ends at or before `trim` (with `trim > 0`);
+/// [`PatchError::LoopInTrim`] when a loop starts or ends before `trim` (with `trim > 0`);
 /// [`PatchError::Malformed`] when the loop count runs past the payload.
 pub fn shift_smpl(p: &mut [u8], trim: u64) -> Result<(), PatchError> {
     let count =
@@ -99,10 +108,12 @@ pub fn shift_smpl(p: &mut [u8], trim: u64) -> Result<(), PatchError> {
     }
     let n = records(p, count, 36, 24)?;
     for i in 0..n {
+        let start = read_u32(p, 36 + 24 * i + 8, false)
+            .ok_or(PatchError::Malformed("loop past the payload"))?;
         let end = read_u32(p, 36 + 24 * i + 12, false)
             .ok_or(PatchError::Malformed("loop past the payload"))?;
-        if trim > 0 && u64::from(end) <= trim {
-            return Err(PatchError::LoopInTrim { end });
+        if trim > 0 && (u64::from(start) < trim || u64::from(end) <= trim) {
+            return Err(PatchError::LoopInTrim { start, end });
         }
     }
     for i in 0..n {
@@ -149,11 +160,43 @@ pub fn set_fact(p: &mut [u8], frames: u64) -> Result<(), PatchError> {
     Ok(())
 }
 
-/// `bext`: `TimeReference` plus `trim`; with `loudness`, `Version` 2 and the loudness fields.
+/// What a render does to the loudness fields of a `bext`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BextUpdate {
+    /// Leave them (no gain, no loudness given).
+    Keep,
+    /// Version 2 and these ten bytes (loudness given).
+    Set([u8; 10]),
+    /// After a gain without loudness: 7FFFh in every field, only when the chunk is version 2
+    /// or later (earlier versions carry no loudness to go stale).
+    ClearIfVersion2,
+}
+
+/// The `bext` Version, when the payload reaches it.
+#[must_use]
+pub fn bext_version(p: &[u8]) -> Option<u16> {
+    p.get(BEXT_VERSION..BEXT_VERSION + 2)
+        .map(|v| u16::from_le_bytes([v[0], v[1]]))
+}
+
+/// `bext`: `TimeReference` plus `trim`, loudness per `update`. Returns whether anything had
+/// to change; when nothing does, the payload is untouched and its length is not checked (a
+/// short or malformed `bext` is carried as it is).
 ///
 /// # Errors
-/// [`PatchError::Malformed`] when the payload is shorter than [`BEXT_MIN_BYTES`].
-pub fn patch_bext(p: &mut [u8], trim: u64, loudness: Option<[u8; 10]>) -> Result<(), PatchError> {
+/// [`PatchError::Malformed`] when a change is needed and the payload is shorter than
+/// [`BEXT_MIN_BYTES`].
+pub fn patch_bext(p: &mut [u8], trim: u64, update: BextUpdate) -> Result<bool, PatchError> {
+    let fields = match update {
+        BextUpdate::Keep => None,
+        BextUpdate::Set(bytes) => Some(bytes),
+        BextUpdate::ClearIfVersion2 => bext_version(p)
+            .filter(|v| *v >= 2)
+            .map(|_| BextLoudness::ALL_UNMEASURED.to_le_bytes()),
+    };
+    if trim == 0 && fields.is_none() {
+        return Ok(false);
+    }
     if p.len() < BEXT_MIN_BYTES {
         return Err(PatchError::Malformed("bext shorter than 602 bytes"));
     }
@@ -161,11 +204,11 @@ pub fn patch_bext(p: &mut [u8], trim: u64, loudness: Option<[u8; 10]>) -> Result
     t.copy_from_slice(&p[BEXT_TIME_REFERENCE..BEXT_TIME_REFERENCE + 8]);
     let time = u64::from_le_bytes(t).saturating_add(trim);
     p[BEXT_TIME_REFERENCE..BEXT_TIME_REFERENCE + 8].copy_from_slice(&time.to_le_bytes());
-    if let Some(fields) = loudness {
+    if let Some(fields) = fields {
         p[BEXT_VERSION..BEXT_VERSION + 2].copy_from_slice(&2_u16.to_le_bytes());
         p[BEXT_LOUDNESS..BEXT_LOUDNESS + 10].copy_from_slice(&fields);
     }
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]

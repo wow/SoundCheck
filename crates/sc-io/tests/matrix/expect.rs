@@ -3,7 +3,7 @@
 //! AIFF `MARK` chunk, the FLAC CUESHEET (RFC 9639 section 8.7), the `fact` chunk and EBU Tech
 //! 3285 `bext` (`TimeReference` at byte 338, Version at 346, loudness at 412..422).
 
-use super::apply::{ApplyArgs, BextLoudness, TagEdit};
+use super::apply::{ApplyArgs, BextLoudness, Refusal, TagEdit, gain_factor};
 use super::cases::Fixture;
 use super::parse::{self, Container, Kind, Parsed};
 use super::riff::{BEXT_LOUDNESS, BEXT_TIME_REFERENCE, BEXT_VERSION};
@@ -94,17 +94,20 @@ pub fn patched(id: &str, p: &[u8], fx: &Fixture, args: &ApplyArgs) -> Result<Vec
             t.copy_from_slice(parse::slice(p, BEXT_TIME_REFERENCE, 8)?);
             let time = u64::from_le_bytes(t) + trim;
             out[BEXT_TIME_REFERENCE..BEXT_TIME_REFERENCE + 8].copy_from_slice(&time.to_le_bytes());
-            // New loudness when it is given; after any gain without it the old values would be
-            // stale, so all five become "not measured" (7FFFh).
-            let loudness = args
-                .loudness
-                .or((args.gain_db != 0.0).then_some(BextLoudness {
-                    value: BextLoudness::UNMEASURED,
-                    range: BextLoudness::UNMEASURED,
-                    max_true_peak: BextLoudness::UNMEASURED,
-                    max_momentary: BextLoudness::UNMEASURED,
-                    max_short_term: BextLoudness::UNMEASURED,
-                }));
+            // New loudness when it is given (any version is upgraded to 2); after a gain without
+            // it the old values of a version 2 chunk would be stale, so all five become "not
+            // measured" (7FFFh); versions 0 and 1 hold no loudness and are left alone.
+            let version = u16::from_le_bytes([p[BEXT_VERSION], p[BEXT_VERSION + 1]]);
+            let loudness =
+                args.loudness.or(
+                    (args.gain_db != 0.0 && version >= 2).then_some(BextLoudness {
+                        value: BextLoudness::UNMEASURED,
+                        range: BextLoudness::UNMEASURED,
+                        max_true_peak: BextLoudness::UNMEASURED,
+                        max_momentary: BextLoudness::UNMEASURED,
+                        max_short_term: BextLoudness::UNMEASURED,
+                    }),
+                );
             if let Some(loudness) = loudness {
                 out[BEXT_VERSION..BEXT_VERSION + 2].copy_from_slice(&2_u16.to_le_bytes());
                 out[BEXT_LOUDNESS..BEXT_LOUDNESS + 10].copy_from_slice(&loudness.bytes());
@@ -151,33 +154,45 @@ fn patch_cuesheet(p: &[u8], out: &mut [u8], trim: u64, total: u64) -> Result<(),
     Ok(())
 }
 
-/// Why a correct writer refuses `args` on `fx`, if it must: a sampler loop that ends inside
-/// the trimmed head, or a float source whose peak after gain reaches full scale (refused
-/// rather than clipped).
+/// Why a correct writer refuses `args` on `fx`, if it must, and with which error class: a
+/// head trim that starts inside a sampler loop (`invalidArgument`: the loop would be cut or
+/// shortened), or a float source with a sample at or above +1.0 or below -1.0 of full scale
+/// after gain (`wouldClip`: refused rather than clipped; -1.0 itself is a valid code).
 ///
 /// # Panics
 /// When the fixture does not parse (the matrix tests catch that first).
 #[must_use]
-pub fn refusal(fx: &Fixture, args: &ApplyArgs) -> Option<String> {
+pub fn refusal(fx: &Fixture, args: &ApplyArgs) -> Option<Refusal> {
     let input = parse::parse(&fx.bytes).expect("fixtures parse");
+    let trim = args.trim_samples;
     for smpl in input.blocks.iter().filter(|b| b.id == "smpl") {
         let p = &smpl.bytes;
         let loops = u32_at(p, 28, false).unwrap_or(0) as usize;
         for i in 0..loops {
-            let end = u64::from(u32_at(p, 36 + 24 * i + 12, false).unwrap_or(u32::MAX));
-            if args.trim_samples > 0 && end <= args.trim_samples {
-                return Some(format!(
-                    "sampler loop ends at {end}, inside the trimmed head"
+            let start = u64::from(u32_at(p, 36 + 24 * i + 8, false).unwrap_or(0));
+            let end = u64::from(u32_at(p, 36 + 24 * i + 12, false).unwrap_or(0));
+            if trim > 0 && (start < trim || end <= trim) {
+                return Some(Refusal::new(
+                    "invalidArgument",
+                    format!("the trim of {trim} cuts the sampler loop {start}..{end}"),
                 ));
             }
         }
     }
-    let gain = 10_f64.powf(args.gain_db / 20.0);
-    if fx.is_float() && fx.source.peak() * gain >= 1.0 {
-        return Some(format!(
-            "float peak {:.3} x gain {gain:.3} reaches full scale",
-            fx.source.peak()
-        ));
+    let gain = gain_factor(args.gain_db);
+    let skip = usize::try_from(trim).expect("small") * usize::from(fx.channels);
+    if fx.is_float() {
+        let (max, min) = (skip..fx.source.len())
+            .map(|i| fx.source.normalised(i))
+            .fold((0.0_f64, 0.0_f64), |(hi, lo), x| (hi.max(x), lo.min(x)));
+        if max * gain >= 1.0 || min * gain < -1.0 {
+            return Some(Refusal::new(
+                "wouldClip",
+                format!(
+                    "float peaks {max:.3} / {min:.3} x gain {gain:.3} leave -1.0..1.0 of full scale"
+                ),
+            ));
+        }
     }
     None
 }

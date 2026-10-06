@@ -1,19 +1,26 @@
 //! The audio stage: the samples after the trim, through gain and requantisation
 //! ([`sc_dsp::Requantiser`]), encoded and written while a BLAKE3 hash of the written bytes is
 //! kept (the tee hash a verifier compares against). Memory is one block of
-//! [`crate::iff::BLOCK_FRAMES`] frames whatever the file length.
+//! [`crate::iff::BLOCK_FRAMES`] frames whatever the file length. A cancel flag is checked once
+//! per block.
 //!
-//! The dither seed is derived from the source alone, never from the clock: BLAKE3 over a
-//! domain label, the source's format chunk payload and the first block of samples (before the
-//! trim), so the same file and request always give the same bytes.
+//! The dither seed is derived from the source and the request, never from the clock: BLAKE3
+//! over a domain label, the source's format chunk payload, its frame count, the first
+//! [`SEED_FRAMES`] frames of samples (before the trim; fewer when the file is shorter) and the
+//! request (gain, trim, output depth). It does not depend on how the samples are read in
+//! blocks, so the same file and request always give the same bytes.
 
 use std::io::{Read, Seek, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use sc_core::{Error, Result};
 use sc_dsp::{Requantiser, SourceDepth};
 
 use crate::iff::{AudioFormat, PcmReader, encode_samples};
+
+/// Frames hashed into the dither seed (about 1.4 s at 48 kHz).
+pub const SEED_FRAMES: u64 = 65_536;
 
 /// What the audio stage did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,15 +38,20 @@ pub(super) struct AudioDone {
 /// How to render the audio.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct AudioJob<'a> {
-    pub path: &'a Path,
+    /// The source (named in read errors).
+    pub input: &'a Path,
+    /// The output (named in write errors).
+    pub output: &'a Path,
     pub format: &'a AudioFormat,
     pub trim_frames: u64,
     pub frames_out: u64,
     pub bits: u16,
     pub big_endian: bool,
     pub gain_db: f64,
-    /// The source's format chunk payload (part of the dither seed).
-    pub format_payload: &'a [u8],
+    /// TPDF seed, from [`dither_seed`].
+    pub seed: u64,
+    /// Set by another thread to stop the render.
+    pub cancel: &'a AtomicBool,
 }
 
 /// Samples of one block, integer or float.
@@ -65,6 +77,15 @@ impl Block {
     }
 }
 
+/// [`Error::Cancelled`] once `cancel` is set.
+pub(super) fn check_cancel(cancel: &AtomicBool) -> Result<()> {
+    if cancel.load(Ordering::Relaxed) {
+        Err(Error::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
 /// Refuses a source whose padding bits hold data.
 fn check_padding<R: Read + Seek>(reader: &PcmReader<R>, path: &Path) -> Result<()> {
     match reader.padding_bits_nonzero() {
@@ -79,23 +100,35 @@ fn check_padding<R: Read + Seek>(reader: &PcmReader<R>, path: &Path) -> Result<(
     }
 }
 
-/// The largest absolute sample after the trim, as a fraction of full scale.
+/// The most positive and most negative sample, as fractions of full scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Peaks {
+    /// Largest value, >= 0.
+    pub max: f64,
+    /// Smallest value, <= 0.
+    pub min: f64,
+}
+
+/// The signed peaks of the samples after the trim.
 ///
 /// # Errors
 /// [`Error::Corrupt`] for a float sample that is NaN or infinite; [`Error::UnsupportedFormat`]
-/// for data in padding bits; reading errors.
-pub(super) fn peak_after_trim<R: Read + Seek>(
+/// for data in padding bits; [`Error::Cancelled`]; reading errors.
+pub(super) fn peaks_after_trim<R: Read + Seek>(
     src: R,
     path: &Path,
     format: &AudioFormat,
     trim_frames: u64,
-) -> Result<f64> {
+    cancel: &AtomicBool,
+) -> Result<Peaks> {
     let mut reader = PcmReader::new(src, format, path)?;
     let mut block = Block::new(format);
     let channels = u64::from(format.channels);
     let mut skip = trim_frames.saturating_mul(channels);
-    let (mut peak_int, mut peak_float) = (0_i64, 0.0_f64);
+    let (mut max_int, mut min_int) = (0_i32, 0_i32);
+    let mut peaks = Peaks { max: 0.0, min: 0.0 };
     loop {
+        check_cancel(cancel)?;
         let frames = block.read(&mut reader)?;
         if frames == 0 {
             break;
@@ -107,7 +140,8 @@ pub(super) fn peak_after_trim<R: Read + Seek>(
         match &block {
             Block::Int(v) => {
                 for x in &v[start..] {
-                    peak_int = peak_int.max(i64::from(*x).abs());
+                    max_int = max_int.max(*x);
+                    min_int = min_int.min(*x);
                 }
             }
             Block::Float(v) => {
@@ -118,52 +152,94 @@ pub(super) fn peak_after_trim<R: Read + Seek>(
                             detail: "a float sample is NaN or infinite".into(),
                         });
                     }
-                    peak_float = peak_float.max(x.abs());
+                    peaks.max = peaks.max.max(*x);
+                    peaks.min = peaks.min.min(*x);
                 }
             }
         }
     }
-    Ok(match block {
-        // Integer peaks are below 2^31, exact in f64; the scale is a power of two.
-        #[allow(clippy::cast_precision_loss)]
-        Block::Int(_) => peak_int as f64 / 2_f64.powi(i32::from(format.valid_bits) - 1),
-        Block::Float(_) => peak_float,
-    })
+    if let Block::Int(_) = block {
+        // The full-scale divisor is a power of two, so the quotients are exact.
+        let full = 2_f64.powi(i32::from(format.valid_bits) - 1);
+        peaks = Peaks {
+            max: f64::from(max_int) / full,
+            min: f64::from(min_int) / full,
+        };
+    }
+    Ok(peaks)
 }
 
-/// The dither seed: BLAKE3 of a label, the format payload and the first block's samples.
-fn dither_seed(format_payload: &[u8], block: &Block) -> u64 {
+/// The request's part of the dither seed.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SeedRequest {
+    pub gain_db: f64,
+    pub trim_frames: u64,
+    pub bits: u16,
+}
+
+/// The dither seed (see the module documentation).
+///
+/// # Errors
+/// [`Error::Cancelled`]; reading errors.
+pub(super) fn dither_seed<R: Read + Seek>(
+    src: R,
+    path: &Path,
+    format: &AudioFormat,
+    format_payload: &[u8],
+    req: SeedRequest,
+    cancel: &AtomicBool,
+) -> Result<u64> {
     let mut h = blake3::Hasher::new();
-    h.update(b"SoundCheck TPDF seed 1");
+    h.update(b"SoundCheck TPDF seed 2");
+    h.update(&(format_payload.len() as u64).to_le_bytes());
     h.update(format_payload);
-    match block {
-        Block::Int(v) => {
-            for x in v {
-                h.update(&x.to_le_bytes());
-            }
+    h.update(&format.frames.to_le_bytes());
+    h.update(&req.gain_db.to_bits().to_le_bytes());
+    h.update(&req.trim_frames.to_le_bytes());
+    h.update(&req.bits.to_le_bytes());
+    let mut reader = PcmReader::new(src, format, path)?;
+    let mut block = Block::new(format);
+    let channels = usize::from(format.channels);
+    let mut left = usize::try_from(SEED_FRAMES.min(format.frames)).unwrap_or(0) * channels;
+    while left > 0 {
+        check_cancel(cancel)?;
+        if block.read(&mut reader)? == 0 {
+            break;
         }
-        Block::Float(v) => {
-            for x in v {
-                h.update(&x.to_le_bytes());
+        match &block {
+            Block::Int(v) => {
+                let take = v.len().min(left);
+                for x in &v[..take] {
+                    h.update(&x.to_le_bytes());
+                }
+                left -= take;
+            }
+            Block::Float(v) => {
+                let take = v.len().min(left);
+                for x in &v[..take] {
+                    h.update(&x.to_bits().to_le_bytes());
+                }
+                left -= take;
             }
         }
     }
     let mut seed = [0_u8; 8];
     seed.copy_from_slice(&h.finalize().as_bytes()[..8]);
-    u64::from_le_bytes(seed)
+    Ok(u64::from_le_bytes(seed))
 }
 
 /// Streams the audio of `job` from `src` into `w`.
 ///
 /// # Errors
 /// [`Error::UnsupportedFormat`] for data in padding bits; [`Error::Corrupt`] when the source
-/// yields fewer frames than its header promised; reading and writing errors.
+/// yields fewer frames than its header promised; [`Error::Cancelled`]; [`Error::Io`] naming the
+/// input for read errors and the output for write errors.
 pub(super) fn write_audio<R: Read + Seek, W: Write>(
     src: R,
     w: &mut W,
     job: &AudioJob<'_>,
 ) -> Result<AudioDone> {
-    let path = job.path;
+    let path = job.input;
     let format = job.format;
     let mut reader = PcmReader::new(src, format, path)?;
     let mut block = Block::new(format);
@@ -176,26 +252,18 @@ pub(super) fn write_audio<R: Read + Seek, W: Write>(
             bits: format.valid_bits,
         }
     };
-    let mut quantiser: Option<Requantiser> = None;
+    let mut quant = Requantiser::new(source, job.bits, job.gain_db, job.seed)?;
     let mut out = vec![0_i32; crate::iff::BLOCK_FRAMES * channels];
     let mut bytes = Vec::with_capacity(out.len() * usize::from(job.bits / 8));
     let mut hasher = blake3::Hasher::new();
     let mut written = 0_u64;
     loop {
+        check_cancel(job.cancel)?;
         let frames = block.read(&mut reader)?;
         if frames == 0 {
             break;
         }
         check_padding(&reader, path)?;
-        let quant = match &mut quantiser {
-            Some(q) => q,
-            None => quantiser.insert(Requantiser::new(
-                source,
-                job.bits,
-                job.gain_db,
-                dither_seed(job.format_payload, &block),
-            )?),
-        };
         let read = frames * channels;
         let start = usize::try_from(skip.min(read as u64)).unwrap_or(0);
         skip -= start as u64;
@@ -207,7 +275,7 @@ pub(super) fn write_audio<R: Read + Seek, W: Write>(
         encode_samples(&out[..kept], job.bits, job.big_endian, &mut bytes);
         hasher.update(&bytes);
         w.write_all(&bytes).map_err(|source| Error::Io {
-            path: path.to_path_buf(),
+            path: job.output.to_path_buf(),
             source,
         })?;
         written += (kept / channels) as u64;
@@ -223,8 +291,11 @@ pub(super) fn write_audio<R: Read + Seek, W: Write>(
     }
     Ok(AudioDone {
         pcm_hash: *hasher.finalize().as_bytes(),
-        dithered: quantiser.as_ref().is_some_and(Requantiser::is_dithered),
-        exact: quantiser.as_ref().is_some_and(Requantiser::is_exact),
-        saturated: quantiser.as_ref().map_or(0, Requantiser::samples_saturated),
+        dithered: quant.is_dithered(),
+        exact: quant.is_exact(),
+        saturated: quant.samples_saturated(),
     })
 }
+
+#[cfg(test)]
+mod tests;

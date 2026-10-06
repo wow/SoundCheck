@@ -29,6 +29,7 @@ tempfile = { workspace = true }
 sha2 = { workspace = true }
 md-5 = { workspace = true }
 proptest = { workspace = true }
+libm = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]

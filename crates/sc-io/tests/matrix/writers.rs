@@ -9,7 +9,8 @@
 use std::path::Path;
 
 use super::apply::{
-    self, Applied, ApplyArgs, IDENTITY, TagEdit, apply, apply_with_tags, grid, writers_enabled,
+    self, Applied, ApplyArgs, IDENTITY, Refusal, TagEdit, apply, apply_with_tags, grid,
+    writers_enabled,
 };
 use super::cases::{Fixture, matrix};
 use super::check::check_output;
@@ -18,13 +19,13 @@ use super::golden::{OutputEntry, row_label};
 use super::parse;
 
 /// What a writer returns: output bytes and report, or its refusal.
-pub type Written = Result<(Vec<u8>, Applied), String>;
+pub type Written = Result<(Vec<u8>, Applied), Refusal>;
 
 /// A writer under test.
 pub type Writer<'a> = dyn Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written + 'a;
 
-/// Runs `writer` twice on `fx` and checks it: refused exactly when [`refusal`] says so,
-/// otherwise identical bytes and report on both runs and every check of `check_output`.
+/// Runs `writer` twice on `fx` and checks it: refused exactly when [`refusal`] says so and
+/// with the error class it names, otherwise identical bytes and report on both runs and every check of `check_output`.
 ///
 /// # Errors
 /// What went wrong, with the fixture name and row.
@@ -37,17 +38,25 @@ pub fn run(
     let first = writer(fx, args, edits);
     let second = writer(fx, args, edits);
     match (refusal(fx, args), first, second) {
-        (Some(_), Err(_), Err(_)) => Ok(()),
-        (Some(why), _, _) => Err(format!("{} {args:?}: must be refused ({why})", fx.name)),
+        (Some(want), Err(a), Err(b)) if a.kind == want.kind && b.kind == want.kind => Ok(()),
+        (Some(want), Err(got), _) | (Some(want), _, Err(got)) => Err(format!(
+            "{} {args:?}: refused as {} ({}), want {} ({})",
+            fx.name, got.kind, got.reason, want.kind, want.reason
+        )),
+        (Some(want), _, _) => Err(format!(
+            "{} {args:?}: must be refused as {} ({})",
+            fx.name, want.kind, want.reason
+        )),
         (None, Ok((a, report_a)), Ok((b, report_b))) => {
             if a != b || report_a != report_b {
                 return Err(format!("{} {args:?}: two runs differ", fx.name));
             }
             check_output(fx, &a, args, edits, report_a)
         }
-        (None, Err(e), _) | (None, _, Err(e)) => {
-            Err(format!("{} {args:?}: refused unexpectedly: {e}", fx.name))
-        }
+        (None, Err(e), _) | (None, _, Err(e)) => Err(format!(
+            "{} {args:?}: refused unexpectedly as {}: {}",
+            fx.name, e.kind, e.reason
+        )),
     }
 }
 
@@ -96,7 +105,7 @@ pub fn has_id3(fx: &Fixture) -> bool {
 fn sc_io(dir: &Path) -> impl Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written {
     move |fx, args, edits| {
         let input = dir.join(format!("{}.{}", fx.name, fx.ext));
-        std::fs::write(&input, &fx.bytes).map_err(|e| e.to_string())?;
+        std::fs::write(&input, &fx.bytes).expect("write the fixture");
         let out = dir.join(format!("{}-out.{}", fx.name, fx.ext));
         let _ = std::fs::remove_file(&out);
         let result = if edits.is_empty() {
@@ -105,7 +114,7 @@ fn sc_io(dir: &Path) -> impl Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written {
             apply_with_tags(&input, &out, args, edits)
         };
         match result {
-            Ok(applied) => Ok((std::fs::read(&out).map_err(|e| e.to_string())?, applied)),
+            Ok(applied) => Ok((std::fs::read(&out).expect("read the output"), applied)),
             Err(e) => {
                 assert!(!out.exists(), "{}: a refusal left an output file", fx.name);
                 Err(e)
@@ -126,7 +135,7 @@ fn run_rows(fixtures: &[Fixture], rows: &[ApplyArgs], edits: &[TagEdit]) {
 }
 
 /// SHA-256 of the `sc-io` output of every IFF fixture for every grid and bit-depth row, in
-/// matrix order (`refused` where the writer refuses), for the golden manifest.
+/// matrix order (`refused:<error kind>` where the writer refuses), for the golden manifest.
 #[must_use]
 pub fn iff_outputs(fixtures: &[Fixture]) -> Vec<OutputEntry> {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -137,7 +146,7 @@ pub fn iff_outputs(fixtures: &[Fixture]) -> Vec<OutputEntry> {
         for args in &rows {
             let sha256 = match writer(fx, args, &[]) {
                 Ok((bytes, _)) => parse::sha256_hex(&bytes),
-                Err(_) => "refused".into(),
+                Err(refusal) => format!("refused:{}", refusal.kind),
             };
             out.push(OutputEntry {
                 fixture: fx.name.into(),

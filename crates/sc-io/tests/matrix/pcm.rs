@@ -38,14 +38,6 @@ impl Samples {
         }
     }
 
-    /// Largest absolute value as a fraction of full scale.
-    #[must_use]
-    pub fn peak(&self) -> f64 {
-        (0..self.len())
-            .map(|i| self.normalised(i).abs())
-            .fold(0.0, f64::max)
-    }
-
     /// Value `i` as a fraction of full scale (integers divided by `2^(bits-1)`).
     #[must_use]
     pub fn normalised(&self, i: usize) -> f64 {

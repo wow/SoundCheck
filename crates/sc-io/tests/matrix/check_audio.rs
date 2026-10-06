@@ -4,14 +4,15 @@
 //! PCM tolerances, in LSB of the output depth, with `r = g * x * 2^(bits-1)`:
 //! - exact: 0 dB on an integer source written at the same or a greater depth must equal
 //!   `x << (out_bits - in_bits)` sample for sample (16 -> 24 is `x << 8`);
-//! - undithered (24-bit output otherwise): every sample within 1 LSB of `round(r)`, mean error
-//!   against `r` below 0.05 LSB and RMS error at most 0.35 LSB (pure rounding gives 0.29);
+//! - undithered (24-bit output otherwise): every sample exactly `r` rounded half to even
+//!   (`r` from the same `f64` products and pure-Rust `pow` as the writer), mean error against
+//!   `r` below 0.05 LSB and RMS error at most 0.35 LSB (pure rounding gives 0.29);
 //! - TPDF-dithered (16-bit output otherwise): every sample within 1.5 LSB of `r`, mean error
 //!   below 0.05 LSB, RMS error within 0.4..0.6 LSB (rounding plus +/-1 LSB triangular dither
 //!   gives 0.5). An undithered 16-bit result (0.29) fails, as do floor instead of round (mean
 //!   -0.5) and a constant offset.
 
-use super::apply::ApplyArgs;
+use super::apply::{ApplyArgs, gain_factor};
 use super::cases::Fixture;
 use super::decode::decode;
 use super::expect::{out_bits, out_frames};
@@ -43,7 +44,7 @@ pub fn check_pcm(fx: &Fixture, out: &[u8], args: &ApplyArgs) -> Result<Vec<i32>,
     let bits = out_bits(fx, args);
     let samples = decoded.as_bits(bits);
     let skip = usize::try_from(args.trim_samples).expect("small") * usize::from(fx.channels);
-    let gain = 10_f64.powf(args.gain_db / 20.0);
+    let gain = gain_factor(args.gain_db);
     let scale = f64::from(1_u32 << (bits - 1));
     let exact = match &fx.source {
         Samples::Int {
@@ -59,10 +60,12 @@ pub fn check_pcm(fx: &Fixture, out: &[u8], args: &ApplyArgs) -> Result<Vec<i32>,
     for (i, y) in samples.iter().enumerate() {
         let r = fx.source.normalised(skip + i) * gain * scale;
         let y_f = f64::from(*y);
+        // Undithered rows must equal the rounded reference exactly.
+        #[allow(clippy::float_cmp)]
         let bad = match exact {
             Some((data, shift)) => *y != data[i] << shift,
             None if dithered => (y_f - r).abs() > 1.5,
-            None => (y_f - r.round()).abs() > 1.0,
+            None => y_f != r.round_ties_even(),
         };
         if bad {
             return Err(format!("sample {i} is {y}, reference {r:.3}"));

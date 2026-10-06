@@ -1,10 +1,12 @@
 //! Unit tests of `crates/sc-io/src/render.rs`: identity, report, container rules, and every
-//! refusal leaving no output file. The fixture matrix (`tests/matrix.rs`) covers the full
-//! chunk-by-chunk contract.
+//! refusal leaving no output file, cancellation, and which path an I/O error names. Planning
+//! is tested in `layout/tests.rs`, the audio stage in `audio/tests.rs`; the fixture matrix
+//! (`tests/matrix.rs`) covers the full chunk-by-chunk contract.
 #![allow(clippy::float_cmp)] // exact values are intended in these tests
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 use sc_core::{Error, RenderRequest, TagEdit};
 
@@ -44,7 +46,7 @@ impl Run {
     }
 
     fn apply(&self, req: &RenderRequest) -> Result<RenderReport> {
-        apply_iff(&self.input, &self.output, req)
+        apply_iff(&self.input, &self.output, req, &AtomicBool::new(false))
     }
 
     fn out(&self) -> Vec<u8> {
@@ -69,7 +71,7 @@ fn gain(gain_db: f64) -> RenderRequest {
     }
 }
 
-fn table(bytes: &[u8]) -> (ChunkTable, crate::iff::AudioFormat) {
+pub(super) fn table(bytes: &[u8]) -> (ChunkTable, crate::iff::AudioFormat) {
     let h = read_header(&mut Cursor::new(bytes), Path::new("t")).expect("valid file");
     (h.table, h.format)
 }
@@ -230,12 +232,13 @@ fn an_existing_output_is_never_overwritten() {
         .chunk(b"data", &data)
         .build();
     let run = Run::new(&wav, "wav");
-    let err = apply_iff(&run.input, &run.input, &gain(-1.0)).expect_err("the input exists");
+    let err = apply_iff(&run.input, &run.input, &gain(-1.0), &AtomicBool::new(false))
+        .expect_err("the input exists");
     assert!(matches!(err, Error::Io { .. }));
     assert_eq!(std::fs::read(&run.input).expect("input"), wav);
 }
 
-fn mono16(rate: u32, samples: &[i16]) -> Vec<u8> {
+pub(super) fn mono16(rate: u32, samples: &[i16]) -> Vec<u8> {
     let data: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
     Form::riff()
         .chunk(b"fmt ", &fmt_pcm(1, rate, 16))
@@ -320,7 +323,8 @@ fn float_peaks_at_full_scale_and_data_in_padding_bits_are_refused() {
             .chunk(b"data", &data)
             .build()
     };
-    let run = Run::new(&float(-1.0), "wav");
+    // +1.0 is past the top code; -1.0 is the bottom code itself and stays.
+    let run = Run::new(&float(1.0), "wav");
     run.refused(
         &gain(0.0),
         |e| matches!(e, Error::WouldClip { over_db, .. } if *over_db == 0.0),
@@ -329,6 +333,12 @@ fn float_peaks_at_full_scale_and_data_in_padding_bits_are_refused() {
         .apply(&gain(-0.5))
         .expect("below full scale after the cut");
     assert_eq!((report.bits_out, report.count(BlockFate::Dropped)), (24, 1));
+    let run = Run::new(&float(-1.0), "wav");
+    let report = run.apply(&gain(0.0)).expect("-1.0 is a valid code");
+    assert_eq!(report.samples_saturated, 0);
+    assert_eq!(read_ints(&run.out()).expect("readable").0[1], -8_388_608);
+    std::fs::remove_file(&run.output).expect("remove");
+    run.refused(&gain(0.01), |e| matches!(e, Error::WouldClip { .. }));
     let nan = Run::new(&float(f32::NAN), "wav");
     nan.refused(&gain(-6.0), |e| matches!(e, Error::Corrupt { .. }));
     // The largest float below full scale, 1 - 2^-24, is 8388607.5 at 24 bits: the tie rounds
@@ -360,25 +370,70 @@ fn float_peaks_at_full_scale_and_data_in_padding_bits_are_refused() {
 }
 
 #[test]
-fn an_output_past_4_gib_is_not_dj_safe() {
-    let wav = mono16(44_100, &[0; 4]);
-    let (mut t, f) = table(&wav);
-    // Pretend the data chunk holds 3 GiB and a carried chunk 2 GiB more.
-    let mut big = t.chunks[0].clone();
-    big.id = *b"xbig";
-    big.payload = 0..(2 << 30);
-    t.chunks.push(big);
-    let target = Target {
-        container: OutContainer::RiffWave,
-        channels: 1,
-        sample_rate: 44_100,
-        bits: 24,
-        frames_out: 1 << 30,
-        trim_frames: 0,
-        float_source: false,
-        bext_loudness: None,
+fn a_set_cancel_flag_stops_the_render_and_leaves_nothing() {
+    let (_, data) = pcm16(10_000, 2);
+    let wav = Form::riff()
+        .chunk(b"fmt ", &fmt_pcm(2, 44_100, 16))
+        .chunk(b"data", &data)
+        .build();
+    let run = Run::new(&wav, "wav");
+    for req in [gain(-3.2), gain(1.0)] {
+        let err = apply_iff(&run.input, &run.output, &req, &AtomicBool::new(true))
+            .expect_err("cancelled");
+        assert!(matches!(err, Error::Cancelled), "{err}");
+        assert!(!run.output.exists());
+    }
+}
+
+/// A writer whose every write fails.
+pub(super) struct FailingWriter;
+
+impl Write for FailingWriter {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::other("disk full"))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A source whose reads fail after the seek.
+struct FailingReader;
+
+impl Read for FailingReader {
+    fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::other("bad sector"))
+    }
+}
+
+impl Seek for FailingReader {
+    fn seek(&mut self, _: SeekFrom) -> std::io::Result<u64> {
+        Ok(0)
+    }
+}
+
+#[test]
+fn copy_errors_name_the_side_that_failed() {
+    let (input, output) = (Path::new("in.wav"), Path::new("out.wav"));
+    let named = |e: &Error| match e {
+        Error::Io { path, .. } | Error::Corrupt { path, .. } => path.clone(),
+        other => panic!("unexpected {other}"),
     };
-    let err = layout::plan(&mut Cursor::new(&wav), Path::new("t"), &t, &f, &target)
-        .expect_err("past 4 GiB");
-    assert!(matches!(err, Error::NotDjSafe { .. }), "{err}");
+    let mut src = Cursor::new(vec![7_u8; 100]);
+    let err = copy_range(&mut src, input, output, &(10..90), &mut FailingWriter)
+        .expect_err("the write fails");
+    assert!(matches!(err, Error::Io { .. }));
+    assert_eq!(named(&err), output);
+    let err = copy_range(&mut FailingReader, input, output, &(0..10), &mut Vec::new())
+        .expect_err("the read fails");
+    assert!(matches!(err, Error::Io { .. }));
+    assert_eq!(named(&err), input);
+    let err = copy_range(&mut src, input, output, &(90..120), &mut Vec::new())
+        .expect_err("the source is short");
+    assert!(matches!(err, Error::Corrupt { .. }));
+    assert_eq!(named(&err), input);
+    let mut out = Vec::new();
+    copy_range(&mut src, input, output, &(10..90), &mut out).expect("copied");
+    assert_eq!(out, vec![7; 80]);
 }

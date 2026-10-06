@@ -1,15 +1,17 @@
 //! The output's chunk list, decided before a byte is written: which source chunks are carried
 //! by byte range, which are patched, replaced or dropped, every size, and the refusals that
 //! follow from the chunks (duplicated format or audio chunks, malformed position chunks, a
-//! sampler loop inside the trim, an output past the 4 GiB limit of a 32-bit container size).
+//! sampler loop inside the trim, more patched bytes than [`MAX_PATCHED_TOTAL_BYTES`], an
+//! output past the 4 GiB limit of a 32-bit RIFF size or the 2 GiB limit of AIFF's signed
+//! `ckSize`).
 
 use std::io::{Read, Seek, SeekFrom};
 use std::ops::Range;
 use std::path::Path;
 
-use sc_core::{BextLoudness, Error, Result};
+use sc_core::{Error, Result};
 
-use super::patch::{self, PatchError};
+use super::patch::{self, BextUpdate, PatchError};
 use super::{BlockFate, BlockRecord};
 use crate::iff::{
     AudioFormat, Chunk, ChunkTable, OutContainer, SSND_FIELDS_BYTES, aiff_comm, wave_fmt_pcm,
@@ -18,6 +20,12 @@ use crate::iff::{
 /// Largest chunk read into memory to be patched (a `bext` with a long coding history fits
 /// many times over); larger ones are refused rather than buffered.
 pub const MAX_PATCHED_CHUNK_BYTES: u64 = 4 << 20;
+
+/// Most patched bytes one plan holds in memory, all chunks together.
+pub const MAX_PATCHED_TOTAL_BYTES: u64 = 16 << 20;
+
+/// Largest AIFF container size: AIFF 1.3 declares `ckSize` as a signed 32-bit `long`.
+pub const MAX_AIFF_FORM_SIZE: u64 = 0x7FFF_FFFF;
 
 /// What the output holds and how it is made.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,9 +44,8 @@ pub(super) struct Target {
     pub trim_frames: u64,
     /// The source holds floats (its `fact` chunk is dropped).
     pub float_source: bool,
-    /// Loudness bytes for an existing `bext`: the given loudness, "not measured" after a gain
-    /// without it, `None` when the old values stay right.
-    pub bext_loudness: Option<BextLoudness>,
+    /// What happens to the loudness fields of an existing `bext`.
+    pub bext_update: BextUpdate,
 }
 
 impl Target {
@@ -92,9 +99,10 @@ pub(super) struct Layout {
 ///
 /// # Errors
 /// [`Error::UnsupportedFormat`] for a second format or audio chunk or a chunk to patch above
-/// [`MAX_PATCHED_CHUNK_BYTES`]; [`Error::Corrupt`] for a malformed position chunk;
-/// [`Error::InvalidArgument`] when the trim would cut a sampler loop; [`Error::NotDjSafe`]
-/// when the output would pass 4 GiB; [`Error::Io`] when reading fails.
+/// [`MAX_PATCHED_CHUNK_BYTES`] or chunks to patch above [`MAX_PATCHED_TOTAL_BYTES`] together;
+/// [`Error::Corrupt`] for a malformed position chunk; [`Error::InvalidArgument`] when the trim
+/// would cut a sampler loop; [`Error::NotDjSafe`] when the output would pass 4 GiB (WAV) or
+/// [`MAX_AIFF_FORM_SIZE`] (AIFF); [`Error::Io`] when reading fails.
 pub(super) fn plan<R: Read + Seek>(
     src: &mut R,
     path: &Path,
@@ -105,13 +113,14 @@ pub(super) fn plan<R: Read + Seek>(
     let wave = table.container.is_wave();
     let mut chunks = Vec::with_capacity(table.chunks.len());
     let mut records = Vec::with_capacity(table.chunks.len());
+    let mut held = 0_u64;
     for (i, chunk) in table.chunks.iter().enumerate() {
         let decision = if i == format.format_chunk {
             Decision::Replace(format_payload(target))
         } else if Some(i) == format.audio_chunk {
             Decision::Audio
         } else {
-            decide(src, path, wave, chunk, target)?
+            decide(src, path, wave, chunk, target, &mut held)?
         };
         let (fate, out) = match decision {
             Decision::Drop => (BlockFate::Dropped, None),
@@ -140,14 +149,23 @@ pub(super) fn plan<R: Read + Seek>(
         .iter()
         .map(|c| 8 + u64::from(c.len) + u64::from(c.pad.is_some()))
         .sum();
-    let form_size = u32::try_from(4 + body).map_err(|_| Error::NotDjSafe {
-        path: path.to_path_buf(),
-        reason: format!(
-            "the output would hold {} bytes, past the 4 GiB a {} file can address",
-            12 + body,
-            if wave { "RIFF/WAVE" } else { "FORM/AIFF" }
-        ),
-    })?;
+    let limit = if wave {
+        u64::from(u32::MAX)
+    } else {
+        MAX_AIFF_FORM_SIZE
+    };
+    let form_size = u32::try_from(4 + body)
+        .ok()
+        .filter(|size| u64::from(*size) <= limit)
+        .ok_or_else(|| Error::NotDjSafe {
+            path: path.to_path_buf(),
+            reason: format!(
+                "the output would hold {} bytes, past the {} a {} file can address",
+                12 + body,
+                if wave { "4 GiB" } else { "2 GiB" },
+                if wave { "RIFF/WAVE" } else { "FORM/AIFF" }
+            ),
+        })?;
     let trailing = table.trailing.clone();
     let trailing_len = trailing.as_ref().map_or(0, |t| t.end - t.start);
     Ok(Layout {
@@ -191,6 +209,7 @@ fn decide<R: Read + Seek>(
     wave: bool,
     chunk: &Chunk,
     target: &Target,
+    held: &mut u64,
 ) -> Result<Decision> {
     let trim = target.trim_frames;
     let id = &chunk.id;
@@ -205,25 +224,38 @@ fn decide<R: Read + Seek>(
             detail: format!("a second '{}' chunk", chunk.id_text()),
         });
     }
-    let patched = |src: &mut R, f: &dyn Fn(&mut [u8]) -> std::result::Result<(), PatchError>| {
-        let mut p = read_payload(src, path, chunk)?;
-        f(&mut p).map_err(|e| patch_error(path, chunk, trim, &e))?;
-        Ok(Decision::Patch(p))
+    let rewrite = |src: &mut R, held: &mut u64, f: &dyn Fn(&mut [u8]) -> PatchResult| {
+        let mut p = read_payload(src, path, chunk, held)?;
+        match f(&mut p) {
+            Ok(true) => Ok(Decision::Patch(p)),
+            Ok(false) => {
+                *held -= chunk.payload_len();
+                Ok(Decision::Carry)
+            }
+            Err(e) => Err(patch_error(path, chunk, trim, &e)),
+        }
     };
+    let always = |r: std::result::Result<(), PatchError>| r.map(|()| true);
     match (wave, id) {
         (true, b"ds64") | (false, b"FVER") => Ok(Decision::Drop),
         (true, b"fact") if target.float_source => Ok(Decision::Drop),
-        (true, b"fact") => patched(src, &|p| patch::set_fact(p, target.frames_out)),
-        (true, b"cue ") if trim > 0 => patched(src, &|p| patch::shift_cue(p, trim)),
-        (true, b"smpl") if trim > 0 => patched(src, &|p| patch::shift_smpl(p, trim)),
-        (false, b"MARK") if trim > 0 => patched(src, &|p| patch::shift_mark(p, trim)),
-        (true, b"bext") if trim > 0 || target.bext_loudness.is_some() => {
-            let fields = target.bext_loudness.map(|l| l.to_le_bytes());
-            patched(src, &|p| patch::patch_bext(p, trim, fields))
+        (true, b"fact") => rewrite(src, held, &|p| {
+            always(patch::set_fact(p, target.frames_out))
+        }),
+        (true, b"cue ") if trim > 0 => rewrite(src, held, &|p| always(patch::shift_cue(p, trim))),
+        (true, b"smpl") if trim > 0 => rewrite(src, held, &|p| always(patch::shift_smpl(p, trim))),
+        (false, b"MARK") if trim > 0 => rewrite(src, held, &|p| always(patch::shift_mark(p, trim))),
+        (true, b"bext") if trim > 0 || target.bext_update != BextUpdate::Keep => {
+            rewrite(src, held, &|p| {
+                patch::patch_bext(p, trim, target.bext_update)
+            })
         }
         _ => Ok(Decision::Carry),
     }
 }
+
+/// A patch's outcome: whether the payload changed.
+type PatchResult = std::result::Result<bool, PatchError>;
 
 fn patch_error(path: &Path, chunk: &Chunk, trim: u64, e: &PatchError) -> Error {
     match *e {
@@ -235,8 +267,9 @@ fn patch_error(path: &Path, chunk: &Chunk, trim: u64, e: &PatchError) -> Error {
                 chunk.header_offset
             ),
         },
-        PatchError::LoopInTrim { end } => Error::InvalidArgument(format!(
-            "{}: a head trim of {trim} samples would cut the sampler loop that ends at sample {end}",
+        PatchError::LoopInTrim { start, end } => Error::InvalidArgument(format!(
+            "{}: a head trim of {trim} samples would cut the sampler loop from sample {start} \
+             to {end}",
             path.display()
         )),
     }
@@ -296,18 +329,35 @@ fn audio_chunk(path: &Path, id: [u8; 4], wave: bool, target: &Target) -> Result<
     })
 }
 
-/// Reads a chunk's payload to patch it.
-fn read_payload<R: Read + Seek>(src: &mut R, path: &Path, chunk: &Chunk) -> Result<Vec<u8>> {
+/// Reads a chunk's payload to patch it, counting it in `held`.
+fn read_payload<R: Read + Seek>(
+    src: &mut R,
+    path: &Path,
+    chunk: &Chunk,
+    held: &mut u64,
+) -> Result<Vec<u8>> {
     let len = chunk.payload_len();
     if len > MAX_PATCHED_CHUNK_BYTES {
         return Err(Error::UnsupportedFormat {
             path: path.to_path_buf(),
             detail: format!(
-                "a '{}' chunk of {len} bytes is too large to rewrite",
+                "a '{}' chunk of {len} bytes is too large to rewrite (at most {MAX_PATCHED_CHUNK_BYTES})",
                 chunk.id_text()
             ),
         });
     }
+    if *held + len > MAX_PATCHED_TOTAL_BYTES {
+        return Err(Error::UnsupportedFormat {
+            path: path.to_path_buf(),
+            detail: format!(
+                "the chunks to rewrite hold more than {MAX_PATCHED_TOTAL_BYTES} bytes together \
+                 ('{}' would bring them to {})",
+                chunk.id_text(),
+                *held + len
+            ),
+        });
+    }
+    *held += len;
     let mut p = vec![0; usize::try_from(len).unwrap_or(0)];
     src.seek(SeekFrom::Start(chunk.payload.start))
         .and_then(|_| src.read_exact(&mut p))
@@ -317,3 +367,6 @@ fn read_payload<R: Read + Seek>(src: &mut R, path: &Path, chunk: &Chunk) -> Resu
         })?;
     Ok(p)
 }
+
+#[cfg(test)]
+mod tests;

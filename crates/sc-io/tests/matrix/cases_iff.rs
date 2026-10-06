@@ -70,7 +70,8 @@ fn wav24_bwf_id3v24() -> Fixture {
         riff::ixml(),
         // 300 lies inside a 441-sample head trim and clamps to 0.
         riff::cue(&[0, 300, 11_025]),
-        riff::smpl(44_100, 0, 11_025),
+        // A loop after the trimmed head: shifted, kept.
+        riff::smpl(44_100, 1_000, 11_025),
         tag_chunk(*b"ID3 ", tag),
         // Some writers pad with a space; the pad byte value is carried too.
         odd_chunk().with_pad(0x20),
@@ -274,11 +275,12 @@ pub fn wav_fixtures() -> Vec<Fixture> {
             20,
             vec![riff::bext(0, 44_100, "A=PCM,F=44100,W=16,M=mono\r\n")],
         ),
-        // A loop ending at sample 400 makes a 441-sample head trim impossible.
+        // A loop from sample 100 to 10,000 would lose its start to a 441-sample head trim, so
+        // the trim is refused although the loop ends long after it.
         mono_wav(
             "wav16-mono-smpl-loop-in-head",
             21,
-            vec![riff::smpl(44_100, 100, 400)],
+            vec![riff::smpl(44_100, 100, 10_000)],
         ),
         two_id3_chunks(),
         id3v24_frame_flags(),

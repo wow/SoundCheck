@@ -5,6 +5,7 @@
 
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use sc_core::RenderRequest;
@@ -61,7 +62,7 @@ fn bench_apply(c: &mut Criterion) {
     group.bench_function("apply_iff -3.2 dB 6 min 44.1k stereo 24-bit", |b| {
         b.iter(|| {
             let _ = std::fs::remove_file(&output);
-            apply_iff(&input, &output, &req).expect("render")
+            apply_iff(&input, &output, &req, &AtomicBool::new(false)).expect("render")
         });
     });
     group.finish();
