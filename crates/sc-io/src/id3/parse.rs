@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 
-use super::text::txxx_description;
+use super::text::txxx_descriptions;
 use super::{MAX_FRAMES, MAX_TAG_BYTES, NotEditable};
 
 /// Bytes of the tag header, of a frame header and of a v2.4 footer.
@@ -55,8 +55,11 @@ pub struct FrameRef {
     /// Header and body, byte offsets into the tag.
     pub range: Range<usize>,
     /// The description of a `TXXX` frame, when it can be read (not compressed or encrypted,
-    /// a known text encoding).
+    /// a known text encoding; UTF-16 without a byte-order mark read little-endian).
     pub description: Option<String>,
+    /// The same description read big-endian, for UTF-16 without a byte-order mark (the
+    /// writer's byte order is unknown, so both readings count).
+    pub description_be: Option<String>,
 }
 
 /// The layout of a tag.
@@ -143,8 +146,18 @@ pub fn parse_tag(bytes: &[u8]) -> Result<TagIndex, NotEditable> {
             "non-zero bytes in the padding at byte {last}"
         )));
     }
-    if footer && &bytes[area_end..area_end + 3] != b"3DI" {
-        return Err(NotEditable::malformed("the footer does not start with 3DI"));
+    if major == 4 {
+        check_plain_sizes(bytes, &frames, last, area_end)?;
+    }
+    if footer {
+        if &bytes[area_end..area_end + 3] != b"3DI" {
+            return Err(NotEditable::malformed("the footer does not start with 3DI"));
+        }
+        if bytes[area_end + 3..area_end + HEADER_BYTES] != bytes[3..HEADER_BYTES] {
+            return Err(NotEditable::malformed(
+                "the footer does not repeat the header",
+            ));
+        }
     }
     Ok(TagIndex {
         major,
@@ -208,6 +221,45 @@ fn extended_header(bytes: &[u8], major: u8, area_end: usize) -> Result<Range<usi
     Ok(start..end)
 }
 
+/// Whether a frame holds text (`T***`, `W***`, `COMM`, `USLT`, `USER`), which no writer ends
+/// with a run of 128 or more zero bytes.
+fn is_text_frame(id: [u8; 4]) -> bool {
+    matches!(id[0], b'T' | b'W') || matches!(&id, b"COMM" | b"USLT" | b"USER")
+}
+
+/// Refuses a v2.4 tag whose frame sizes read two ways. Some writers (old iTunes versions)
+/// stored v2.4 frame sizes as plain 32-bit integers. A size of 128 bytes or more then reads
+/// smaller as syncsafe, and when the rest of the frame is zeros the syncsafe walk takes it for
+/// padding, where an edit would write. Like the `TagLib` library, the syncsafe reading is trusted when a
+/// frame header follows the frame (only the last frame can end on padding). For the last frame,
+/// when the plain reading also stays inside the tag (its tail is then all zeros), both
+/// readings fit; that is accepted for a text frame (no writer ends text with 128 zero bytes)
+/// and refused for any other frame.
+fn check_plain_sizes(
+    bytes: &[u8],
+    frames: &[FrameRef],
+    padding_start: usize,
+    area_end: usize,
+) -> Result<(), NotEditable> {
+    let Some(f) = frames.last() else {
+        return Ok(());
+    };
+    let syncsafe = f.range.len() - HEADER_BYTES;
+    let plain = be32(bytes, f.range.start + 4).map_or(usize::MAX, to_usize);
+    if padding_start == area_end || plain == syncsafe || is_text_frame(f.id) {
+        return Ok(());
+    }
+    let plain_end = (f.range.start + HEADER_BYTES).checked_add(plain);
+    if plain_end.is_some_and(|e| e <= area_end) {
+        return Err(NotEditable::malformed(format!(
+            "ambiguous frame sizes: the frame at byte {} holds {syncsafe} bytes as syncsafe and \
+             {plain} as a plain integer",
+            f.range.start
+        )));
+    }
+    Ok(())
+}
+
 /// Walks the frames from `pos` up to the first zero byte (padding) or the end of the frame
 /// area; returns them and where they end.
 fn walk_frames(
@@ -245,14 +297,18 @@ fn walk_frames(
                 NotEditable::malformed(format!("the frame at byte {pos} runs past the tag"))
             })?;
         let flags = [bytes[pos + 8], bytes[pos + 9]];
-        let description = (&id == b"TXXX")
-            .then(|| txxx_description(major, flags, &bytes[pos + HEADER_BYTES..end]))
-            .flatten();
+        let (description, description_be) = if &id == b"TXXX" {
+            txxx_descriptions(major, flags, &bytes[pos + HEADER_BYTES..end])
+                .map_or((None, None), |(d, be)| (Some(d), be))
+        } else {
+            (None, None)
+        };
         frames.push(FrameRef {
             id,
             flags,
             range: pos..end,
             description,
+            description_be,
         });
         pos = end;
     }

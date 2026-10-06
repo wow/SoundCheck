@@ -144,6 +144,12 @@ fn structural_problems_are_malformed() {
     let at = footer.len() - 10;
     footer[at] = b'X';
     assert!(malformed(&footer).contains("3DI"));
+    for byte in 3..10 {
+        let mut footer = tag_with_footer(&[text(4, *b"TIT2", 3, "A")]);
+        let at = footer.len() - 10 + byte;
+        footer[at] ^= 0x01;
+        assert!(malformed(&footer).contains("repeat"), "footer byte {byte}");
+    }
 
     let short_ext = tag(3, 0x40, &[0, 0, 0, 2, 0, 0], &[], 0);
     assert!(malformed(&short_ext).contains("extended header size"));
@@ -191,4 +197,63 @@ fn oversized_tags_and_too_many_frames_are_refused_without_reading_them() {
     let empty = frame(3, *b"TXXX", [0, 0], &[]);
     let many: Vec<Vec<u8>> = vec![empty; MAX_FRAMES + 1];
     assert!(malformed(&tag(3, 0, &[], &many, 0)).contains("frames"));
+}
+
+/// A v2.4 frame whose size field holds `size` as a plain integer, as old iTunes versions wrote.
+fn plain_sized(id: [u8; 4], body: &[u8]) -> Vec<u8> {
+    let mut f = frame(4, id, [0, 0], body);
+    f[4..8].copy_from_slice(&u32::try_from(body.len()).expect("small").to_be_bytes());
+    f
+}
+
+#[test]
+fn regression_v24_plain_frame_size_with_a_zero_tail_is_ambiguous() {
+    // A PRIV of 256 bytes stored with the plain size 0x100; its last 128 bytes are zeros. Read
+    // as syncsafe the size is 128, and the zero tail would pass for padding an edit writes into.
+    let mut body = b"com.example.itunes\0".to_vec();
+    body.resize(128, 0x5A);
+    body.resize(256, 0);
+    let t = tag(
+        4,
+        0,
+        &[],
+        &[text(4, *b"TIT2", 0, "A"), plain_sized(*b"PRIV", &body)],
+        0,
+    );
+    assert_eq!(&t[t.len() - 256 - 6..t.len() - 256 - 2], [0, 0, 1, 0]);
+    assert!(malformed(&t).contains("ambiguous frame sizes"));
+    // With padding after the full plain frame too.
+    let padded = tag(4, 0, &[], &[plain_sized(*b"PRIV", &body)], 40);
+    assert!(malformed(&padded).contains("ambiguous"));
+    assert!(matches!(
+        crate::id3::edit_tag(&t, &[crate::id3::Edit::new("TBPM", "1").expect("valid")]),
+        Err(NotEditable::Malformed { .. })
+    ));
+}
+
+#[test]
+fn syncsafe_sizes_stand_where_the_plain_reading_does_not_fit() {
+    let big = vec![0x41; 200];
+    // Followed by a frame header: the syncsafe reading is trusted.
+    let t = tag(
+        4,
+        0,
+        &[],
+        &[frame(4, *b"PRIV", [0, 0], &big), text(4, *b"TIT2", 0, "A")],
+        600,
+    );
+    assert_eq!(parse_tag(&t).expect("parses").frames.len(), 2);
+    // Last before padding too short for the plain reading.
+    let t = tag(4, 0, &[], &[frame(4, *b"PRIV", [0, 0], &big)], 100);
+    assert!(parse_tag(&t).is_ok());
+    // Last before ample padding: refused for binary data, accepted for text.
+    let t = tag(4, 0, &[], &[frame(4, *b"PRIV", [0, 0], &big)], 1024);
+    assert!(malformed(&t).contains("ambiguous"));
+    for id in [*b"TXXX", *b"COMM", *b"WXXX", *b"USLT"] {
+        let t = tag(4, 0, &[], &[frame(4, id, [0, 0], &big)], 1024);
+        assert!(parse_tag(&t).is_ok(), "{id:?}");
+    }
+    // v2.3 sizes are plain by definition.
+    let t = tag(3, 0, &[], &[frame(3, *b"PRIV", [0, 0], &big)], 1024);
+    assert!(parse_tag(&t).is_ok());
 }

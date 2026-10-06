@@ -11,9 +11,10 @@
 //!   range. Frame bodies are not decoded, except the description of a `TXXX` frame (text
 //!   encodings 0-3: ISO-8859-1, UTF-16 with a byte-order mark (little-endian when it has none),
 //!   UTF-16BE, UTF-8; up to its terminator), read after the frame's grouping byte and v2.4
-//!   data-length indicator are skipped and v2.4 frame-level unsynchronisation is undone. A
-//!   compressed or encrypted frame's description cannot be read, so such a frame never matches
-//!   an edit.
+//!   data-length indicator are skipped and v2.4 frame-level unsynchronisation is undone; UTF-16
+//!   without a byte-order mark is matched in both byte orders. A compressed or encrypted
+//!   frame's description cannot be read, so a `TXXX` edit on a tag holding one is not made
+//!   (appending could duplicate it).
 //! - [`edit_tag`] writes SoundCheck's text frames ([`Edit`]: `TBPM`, `TXXX:SOUNDCHECK`,
 //!   `TXXX:REPLAYGAIN_TRACK_GAIN`, ...). A frame with the same label (the same id, or for `TXXX`
 //!   the same description compared ASCII case-insensitively) is replaced in place, every one if
@@ -34,7 +35,10 @@
 //! specification does not define, an extended header with a CRC (it would no longer match) or
 //! with v2.4 tag restrictions (our frames could break them), a tag over [`MAX_TAG_BYTES`], or a
 //! structure that does not parse (a frame running past the tag, an invalid frame id, non-zero
-//! bytes in the padding, more than [`MAX_FRAMES`] frames). Nothing is allocated from a declared
+//! bytes in the padding, more than [`MAX_FRAMES`] frames, a footer that does not repeat the
+//! header). A v2.4 tag whose last frame is not a text frame and also reads consistently with a
+//! plain 32-bit size (as old iTunes versions wrote them), its zero tail then frame data rather
+//! than padding, is refused as ambiguous: an edit would write into that tail. Nothing is allocated from a declared
 //! size before it is checked against the bytes at hand.
 
 mod edit;
@@ -86,6 +90,10 @@ pub enum NotEditable {
     ExtendedHeaderCrc,
     /// The v2.4 extended header declares tag restrictions.
     Restricted,
+    /// A `TXXX` edit is requested and a `TXXX` frame's description cannot be read (a
+    /// compressed or encrypted frame, an unknown text encoding): it might hold the same label,
+    /// and appending ours would duplicate it.
+    UnreadableTxxx,
     /// The tag is larger than [`MAX_TAG_BYTES`] or would grow past what its size field holds.
     TooLarge {
         /// The tag's size, bytes.
@@ -118,6 +126,9 @@ impl std::fmt::Display for NotEditable {
             }
             Self::ExtendedHeaderCrc => write!(f, "the tag is protected by a CRC"),
             Self::Restricted => write!(f, "the tag declares restrictions"),
+            Self::UnreadableTxxx => {
+                write!(f, "a TXXX frame's description cannot be read")
+            }
             Self::TooLarge { bytes } => write!(f, "the tag is too large to edit ({bytes} bytes)"),
             Self::Malformed { detail } => write!(f, "the tag is malformed: {detail}"),
         }

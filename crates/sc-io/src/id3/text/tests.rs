@@ -5,6 +5,11 @@ use super::*;
 use crate::id3::parse::decode_syncsafe;
 use crate::id3::test_build::encode;
 
+/// The little-endian (or only) reading of a `TXXX` description.
+fn txxx_description(major: u8, flags: [u8; 2], body: &[u8]) -> Option<String> {
+    txxx_descriptions(major, flags, body).map(|(d, _)| d)
+}
+
 #[test]
 fn text_decodes_in_all_four_encodings_up_to_the_terminator() {
     for enc in 0..=3 {
@@ -170,6 +175,7 @@ fn txxx_matches_ignore_ascii_case_and_text_frames_match_by_id() {
         flags: [0, 0],
         range: 0..10,
         description: desc.map(str::to_string),
+        description_be: None,
     };
     let rg = Edit::new("TXXX:REPLAYGAIN_TRACK_GAIN", "x").expect("valid");
     assert!(rg.matches(&frame(b"TXXX", Some("replaygain_track_gain"))));
@@ -180,4 +186,41 @@ fn txxx_matches_ignore_ascii_case_and_text_frames_match_by_id() {
     let bpm = Edit::new("TBPM", "x").expect("valid");
     assert!(bpm.matches(&frame(b"TBPM", None)));
     assert!(!bpm.matches(&frame(b"TKEY", None)));
+}
+
+#[test]
+fn utf16_without_a_byte_order_mark_is_read_in_both_orders() {
+    let le: Vec<u8> = [&[1][..], b"B\0P\0M\0\0\0"].concat();
+    let be: Vec<u8> = [&[1][..], b"\0B\0P\0M\0\0"].concat();
+    assert_eq!(
+        txxx_descriptions(3, [0, 0], &le),
+        Some(("BPM".into(), Some("\u{4200}\u{5000}\u{4d00}".into())))
+    );
+    let (little, big) = txxx_descriptions(4, [0, 0], &be).expect("readable");
+    assert_eq!(big.as_deref(), Some("BPM"));
+    assert_ne!(little, "BPM");
+    let bpm = Edit::new("TXXX:bpm", "1").expect("valid");
+    let frame = FrameRef {
+        id: *b"TXXX",
+        flags: [0, 0],
+        range: 0..10,
+        description: Some(little),
+        description_be: big,
+    };
+    assert!(bpm.matches(&frame));
+    // With a byte-order mark the order is known: no second reading.
+    let marked: Vec<u8> = [&[1][..], &encode(1, "BPM", true)].concat();
+    assert_eq!(
+        txxx_descriptions(3, [0, 0], &marked).and_then(|d| d.1),
+        None
+    );
+}
+
+#[test]
+fn an_empty_txxx_body_is_an_empty_description_and_unknown_encodings_are_unreadable() {
+    assert_eq!(
+        txxx_descriptions(3, [0, 0], &[]),
+        Some((String::new(), None))
+    );
+    assert_eq!(txxx_descriptions(3, [0, 0], b"\x04BPM\0x"), None);
 }

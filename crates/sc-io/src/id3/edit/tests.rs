@@ -201,6 +201,39 @@ fn an_empty_tag_gets_every_edit_appended() {
 }
 
 #[test]
+fn an_unreadable_txxx_description_stops_txxx_edits_only() {
+    for (major, flags) in [
+        (3, [0, 0x80]),
+        (3, [0, 0x40]),
+        (4, [0, 0x08]),
+        (4, [0, 0x04]),
+    ] {
+        let hidden = frame(major, *b"TXXX", flags, b"\0\0\0\x10x\x9c\x01\x02");
+        let t = tag(major, 0, &[], &[text(major, *b"TIT2", 0, "A"), hidden], 64);
+        assert_eq!(edit_tag(&t, &ours()), Err(NotEditable::UnreadableTxxx));
+        let out = edit_tag(&t, &edits(&[("TBPM", "128")])).expect("text frame edits go on");
+        assert_eq!(out.summary.appended, 1);
+    }
+    let unknown = frame(3, *b"TXXX", [0, 0], b"\x07BPM\x001");
+    let t = tag(3, 0, &[], &[unknown], 64);
+    assert_eq!(edit_tag(&t, &ours()), Err(NotEditable::UnreadableTxxx));
+}
+
+#[test]
+fn a_bom_less_utf16_description_in_big_endian_is_replaced_not_duplicated() {
+    let mut body = vec![1];
+    body.extend(crate::id3::test_build::encode(
+        2,
+        "replaygain_track_gain",
+        true,
+    ));
+    body.extend(crate::id3::test_build::encode(2, "-1 dB", false));
+    let t = tag(3, 0, &[], &[frame(3, *b"TXXX", [0, 0], &body)], 512);
+    let out = edit_tag(&t, &ours()).expect("editable");
+    assert_eq!((out.summary.replaced, out.summary.appended), (1, 4));
+}
+
+#[test]
 fn tags_that_are_not_editable_are_reported_not_rewritten() {
     let unsync = tag(4, 0x80, &[], &[text(4, *b"TIT2", 0, "A")], 0);
     assert_eq!(edit_tag(&unsync, &ours()), Err(NotEditable::Unsynchronised));
@@ -218,59 +251,157 @@ fn tags_that_are_not_editable_are_reported_not_rewritten() {
     ));
 }
 
-/// A random frame: a common id, random flags (any v2.4 format flag except compression and
-/// encryption keep the description readable) and a body; some are `TXXX` frames whose
-/// description may be one of ours in another letter case.
+/// Format flags that keep a frame's text readable: v2.3 grouping (0x20); v2.4 grouping (0x40),
+/// unsynchronisation (0x02), data-length indicator (0x01) and grouping with the indicator.
+fn arb_format(major: u8) -> impl Strategy<Value = u8> {
+    if major == 3 {
+        prop::sample::select(vec![0, 0x20])
+    } else {
+        prop::sample::select(vec![0, 0x40, 0x01, 0x02, 0x41])
+    }
+}
+
+/// Frame data as stored under `format`: the group byte and the v2.4 data-length indicator in
+/// front, and v2.4 unsynchronisation over all of it.
+fn stored(major: u8, format: u8, group: u8, data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    if format & (if major == 3 { 0x20 } else { 0x40 }) != 0 {
+        out.push(group);
+    }
+    if major == 4 && format & 0x01 != 0 {
+        let len = u32::try_from(data.len()).expect("small");
+        out.extend(crate::id3::encode_syncsafe(len).expect("small"));
+    }
+    out.extend_from_slice(data);
+    if major == 4 && format & 0x02 != 0 {
+        let mut unsynced = Vec::with_capacity(out.len() + 8);
+        for b in out {
+            unsynced.push(b);
+            if b == 0xFF {
+                unsynced.push(0);
+            }
+        }
+        out = unsynced;
+    }
+    out
+}
+
+/// Text for `encoding`: Latin-1 for 0, any of ASCII, Latin-1, Turkish, the euro sign and an
+/// emoji (a UTF-16 surrogate pair) otherwise.
+fn arb_text(encoding: u8, max: usize) -> BoxedStrategy<String> {
+    let chars = if encoding == 0 {
+        "[ -~à-ÿ]"
+    } else {
+        "[ -~é€ışĞ😀]"
+    };
+    proptest::string::string_regex(&format!("{chars}{{0,{max}}}"))
+        .expect("valid regex")
+        .boxed()
+}
+
+/// A random frame of a tag of `major` with random status flags and readable format flags
+/// (group byte, data-length indicator, unsynchronisation): an opaque frame with a common id,
+/// or a `TXXX` frame in any encoding whose description may be one of ours in another letter
+/// case and whose value may hold non-ASCII text.
 fn arb_frame(major: u8) -> impl Strategy<Value = Vec<u8>> {
     let ids = prop::sample::select(vec![*b"TIT2", *b"TBPM", *b"PRIV", *b"GEOB", *b"APIC"]);
     let descs = prop::sample::select(vec![
         "SOURCE",
         "replaygain_track_gain",
         "Soundcheck",
-        "BPM",
+        "bpm",
         "Serato Markers2",
+        "ÄRGER",
     ]);
+    let txxx_frame = (0_u8..=3, descs).prop_flat_map(move |(enc, desc)| {
+        (
+            Just(enc),
+            Just(desc),
+            arb_text(enc, 40),
+            any::<u8>(),
+            arb_format(major),
+            any::<u8>(),
+        )
+    });
     prop_oneof![
-        (ids, any::<u8>(), prop::collection::vec(any::<u8>(), 1..300))
-            .prop_map(move |(id, flags, body)| frame(major, id, [flags, 0], &body)),
-        (0_u8..=3, descs, "[ -~]{0,40}")
-            .prop_map(move |(enc, desc, value)| txxx(major, enc, desc, &value)),
+        (
+            ids,
+            any::<u8>(),
+            arb_format(major),
+            any::<u8>(),
+            prop::collection::vec(any::<u8>(), 1..300)
+        )
+            .prop_map(move |(id, status, format, group, body)| {
+                frame(
+                    major,
+                    id,
+                    [status, format],
+                    &stored(major, format, group, &body),
+                )
+            }),
+        txxx_frame.prop_map(move |(enc, desc, value, status, format, group)| {
+            let mut data = vec![enc];
+            data.extend(crate::id3::test_build::encode(enc, desc, true));
+            data.extend(crate::id3::test_build::encode(enc, &value, false));
+            frame(
+                major,
+                *b"TXXX",
+                [status, format],
+                &stored(major, format, group, &data),
+            )
+        }),
     ]
+}
+
+fn ambiguous(r: &Result<TagIndex, NotEditable>) -> bool {
+    matches!(r, Err(NotEditable::Malformed { detail }) if detail.contains("ambiguous"))
 }
 
 proptest! {
     #[test]
     fn edits_keep_every_other_frame_in_order_and_reparse(
-        major in 3_u8..=4,
-        frames in prop::collection::vec(arb_frame(3), 0..12),
+        (major, frames) in (3_u8..=4)
+            .prop_flat_map(|m| (Just(m), prop::collection::vec(arb_frame(m), 0..12))),
         padding in 0_usize..600,
         pick in prop::collection::vec(any::<bool>(), 5),
+        record in arb_text(1, 300),
     ) {
-        // Frames are built as v2.3; rebuild them for `major` (only the size field differs).
-        let frames: Vec<Vec<u8>> = frames
-            .iter()
-            .map(|f| {
-                let body = &f[10..];
-                let id: [u8; 4] = f[..4].try_into().expect("four bytes");
-                frame(major, id, [f[8], f[9]], body)
-            })
-            .collect();
-        let chosen: Vec<Edit> = ours()
-            .into_iter()
-            .zip(&pick)
-            .filter_map(|(e, keep)| keep.then_some(e))
-            .collect();
+        let chosen: Vec<Edit> = edits(&[
+            ("TBPM", "128"),
+            ("TXXX:BPM", "128.00"),
+            ("TXXX:REPLAYGAIN_TRACK_GAIN", "-6.20 dB"),
+            ("TXXX:REPLAYGAIN_TRACK_PEAK", "0.912345"),
+            ("TXXX:SOUNDCHECK", &record),
+        ])
+        .into_iter()
+        .zip(&pick)
+        .filter_map(|(e, keep)| keep.then_some(e))
+        .collect();
         let t = tag(major, 0, &[], &frames, padding);
-        let before = parse_tag(&t).expect("generated tags parse");
+        let before = parse_tag(&t);
+        if ambiguous(&before) {
+            // A v2.4 binary last frame of 128+ bytes before enough padding: refused as
+            // ambiguous (see parse.rs), never edited.
+            prop_assert!(edit_tag(&t, &chosen).is_err());
+            return Ok(());
+        }
+        let before = before.expect("generated tags parse");
         let out = edit_tag(&t, &chosen).expect("editable");
-        let after = parse_tag(&out.bytes).expect("edited tags parse");
-        prop_assert_eq!((after.major, after.revision, after.flags), (major, 0, 0));
-        let old = frames_of(&t, &before);
-        let new = frames_of(&out.bytes, &after);
+        let after = parse_tag(&out.bytes);
         let appended = chosen
             .iter()
             .filter(|e| !before.frames.iter().any(|f| e.matches(f)))
             .count();
+        if ambiguous(&after) {
+            // Only when nothing was appended and a shorter replacement freed padding behind
+            // such a frame.
+            prop_assert_eq!(appended, 0);
+            return Ok(());
+        }
+        let after = after.expect("edited tags parse");
+        prop_assert_eq!((after.major, after.revision, after.flags), (major, 0, 0));
+        let old = frames_of(&t, &before);
+        let new = frames_of(&out.bytes, &after);
         prop_assert_eq!(new.len(), old.len() + appended);
         for (k, f) in before.frames.iter().enumerate() {
             if let Some(e) = chosen.iter().find(|e| e.matches(f)) {
@@ -285,6 +416,7 @@ proptest! {
             .collect();
         for (k, e) in tail.iter().enumerate() {
             prop_assert_eq!(new[old.len() + k], &e.frame(major)[..]);
+            prop_assert!(e.matches(&after.frames[old.len() + k]), "ours re-read");
         }
         let grown = new.iter().map(|f| f.len()).sum::<usize>()
             .saturating_sub(old.iter().map(|f| f.len()).sum::<usize>());

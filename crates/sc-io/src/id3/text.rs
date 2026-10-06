@@ -15,24 +15,23 @@ const MAX_DESCRIPTION_BYTES: usize = 256;
 /// encrypted frame, whose content cannot be read without decompressing or decrypting it.
 fn content(major: u8, flags: [u8; 2], body: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
     let format = flags[1];
-    let (skip, unsync) = if major == 3 {
+    if major == 3 {
         // v2.3: 0x80 compression, 0x40 encryption, 0x20 grouping (one group byte).
         if format & 0xC0 != 0 {
             return None;
         }
-        (usize::from(format & 0x20 != 0), false)
-    } else {
-        // v2.4: 0x40 grouping (one byte), 0x08 compression, 0x04 encryption,
-        // 0x02 unsynchronisation, 0x01 data-length indicator (four bytes).
-        if format & 0x0C != 0 {
-            return None;
-        }
-        let skip = usize::from(format & 0x40 != 0) + 4 * usize::from(format & 0x01 != 0);
-        (skip, format & 0x02 != 0)
-    };
-    let body = body.get(skip..)?;
-    if !unsync {
-        return Some(body.into());
+        return body.get(usize::from(format & 0x20 != 0)..).map(Into::into);
+    }
+    // v2.4: 0x40 grouping (one byte), 0x08 compression, 0x04 encryption, 0x02
+    // unsynchronisation, 0x01 data-length indicator (four bytes). Unsynchronisation covers
+    // everything after the frame header, the group byte and indicator included, so it is
+    // undone first.
+    if format & 0x0C != 0 {
+        return None;
+    }
+    let skip = usize::from(format & 0x40 != 0) + 4 * usize::from(format & 0x01 != 0);
+    if format & 0x02 == 0 {
+        return body.get(skip..).map(Into::into);
     }
     let mut out = Vec::with_capacity(body.len());
     let mut after_ff = false;
@@ -42,7 +41,7 @@ fn content(major: u8, flags: [u8; 2], body: &[u8]) -> Option<std::borrow::Cow<'_
         }
         after_ff = b == 0xFF;
     }
-    Some(out.into())
+    (skip <= out.len()).then(|| out.split_off(skip).into())
 }
 
 /// Decodes text in `encoding` up to its terminator (or the end): 0 ISO-8859-1, 1 UTF-16 with
@@ -87,10 +86,24 @@ pub(crate) fn decode_text(encoding: u8, b: &[u8]) -> Option<String> {
 }
 
 /// The description of a `TXXX` frame with these flags and body, when it can be read.
-pub(crate) fn txxx_description(major: u8, flags: [u8; 2], body: &[u8]) -> Option<String> {
+/// The description of a `TXXX` frame with these flags and body, when it can be read, and for
+/// UTF-16 without a byte-order mark also its big-endian reading. An empty body reads as an
+/// empty description.
+pub(crate) fn txxx_descriptions(
+    major: u8,
+    flags: [u8; 2],
+    body: &[u8],
+) -> Option<(String, Option<String>)> {
     let content = content(major, flags, body)?;
-    let (&encoding, rest) = content.split_first()?;
-    decode_text(encoding, rest)
+    let Some((&encoding, rest)) = content.split_first() else {
+        return Some((String::new(), None));
+    };
+    let text = decode_text(encoding, rest)?;
+    let bom = rest.starts_with(&[0xFF, 0xFE]) || rest.starts_with(&[0xFE, 0xFF]);
+    let big_endian = (encoding == 1 && !bom)
+        .then(|| decode_text(2, rest))
+        .flatten();
+    Some((text, big_endian))
 }
 
 /// What an edit writes: a text frame by id, or a `TXXX` frame by description.
@@ -173,17 +186,15 @@ impl Edit {
     }
 
     /// Whether this edit replaces `frame`: the same id, and for `TXXX` the same description
-    /// (ASCII case-insensitive).
+    /// (ASCII case-insensitive; UTF-16 without a byte-order mark in either byte order).
     #[must_use]
     pub fn matches(&self, frame: &FrameRef) -> bool {
         match &self.label {
             Label::Frame(id) => frame.id == *id,
             Label::Txxx(desc) => {
-                &frame.id == b"TXXX"
-                    && frame
-                        .description
-                        .as_ref()
-                        .is_some_and(|d| d.eq_ignore_ascii_case(desc))
+                let same =
+                    |d: &Option<String>| d.as_ref().is_some_and(|d| d.eq_ignore_ascii_case(desc));
+                &frame.id == b"TXXX" && (same(&frame.description) || same(&frame.description_be))
             }
         }
     }

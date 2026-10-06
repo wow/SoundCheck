@@ -1,7 +1,7 @@
 //! Rebuilding a tag with SoundCheck's frames replaced or appended and every other byte kept.
 
 use super::parse::{HEADER_BYTES, encode_syncsafe, parse_tag};
-use super::text::Edit;
+use super::text::{Edit, Label};
 use super::{GROWTH_PADDING_BYTES, MAX_TAG_BYTES, NotEditable};
 
 /// What [`edit_tag`] did.
@@ -33,10 +33,19 @@ pub struct Edited {
 /// Applies `edits` to the tag at the start of `chunk` (an `id3 `/`ID3 ` chunk payload).
 ///
 /// # Errors
-/// [`NotEditable`] when the tag cannot be edited safely (see [`super::parse_tag`]) or would
-/// grow past [`MAX_TAG_BYTES`].
+/// [`NotEditable`] when the tag cannot be edited safely (see [`super::parse_tag`]), would grow
+/// past [`MAX_TAG_BYTES`], or holds a `TXXX` frame whose description cannot be read while a
+/// `TXXX` edit is requested (it might be one of ours, and appending would duplicate it).
 pub fn edit_tag(chunk: &[u8], edits: &[Edit]) -> Result<Edited, NotEditable> {
     let index = parse_tag(chunk)?;
+    let txxx_edit = edits.iter().any(|e| matches!(e.label(), Label::Txxx(_)));
+    let unreadable = index
+        .frames
+        .iter()
+        .any(|f| &f.id == b"TXXX" && f.description.is_none());
+    if txxx_edit && unreadable {
+        return Err(NotEditable::UnreadableTxxx);
+    }
     let major = index.major;
     let mut frames = Vec::with_capacity(index.padding.end - HEADER_BYTES);
     let mut replaced = 0_u32;
