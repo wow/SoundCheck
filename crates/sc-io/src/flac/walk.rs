@@ -33,7 +33,10 @@ pub const MAX_LEADING_TAGS: usize = 16;
 const ID3V1_BYTES: u64 = 128;
 
 /// Length of an `APEv2` header or footer, bytes.
-const APE_FOOTER_BYTES: u64 = 32;
+const APE_FOOTER_LEN: usize = 32;
+
+/// [`APE_FOOTER_LEN`] as a file offset.
+const APE_FOOTER_BYTES: u64 = APE_FOOTER_LEN as u64;
 
 /// One metadata block.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -233,7 +236,7 @@ fn tail_tag<R: Read + Seek>(src: &mut Source<'_, R>, frames_start: u64) -> Resul
         }
     }
     if end >= frames_start + APE_FOOTER_BYTES {
-        let mut footer = [0_u8; APE_FOOTER_BYTES as usize];
+        let mut footer = [0_u8; APE_FOOTER_LEN];
         src.read_at(end - APE_FOOTER_BYTES, &mut footer)?;
         if &footer[..8] == b"APETAGEX" {
             let le = |at: usize| {

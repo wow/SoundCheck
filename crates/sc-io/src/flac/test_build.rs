@@ -49,8 +49,13 @@ pub(crate) fn encode(data: &[i32], rate: u32, channels: u16, bits: u8) -> (Vec<u
     let mut w = FlacStreamWriter::new(shared.clone(), Options::default());
     let (mut min, mut max, mut before) = (usize::MAX, 0, 0);
     for block in data.chunks(4096 * ch) {
-        w.write(rate, u8::try_from(channels).expect("1..8"), u32::from(bits), block)
-            .expect("encode");
+        w.write(
+            rate,
+            u8::try_from(channels).expect("1..8"),
+            u32::from(bits),
+            block,
+        )
+        .expect("encode");
         let len = shared.0.borrow().len() - before;
         (min, max) = (min.min(len), max.max(len));
         before += len;

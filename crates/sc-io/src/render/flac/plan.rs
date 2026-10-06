@@ -110,13 +110,16 @@ fn corrupt(path: &Path, block: &MetadataBlock, why: &str) -> Error {
     }
 }
 
+/// The index of the edited comment block and its new payload.
+type EditedComment = Option<(usize, Vec<u8>)>;
+
 /// The edited comment, or why there is none.
 fn plan_tag<R: Read + Seek>(
     src: &mut R,
     path: &Path,
     layout: &FlacLayout,
     edits: &[VorbisEdit],
-) -> Result<(Option<(usize, Vec<u8>)>, TagOutcome)> {
+) -> Result<(EditedComment, TagOutcome)> {
     if edits.is_empty() {
         return Ok((None, TagOutcome::NotRequested));
     }

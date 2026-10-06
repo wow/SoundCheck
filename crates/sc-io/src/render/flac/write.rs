@@ -97,9 +97,11 @@ pub(super) fn write_and_verify(src: &mut File, file: File, job: &Job<'_>) -> Res
     copy_range(src, job.input, output, &trailing, &mut w)?;
     let mut file = w.into_inner().map_err(|e| out_err(e.into_error()))?;
     let target = job.target;
+    // 4096 fits the 16-bit field.
+    let block_u16 = u16::try_from(OUTPUT_BLOCK_FRAMES).unwrap_or(u16::MAX);
     let info = StreamInfo {
-        min_block: OUTPUT_BLOCK_FRAMES as u16,
-        max_block: OUTPUT_BLOCK_FRAMES as u16,
+        min_block: block_u16,
+        max_block: block_u16,
         min_frame: encoded.min_frame,
         max_frame: encoded.max_frame,
         sample_rate_hz: job.layout.streaminfo.sample_rate_hz,
@@ -263,7 +265,10 @@ pub(super) fn verify(output: &Path, want: &Expected, cancel: &AtomicBool) -> Res
     drop(file);
     let types: Vec<u8> = layout.blocks.iter().map(|b| b.block_type).collect();
     if layout.frames_start != want.frames_start || types != want.block_types {
-        return Err(verify_failed(output, "the metadata blocks are not as planned"));
+        return Err(verify_failed(
+            output,
+            "the metadata blocks are not as planned",
+        ));
     }
     if layout.streaminfo != want.info {
         return Err(verify_failed(output, "STREAMINFO is not as written"));

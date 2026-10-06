@@ -95,34 +95,8 @@ pub fn apply_flac(
     let mut src = File::open(input).map_err(|e| io_error(input, e))?;
     let layout = read_layout(&mut src, input)?;
     let info = layout.streaminfo;
-    if info.channels > 2 {
-        return Err(Error::UnsupportedChannels {
-            path: input.to_path_buf(),
-            channels: usize::from(info.channels),
-        });
-    }
-    check_rate(input, info.sample_rate_hz)?;
-    let frames_in = match info.total_samples {
-        0 => count_frames(&mut src, input, &layout, cancel)?,
-        n => n,
-    };
-    if req.trim_frames >= frames_in {
-        return Err(Error::InvalidArgument(format!(
-            "{}: a head trim of {} samples leaves no audio ({frames_in} frames)",
-            input.display(),
-            req.trim_frames,
-        )));
-    }
-    let bits_in = u16::from(info.bits);
-    let mut target = Target {
-        bits_in,
-        bits_out: output_bits(req, false, bits_in),
-        frames_in,
-        trim_frames: req.trim_frames,
-        frames_out: frames_in - req.trim_frames,
-        gain_db: req.gain_db,
-        seed: 0,
-    };
+    let mut target = target(&mut src, input, &layout, req, cancel)?;
+    let frames_in = target.frames_in;
     let plan = plan::plan(
         &mut src,
         input,
@@ -194,6 +168,45 @@ pub fn apply_flac(
         leading_bytes: layout.marker_offset,
         trailing_bytes: done.trailing_bytes,
         output_bytes: done.output_bytes,
+    })
+}
+
+/// The output's shape (the seed is set later), or why the source cannot be rendered DJ-safe.
+fn target(
+    src: &mut File,
+    input: &Path,
+    layout: &FlacLayout,
+    req: &RenderRequest,
+    cancel: &AtomicBool,
+) -> Result<Target> {
+    let info = layout.streaminfo;
+    if info.channels > 2 {
+        return Err(Error::UnsupportedChannels {
+            path: input.to_path_buf(),
+            channels: usize::from(info.channels),
+        });
+    }
+    check_rate(input, info.sample_rate_hz)?;
+    let frames_in = match info.total_samples {
+        0 => count_frames(src, input, layout, cancel)?,
+        n => n,
+    };
+    if req.trim_frames >= frames_in {
+        return Err(Error::InvalidArgument(format!(
+            "{}: a head trim of {} samples leaves no audio ({frames_in} frames)",
+            input.display(),
+            req.trim_frames,
+        )));
+    }
+    let bits_in = u16::from(info.bits);
+    Ok(Target {
+        bits_in,
+        bits_out: output_bits(req, false, bits_in),
+        frames_in,
+        trim_frames: req.trim_frames,
+        frames_out: frames_in - req.trim_frames,
+        gain_db: req.gain_db,
+        seed: 0,
     })
 }
 

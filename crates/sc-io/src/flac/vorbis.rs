@@ -40,14 +40,19 @@ impl VorbisEdit {
     /// [`Error::InvalidArgument`] for an invalid name, a NUL character in the value, or a
     /// value over [`MAX_VALUE_BYTES`].
     pub fn new(name: &str, value: &str) -> Result<Self> {
-        let valid = !name.is_empty() && name.bytes().all(|b| (0x20..=0x7D).contains(&b) && b != b'=');
+        let valid = !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| (0x20..=0x7D).contains(&b) && b != b'=');
         if !valid {
             return Err(invalid(&format!(
                 "{name:?} is not a field name (ASCII 0x20..=0x7D without '=')"
             )));
         }
         if value.contains('\0') {
-            return Err(invalid(&format!("the value of {name:?} holds a NUL character")));
+            return Err(invalid(&format!(
+                "the value of {name:?} holds a NUL character"
+            )));
         }
         if value.len() > MAX_VALUE_BYTES {
             return Err(invalid(&format!(
@@ -203,12 +208,17 @@ pub fn edit_comment(
     let idx = index(payload)?;
     let mut replaced = 0_u32;
     let mut used = vec![false; edits.len()];
-    let mut out = Vec::with_capacity(payload.len() + edits.iter().map(|e| e.value.len() + 64).sum::<usize>());
+    let mut out =
+        Vec::with_capacity(payload.len() + edits.iter().map(|e| e.value.len() + 64).sum::<usize>());
     out.extend_from_slice(&payload[idx.vendor.clone()]);
     out.extend_from_slice(&[0; 4]); // the count, set below
     for range in &idx.fields {
-        let hit = CommentIndex::name(payload, range)
-            .and_then(|name| edits.iter().position(|e| e.matches(name)).map(|i| (name, i)));
+        let hit = CommentIndex::name(payload, range).and_then(|name| {
+            edits
+                .iter()
+                .position(|e| e.matches(name))
+                .map(|i| (name, i))
+        });
         match hit {
             Some((name, i)) => {
                 used[i] = true;
@@ -220,10 +230,15 @@ pub fn edit_comment(
     }
     let mut appended = 0_u32;
     for (edit, _) in edits.iter().zip(&used).filter(|(_, u)| !**u) {
-        push_field(&mut out, &[edit.name.as_bytes(), b"=", edit.value.as_bytes()])?;
+        push_field(
+            &mut out,
+            &[edit.name.as_bytes(), b"=", edit.value.as_bytes()],
+        )?;
         appended += 1;
     }
-    let count = u32::try_from(idx.fields.len()).unwrap_or(u32::MAX).saturating_add(appended);
+    let count = u32::try_from(idx.fields.len())
+        .unwrap_or(u32::MAX)
+        .saturating_add(appended);
     let at = idx.vendor.end;
     out[at..at + 4].copy_from_slice(&count.to_le_bytes());
     let comment_bytes = u32::try_from(out.len())

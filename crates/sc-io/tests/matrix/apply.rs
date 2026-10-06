@@ -1,6 +1,5 @@
 //! The apply harness: what a writer is asked to do, what it reports, the parameter grid every
-//! writer runs, and the calls into the `sc-io` writers (a stand-in for the FLAC writer, which
-//! does not exist yet).
+//! writer runs, and the calls into the `sc-io` writers (IFF render, FLAC render).
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -217,9 +216,6 @@ pub fn apply_with_tags(
     args: &ApplyArgs,
     edits: &[TagEdit],
 ) -> Result<Applied, Refusal> {
-    if input.extension().is_some_and(|e| e == "flac") {
-        unimplemented!("sc-io writer arrives with the FLAC writer");
-    }
     let request = sc_core::RenderRequest {
         gain_db: args.gain_db,
         trim_frames: args.trim_samples,
@@ -239,22 +235,17 @@ pub fn apply_with_tags(
             })
             .collect(),
     };
-    sc_io::render::apply_iff(input, out, &request, &AtomicBool::new(false))
+    let cancel = AtomicBool::new(false);
+    let rendered = if input.extension().is_some_and(|e| e == "flac") {
+        sc_io::render::apply_flac(input, out, &request, &cancel)
+    } else {
+        sc_io::render::apply_iff(input, out, &request, &cancel)
+    };
+    rendered
         .map(|report| Applied {
             tags_added: report.tags_added,
         })
         .map_err(Refusal::from)
-}
-
-/// Whether the writer tests should run: they need `SC_FILE_WRITERS=1` in addition to
-/// `--ignored`, so a nightly `--include-ignored` run stays green until the writers exist.
-#[must_use]
-pub fn writers_enabled(test: &str) -> bool {
-    let on = std::env::var("SC_FILE_WRITERS").as_deref() == Ok("1");
-    if !on {
-        eprintln!("{test}: skipped; set SC_FILE_WRITERS=1 once the sc-io writers exist");
-    }
-    on
 }
 
 /// The gain x length x loudness rows every writer is run with.

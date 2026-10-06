@@ -71,9 +71,9 @@ pub fn shift_cuesheet(p: &mut [u8], trim: u64, total_out: u64) -> Result<bool, C
         let mut absolute = Vec::with_capacity(count);
         for k in 0..count {
             let index = be64(p, pos + TRACK_BYTES + INDEX_BYTES * k)?;
-            let abs = offset
-                .checked_add(index)
-                .ok_or(CuesheetError::Malformed("an index point lies past 2^64 samples"))?;
+            let abs = offset.checked_add(index).ok_or(CuesheetError::Malformed(
+                "an index point lies past 2^64 samples",
+            ))?;
             absolute.push(abs.saturating_sub(trim));
         }
         let new_offset = if number == 170 || number == 255 {

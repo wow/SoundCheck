@@ -205,9 +205,7 @@ fn codec_error(path: &Path, delivered: u64, e: flac_codec::Error) -> Error {
         flac_codec::Error::Io(io) if io.kind() == std::io::ErrorKind::UnexpectedEof => {
             Error::Corrupt {
                 path: path.to_path_buf(),
-                detail: format!(
-                    "the file ends inside the audio frame after sample {delivered}"
-                ),
+                detail: format!("the file ends inside the audio frame after sample {delivered}"),
             }
         }
         flac_codec::Error::Io(io) => io_error(path, io),

@@ -5,7 +5,7 @@
 //! warm after the first iteration).
 #![allow(missing_docs)] // criterion_group! emits an undocumented public function
 
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
@@ -21,6 +21,8 @@ const SECONDS: u32 = 360;
 fn signal(first: u64, frames: usize, noise: &mut u32, out: &mut Vec<i32>) {
     out.clear();
     for n in 0..frames as u64 {
+        // Frame numbers stay below 2^25, exact in f64.
+        #[allow(clippy::cast_precision_loss)]
         let t = (first + n) as f64 / f64::from(RATE_HZ);
         let env = 0.6 + 0.4 * (std::f64::consts::TAU * 0.25 * t).sin();
         for (ch, detune) in [(0, 1.0), (1, 1.003)] {
@@ -69,7 +71,6 @@ fn write_flac(path: &Path) {
         total_samples: done.total_samples,
         md5: done.md5,
     };
-    use std::io::{Seek, SeekFrom};
     file.seek(SeekFrom::Start(8)).expect("seek");
     file.write_all(&info.to_bytes()).expect("write");
 }

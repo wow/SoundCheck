@@ -7,7 +7,10 @@ use super::*;
 fn block_headers_pack_flag_type_and_length() {
     assert_eq!(block_header(false, 4, 0x01_02_03), [0x04, 0x01, 0x02, 0x03]);
     assert_eq!(block_header(true, 1, 10), [0x81, 0, 0, 10]);
-    assert_eq!(block_header(true, 126, MAX_BLOCK_BYTES), [0xFE, 0xFF, 0xFF, 0xFF]);
+    assert_eq!(
+        block_header(true, 126, MAX_BLOCK_BYTES),
+        [0xFE, 0xFF, 0xFF, 0xFF]
+    );
 }
 
 #[test]

@@ -18,7 +18,7 @@ fn packing_round_trips_and_matches_literal_bytes() {
     let bytes = info.to_bytes();
     // 44100 = 0x0AC44: rate 20 bits, then channels-1 = 1 (3 bits), bits-1 = 23 (5 bits),
     // total 36 bits: 0x0AC44 << 44 | 1 << 41 | 23 << 36 | 19559.
-    let packed: u64 = 0x0AC44 << 44 | 1 << 41 | 23 << 36 | 19_559;
+    let packed: u64 = 0x0AC44 << 44 | 1 << 41 | 23 << 36 | 0x4C67; // 19,559
     let mut want = vec![0x10, 0x00, 0x10, 0x00, 0x00, 0x00, 0x0E, 0x01, 0x23, 0x45];
     want.extend_from_slice(&packed.to_be_bytes());
     want.extend_from_slice(&[0xAB; 16]);

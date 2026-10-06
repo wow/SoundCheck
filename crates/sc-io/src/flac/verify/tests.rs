@@ -1,6 +1,8 @@
 //! Unit tests of `verify.rs`: symphonia decodes the frames to the same samples, MD5 and hash
 //! as the source, reads them by range past leading and trailing bytes, and fails on damage.
 
+#![allow(clippy::cast_possible_truncation)] // test sizes and offsets are far below 2^32
+
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 

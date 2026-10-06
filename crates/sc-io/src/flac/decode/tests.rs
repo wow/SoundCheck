@@ -1,6 +1,8 @@
 //! Unit tests of `decode.rs`: exact samples at several depths, where the frames end before a
 //! trailing tag, the MD5 and count checks, corrupt and truncated frames, an unknown total.
 
+#![allow(clippy::cast_possible_truncation)] // test sizes and offsets are far below 2^32
+
 use std::io::Cursor;
 use std::path::Path;
 
@@ -18,7 +20,10 @@ fn read_all(bytes: &[u8], check_md5: bool) -> sc_core::Result<(Vec<i32>, FramesR
     while pcm.next_block(&mut block)? > 0 {
         all.extend_from_slice(&block);
     }
-    assert_eq!(pcm.delivered() as usize * usize::from(layout.streaminfo.channels), all.len());
+    assert_eq!(
+        pcm.delivered() as usize * usize::from(layout.streaminfo.channels),
+        all.len()
+    );
     let read = pcm.finish()?;
     Ok((all, read))
 }
@@ -44,15 +49,33 @@ fn a_wrong_md5_or_count_is_corrupt() {
     wrong.md5[0] ^= 1;
     let bytes = file(&[], &wrong, &[], &frames, &[]);
     assert!(matches!(read_all(&bytes, true), Err(Error::Corrupt { .. })));
-    assert!(read_all(&bytes, false).is_ok(), "MD5 checked only on request");
-    let unset = file(&[], &crate::flac::StreamInfo { md5: [0; 16], ..info }, &[], &frames, &[]);
-    assert!(read_all(&unset, true).is_ok(), "no signature, nothing to check");
+    assert!(
+        read_all(&bytes, false).is_ok(),
+        "MD5 checked only on request"
+    );
+    let unset = file(
+        &[],
+        &crate::flac::StreamInfo {
+            md5: [0; 16],
+            ..info
+        },
+        &[],
+        &frames,
+        &[],
+    );
+    assert!(
+        read_all(&unset, true).is_ok(),
+        "no signature, nothing to check"
+    );
     let more = crate::flac::StreamInfo {
         total_samples: 5001,
         ..info
     };
     let bytes = file(&[], &more, &[], &frames, &[]);
-    assert!(matches!(read_all(&bytes, false), Err(Error::Corrupt { .. })));
+    assert!(matches!(
+        read_all(&bytes, false),
+        Err(Error::Corrupt { .. })
+    ));
 }
 
 #[test]
@@ -63,7 +86,10 @@ fn damaged_and_truncated_frames_are_corrupt() {
     let mut damaged = good.clone();
     let mid = good.len() - frames.len() / 2;
     damaged[mid] ^= 0x10;
-    assert!(matches!(read_all(&damaged, false), Err(Error::Corrupt { .. })));
+    assert!(matches!(
+        read_all(&damaged, false),
+        Err(Error::Corrupt { .. })
+    ));
     let cut = &good[..good.len() - 100];
     assert!(matches!(read_all(cut, false), Err(Error::Corrupt { .. })));
 }
@@ -78,6 +104,6 @@ fn an_unknown_total_reads_to_the_tail_tag() {
     };
     let bytes = file(&[], &unknown, &[], &frames, &id3v1());
     let (got, read) = read_all(&bytes, true).expect("decodes");
-    assert!(got == data);
+    assert_eq!(got, data);
     assert_eq!(read.frames_end, (bytes.len() - 128) as u64);
 }

@@ -3,6 +3,8 @@
 //! output, cancellation, and verification catching a damaged file. The fixture matrix
 //! (`tests/matrix.rs`) covers the full block-by-block contract.
 
+#![allow(clippy::cast_possible_truncation)] // test sizes and offsets are far below 2^32
+
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -73,6 +75,7 @@ fn tagged_source(frames: usize) -> (Vec<u8>, Vec<i32>) {
 
 #[test]
 fn identity_keeps_the_samples_and_every_carried_byte() {
+    use BlockFate::{Carried, Replaced};
     let (src, data) = tagged_source(10_000);
     let run = setup(&src);
     let report = apply(&run, &RenderRequest::default()).expect("renders");
@@ -102,7 +105,6 @@ fn identity_keeps_the_samples_and_every_carried_byte() {
         (4096, 4096)
     );
     let fates: Vec<BlockFate> = report.blocks.iter().map(|r| r.fate).collect();
-    use BlockFate::{Carried, Replaced};
     assert_eq!(
         fates,
         [Replaced, Carried, Carried, Carried, Carried, Replaced]

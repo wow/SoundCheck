@@ -1,6 +1,8 @@
 //! Unit tests of `encode.rs`: round trip through a decoder, the MD5 and hash, the size
 //! guard on incompressible audio, determinism, and the refusals.
 
+#![allow(clippy::cast_possible_truncation)] // test sizes and offsets are far below 2^32
+
 use std::io::Cursor;
 use std::path::Path;
 
@@ -35,7 +37,8 @@ fn decode(frames: &[u8], done: &Encoded, channels: u16, bits: u16) -> Vec<i32> {
     };
     let bytes = file(&[], &info, &[], frames, &[]);
     let layout = read_layout(&mut Cursor::new(&bytes), Path::new("o.flac")).expect("walks");
-    let mut pcm = FlacPcm::open(Cursor::new(&bytes), Path::new("o.flac"), &layout, true).expect("open");
+    let mut pcm =
+        FlacPcm::open(Cursor::new(&bytes), Path::new("o.flac"), &layout, true).expect("open");
     let (mut all, mut block) = (Vec::new(), Vec::new());
     while pcm.next_block(&mut block).expect("decodes") > 0 {
         all.extend_from_slice(&block);
@@ -74,9 +77,15 @@ fn full_scale_noise_stays_within_the_verbatim_bound_and_is_deterministic() {
         .collect();
     let (a, done) = encode_all(&data, 2, 24, 4096);
     let (b, _) = encode_all(&data, 2, 24, 1);
-    assert_eq!(a, b, "the same samples give the same bytes, whatever the push sizes");
+    assert_eq!(
+        a, b,
+        "the same samples give the same bytes, whatever the push sizes"
+    );
     assert!(done.max_frame as usize <= max_frame_bytes(2, 4096, 24));
-    assert!(done.max_frame as usize > 4096 * 6, "noise does not compress");
+    assert!(
+        done.max_frame as usize > 4096 * 6,
+        "noise does not compress"
+    );
     assert_eq!(decode(&a, &done, 2, 24), data);
 }
 
@@ -89,14 +98,30 @@ fn the_bound_counts_header_subframe_headers_alignment_and_crc() {
 #[test]
 fn bad_input_is_refused() {
     let p = Path::new("o.flac");
-    assert!(matches!(FrameEncoder::new(44_100, 3, 16, p), Err(Error::InvalidArgument(_))));
-    assert!(matches!(FrameEncoder::new(44_100, 2, 20, p), Err(Error::InvalidArgument(_))));
+    assert!(matches!(
+        FrameEncoder::new(44_100, 3, 16, p),
+        Err(Error::InvalidArgument(_))
+    ));
+    assert!(matches!(
+        FrameEncoder::new(44_100, 2, 20, p),
+        Err(Error::InvalidArgument(_))
+    ));
     let mut out = Vec::new();
     let mut enc = FrameEncoder::new(44_100, 2, 16, p).expect("new");
-    assert!(matches!(enc.push(&[1, 2, 3], &mut out), Err(Error::Internal(_))));
-    assert!(matches!(enc.push(&[32_768, 0], &mut out), Err(Error::Internal(_))));
-    assert!(matches!(enc.push(&[0, -32_769], &mut out), Err(Error::Internal(_))));
-    enc.push(&[-32_768, 32_767], &mut out).expect("the extremes are in range");
+    assert!(matches!(
+        enc.push(&[1, 2, 3], &mut out),
+        Err(Error::Internal(_))
+    ));
+    assert!(matches!(
+        enc.push(&[32_768, 0], &mut out),
+        Err(Error::Internal(_))
+    ));
+    assert!(matches!(
+        enc.push(&[0, -32_769], &mut out),
+        Err(Error::Internal(_))
+    ));
+    enc.push(&[-32_768, 32_767], &mut out)
+        .expect("the extremes are in range");
     let empty = FrameEncoder::new(44_100, 1, 24, p).expect("new");
     assert!(matches!(empty.finish(&mut out), Err(Error::Internal(_))));
 }
