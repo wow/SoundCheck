@@ -78,7 +78,7 @@ impl Block {
 }
 
 /// [`Error::Cancelled`] once `cancel` is set.
-pub(super) fn check_cancel(cancel: &AtomicBool) -> Result<()> {
+pub(crate) fn check_cancel(cancel: &AtomicBool) -> Result<()> {
     if cancel.load(Ordering::Relaxed) {
         Err(Error::Cancelled)
     } else {
@@ -189,14 +189,7 @@ pub(super) fn dither_seed<R: Read + Seek>(
     req: SeedRequest,
     cancel: &AtomicBool,
 ) -> Result<u64> {
-    let mut h = blake3::Hasher::new();
-    h.update(b"SoundCheck TPDF seed 2");
-    h.update(&(format_payload.len() as u64).to_le_bytes());
-    h.update(format_payload);
-    h.update(&format.frames.to_le_bytes());
-    h.update(&req.gain_db.to_bits().to_le_bytes());
-    h.update(&req.trim_frames.to_le_bytes());
-    h.update(&req.bits.to_le_bytes());
+    let mut h = seed_hasher(format_payload, format.frames, req);
     let mut reader = PcmReader::new(src, format, path)?;
     let mut block = Block::new(format);
     let channels = usize::from(format.channels);
@@ -223,9 +216,29 @@ pub(super) fn dither_seed<R: Read + Seek>(
             }
         }
     }
+    Ok(seed_of(&h))
+}
+
+/// The seed hash before any sample: the domain label, the format payload, the frame count
+/// and the request. The samples follow as little-endian `i32` (or `f64` bits for a float
+/// source), then [`seed_of`] gives the seed.
+pub(super) fn seed_hasher(format_payload: &[u8], frames: u64, req: SeedRequest) -> blake3::Hasher {
+    let mut h = blake3::Hasher::new();
+    h.update(b"SoundCheck TPDF seed 2");
+    h.update(&(format_payload.len() as u64).to_le_bytes());
+    h.update(format_payload);
+    h.update(&frames.to_le_bytes());
+    h.update(&req.gain_db.to_bits().to_le_bytes());
+    h.update(&req.trim_frames.to_le_bytes());
+    h.update(&req.bits.to_le_bytes());
+    h
+}
+
+/// The seed: the first eight bytes of the hash, little-endian.
+pub(super) fn seed_of(h: &blake3::Hasher) -> u64 {
     let mut seed = [0_u8; 8];
     seed.copy_from_slice(&h.finalize().as_bytes()[..8]);
-    Ok(u64::from_le_bytes(seed))
+    u64::from_le_bytes(seed)
 }
 
 /// Streams the audio of `job` from `src` into `w`.

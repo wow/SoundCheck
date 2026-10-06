@@ -9,6 +9,14 @@ fn reasons_read_as_sentences() {
     let cases = [
         (NotEditable::NoTag, "the file has no ID3 tag"),
         (
+            NotEditable::NoVorbisComment,
+            "the file has no Vorbis comment block",
+        ),
+        (
+            NotEditable::SeveralVorbisComments { count: 2 },
+            "the file has 2 Vorbis comment blocks",
+        ),
+        (
             NotEditable::SeveralTags { count: 2 },
             "the file has 2 ID3 tags",
         ),

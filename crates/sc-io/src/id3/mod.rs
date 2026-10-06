@@ -65,8 +65,18 @@ pub const GROWTH_PADDING_BYTES: usize = 1024;
 pub const MAX_VALUE_BYTES: usize = 64 << 10;
 
 /// Why requested tag edits were not written; the tag (if any) is then carried unchanged.
+/// The ID3 reasons apply to WAV/AIFF files; FLAC files use [`NotEditable::NoVorbisComment`],
+/// [`NotEditable::SeveralVorbisComments`], [`NotEditable::TooLarge`] and
+/// [`NotEditable::Malformed`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum NotEditable {
+    /// The FLAC file holds no `VORBIS_COMMENT` block (none is created).
+    NoVorbisComment,
+    /// The FLAC file holds more than one `VORBIS_COMMENT` block (RFC 9639 allows one).
+    SeveralVorbisComments {
+        /// Number of blocks.
+        count: usize,
+    },
     /// The file holds no ID3 tag.
     NoTag,
     /// The file holds more than one ID3 tag; readers disagree on which one counts.
@@ -117,6 +127,10 @@ impl NotEditable {
 impl std::fmt::Display for NotEditable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::NoVorbisComment => write!(f, "the file has no Vorbis comment block"),
+            Self::SeveralVorbisComments { count } => {
+                write!(f, "the file has {count} Vorbis comment blocks")
+            }
             Self::NoTag => write!(f, "the file has no ID3 tag"),
             Self::SeveralTags { count } => write!(f, "the file has {count} ID3 tags"),
             Self::UnsupportedVersion { major } => write!(f, "ID3v2.{major} tags are not edited"),

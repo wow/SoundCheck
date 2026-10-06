@@ -33,6 +33,10 @@ ebur128 = "0.1"
 lofty = "0.25"
 directories = "6"
 blake3 = "1"
+# FLAC frames only (no rayon: single-threaded, deterministic); metadata blocks are our own.
+flac-codec = { version = "1.3.3", default-features = false }
+# STREAMINFO MD5 (RFC 9639) in the FLAC writer; also used by tests.
+md-5 = "0.11"
 # Pure-Rust maths (musl port): the same bits on every platform, unlike the system libm.
 libm = { version = "0.2", default-features = false }
 unicode-normalization = "0.1"
@@ -51,7 +55,6 @@ proptest = "1"
 hound = "3.5"
 tempfile = "3"
 sha2 = "0.11"
-md-5 = "0.11"
 assert_cmd = "2"
 predicates = "3"
 

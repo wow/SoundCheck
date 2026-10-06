@@ -51,9 +51,13 @@
 //! output when writing fails.
 
 mod audio;
+mod flac;
 mod layout;
 pub mod patch;
 mod tag;
+
+pub(crate) use audio::check_cancel;
+pub use flac::apply_flac;
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
@@ -86,26 +90,36 @@ pub enum BlockFate {
     Carried,
     /// Copied with position or loudness fields rewritten.
     Patched,
-    /// An ID3 tag with SoundCheck's frames written and every other frame copied.
+    /// A tag (an ID3 tag, a FLAC Vorbis comment) with SoundCheck's items written and every
+    /// other item copied.
     Edited,
-    /// Written anew (format and audio chunks).
+    /// Written anew (format and audio chunks; FLAC STREAMINFO, SEEKTABLE and PADDING).
     Replaced,
     /// Left out of the output.
     Dropped,
 }
 
-/// One source chunk and its fate.
+/// What a source block is: a WAV/AIFF chunk or a FLAC metadata block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BlockId {
+    /// A chunk with this four-character id.
+    Chunk([u8; 4]),
+    /// A FLAC metadata block of this type (RFC 9639 table 2: 0 STREAMINFO, 1 PADDING, ...).
+    FlacBlock(u8),
+}
+
+/// One source chunk or metadata block and its fate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BlockRecord {
-    /// Chunk id.
-    pub id: [u8; 4],
+    /// Chunk id or block type.
+    pub id: BlockId,
     /// What happened to it.
     pub fate: BlockFate,
     /// Its payload length in the source, bytes.
     pub source_bytes: u64,
 }
 
-/// What [`apply_iff`] wrote.
+/// What [`apply_iff`] or [`apply_flac`] wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderReport {
     /// Whether the requested tag edits were written.
@@ -113,8 +127,10 @@ pub struct RenderReport {
     /// Why requested tag edits were not written (the tag, if any, is carried unchanged);
     /// `None` when they were written or none were requested.
     pub tags_not_added: Option<NotEditable>,
-    /// What the tag edit did, when it was written.
+    /// What the ID3 tag edit did, when it was written (WAV/AIFF).
     pub tag_edit: Option<EditSummary>,
+    /// What the Vorbis comment edit did, when it was written (FLAC).
+    pub vorbis_edit: Option<crate::flac::vorbis::EditSummary>,
     /// Frames in the source.
     pub frames_in: u64,
     /// Frames written.
@@ -132,12 +148,17 @@ pub struct RenderReport {
     /// Samples moved to the largest or smallest code by less than one step of rounding or
     /// dither (never a clip: those inputs are refused).
     pub samples_saturated: u64,
-    /// BLAKE3 of the audio bytes exactly as written (the `data` payload, or the sound data
-    /// after the `SSND` offset and block size).
+    /// BLAKE3 of the audio as written: the `data` payload, or the sound data after the
+    /// `SSND` offset and block size; for FLAC the samples as its MD5 signature covers them
+    /// (interleaved, little-endian, `bits_out / 8` bytes each), the bytes a decode of the
+    /// frames gives.
     pub pcm_hash: [u8; 32],
-    /// Every source chunk in source order with its fate.
+    /// Every source chunk or metadata block in source order with its fate.
     pub blocks: Vec<BlockRecord>,
-    /// Bytes after the container carried at the end of the output.
+    /// Bytes before the stream carried at the start of the output (`ID3v2` tags in front of
+    /// `fLaC`; 0 for WAV/AIFF).
+    pub leading_bytes: u64,
+    /// Bytes after the container or the last FLAC frame carried at the end of the output.
     pub trailing_bytes: u64,
     /// Length of the output file, bytes.
     pub output_bytes: u64,
@@ -172,7 +193,8 @@ pub fn apply_iff(
     req: &RenderRequest,
     cancel: &AtomicBool,
 ) -> Result<RenderReport> {
-    let tag_edits = check_request(req)?;
+    check_request(req)?;
+    let tag_edits = id3::edits_from(&req.tag_edits)?;
     let mut src = File::open(input).map_err(|e| io_error(input, e))?;
     let header = iff::read_header(&mut src, input)?;
     let (table, format) = (&header.table, &header.format);
@@ -250,6 +272,7 @@ pub fn apply_iff(
         tags_added: tag_edit.is_some(),
         tags_not_added,
         tag_edit,
+        vorbis_edit: None,
         frames_in: format.frames,
         frames_out: target.frames_out,
         sample_rate_hz: format.sample_rate,
@@ -260,6 +283,7 @@ pub fn apply_iff(
         samples_saturated: done.saturated,
         pcm_hash: done.pcm_hash,
         blocks: layout.records,
+        leading_bytes: 0,
         trailing_bytes: layout.trailing.map_or(0, |t| t.end - t.start),
         output_bytes: layout.total_bytes,
     })
@@ -283,8 +307,8 @@ fn check_full_scale(peaks: audio::Peaks, gain_db: f64) -> Result<()> {
     Ok(())
 }
 
-/// Checks the request; returns its validated tag edits.
-fn check_request(req: &RenderRequest) -> Result<Vec<id3::Edit>> {
+/// Checks the request's gain and depth (tag edits are checked by each container's rules).
+fn check_request(req: &RenderRequest) -> Result<()> {
     if !req.gain_db.is_finite() {
         return Err(Error::InvalidArgument(format!(
             "gain {} dB is not finite",
@@ -299,7 +323,31 @@ fn check_request(req: &RenderRequest) -> Result<Vec<id3::Edit>> {
             "output depth {bits} bits; DJ-safe outputs have 16 or 24"
         )));
     }
-    id3::edits_from(&req.tag_edits)
+    Ok(())
+}
+
+/// The output depth: the requested one, else 24 for a float source or one deeper than 16
+/// bits, 16 otherwise.
+fn output_bits(req: &RenderRequest, float_source: bool, source_bits: u16) -> u16 {
+    match req.bits {
+        Some(b) => u16::from(b),
+        None if float_source || source_bits > 16 => 24,
+        None => 16,
+    }
+}
+
+/// [`Error::NotDjSafe`] unless the rate is one of [`DJ_SAFE_RATES_HZ`].
+fn check_rate(path: &Path, sample_rate_hz: u32) -> Result<()> {
+    if DJ_SAFE_RATES_HZ.contains(&sample_rate_hz) {
+        return Ok(());
+    }
+    Err(Error::NotDjSafe {
+        path: path.to_path_buf(),
+        reason: format!(
+            "sample rate {sample_rate_hz} Hz; DJ-safe outputs are 44,100 or 48,000 Hz and \
+             SoundCheck does not convert rates"
+        ),
+    })
 }
 
 /// The output's shape, or why the source cannot be rendered DJ-safe.
@@ -322,16 +370,7 @@ fn target(
             channels: usize::from(format.channels),
         });
     }
-    if !DJ_SAFE_RATES_HZ.contains(&format.sample_rate) {
-        return Err(Error::NotDjSafe {
-            path: path.to_path_buf(),
-            reason: format!(
-                "sample rate {} Hz; DJ-safe outputs are 44,100 or 48,000 Hz and SoundCheck \
-                 does not convert rates",
-                format.sample_rate
-            ),
-        });
-    }
+    check_rate(path, format.sample_rate)?;
     if req.trim_frames >= format.frames {
         return Err(Error::InvalidArgument(format!(
             "{}: a head trim of {} samples leaves no audio ({} frames)",
@@ -341,11 +380,7 @@ fn target(
         )));
     }
     let float_source = format.encoding.is_float();
-    let bits = match req.bits {
-        Some(b) => u16::from(b),
-        None if float_source || format.valid_bits > 16 => 24,
-        None => 16,
-    };
+    let bits = output_bits(req, float_source, format.valid_bits);
     let bext_update = match (req.loudness, req.gain_db != 0.0) {
         (Some(l), _) => BextUpdate::Set(l.to_le_bytes()),
         (None, true) => BextUpdate::ClearIfVersion2,

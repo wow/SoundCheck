@@ -13,6 +13,7 @@
 pub mod cache;
 pub mod decode;
 pub mod edits;
+pub mod flac;
 pub mod id3;
 pub mod iff;
 pub mod probe;
@@ -23,4 +24,4 @@ pub use cache::Cache;
 pub use decode::{Decoder, read_all};
 pub use edits::{EditStore, SavedEdit};
 pub use probe::probe;
-pub use render::{RenderReport, apply_iff};
+pub use render::{RenderReport, apply_flac, apply_iff};
