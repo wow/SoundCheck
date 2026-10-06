@@ -122,13 +122,12 @@ pub fn patched(id: &str, p: &[u8], fx: &Fixture, args: &ApplyArgs) -> Result<Vec
 /// CUESHEET under a head trim (RFC 9639 section 8.7): every index point's absolute position
 /// (track offset + index offset) moves by the trim and clamps at 0; each track's offset becomes
 /// its first index's new absolute position and its index offsets are rebased on it, so a pregap
-/// shrinks instead of the track start sliding; the lead-out (track 170 or 255) is the new total.
+/// shrinks instead of the track start sliding; the lead-out (the last track) is the new total.
 /// A track without index points keeps its offset minus the trim (clamped).
 fn patch_cuesheet(p: &[u8], out: &mut [u8], trim: u64, total: u64) -> Result<(), String> {
     let tracks = *p.get(395).ok_or("short CUESHEET")?;
     let mut pos = 396;
-    for _ in 0..tracks {
-        let number = *p.get(pos + 8).ok_or("short CUESHEET track")?;
+    for t in 0..tracks {
         let offset = u64_be(p, pos)?;
         let count = usize::from(*p.get(pos + 35).ok_or("short CUESHEET track")?);
         let mut absolute = Vec::with_capacity(count);
@@ -136,7 +135,7 @@ fn patch_cuesheet(p: &[u8], out: &mut [u8], trim: u64, total: u64) -> Result<(),
             let index = u64_be(p, pos + 36 + 12 * k)?;
             absolute.push((offset + index).saturating_sub(trim));
         }
-        let new_offset = if number == 255 || number == 170 {
+        let new_offset = if t + 1 == tracks {
             total
         } else {
             absolute

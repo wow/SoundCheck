@@ -16,6 +16,8 @@ symphonia = { workspace = true }
 lofty = { workspace = true }
 directories = { workspace = true }
 blake3 = { workspace = true }
+flac-codec = { workspace = true }
+md-5 = { workspace = true }
 unicode-normalization = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -27,7 +29,6 @@ approx = { workspace = true }
 hound = { workspace = true }
 tempfile = { workspace = true }
 sha2 = { workspace = true }
-md-5 = { workspace = true }
 proptest = { workspace = true }
 libm = { workspace = true }
 criterion = { workspace = true }
@@ -42,4 +43,8 @@ harness = false
 
 [[bench]]
 name = "id3"
+harness = false
+
+[[bench]]
+name = "flac"
 harness = false

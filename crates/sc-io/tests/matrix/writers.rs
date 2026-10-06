@@ -1,16 +1,14 @@
 //! The writer tests and the runner they share with the self-tests.
 //!
-//! The IFF writer and ID3 edit tests run in every `cargo test`. The tests of writers that do not exist yet
-//! are `#[ignore]`d and additionally return early unless `SC_FILE_WRITERS=1`, so a nightly
-//! `--include-ignored` run stays green until those writers exist. The same
-//! [`run`] drives the reference writer in `selftest.rs`, so every assertion here is already
-//! exercised on a correct output.
+//! The IFF writer, ID3 edit and FLAC writer tests run in every `cargo test`. The same [`run`]
+//! drives the reference writer in `selftest.rs`, so every assertion here is already exercised
+//! on a correct output. `flac -t` (the reference decoder) checks the FLAC outputs when
+//! `SC_FLAC_TOOLS=1` and the `flac` tool is installed.
 
 use std::path::Path;
 
 use super::apply::{
     self, Applied, ApplyArgs, IDENTITY, Refusal, TagEdit, apply, apply_with_tags, grid,
-    writers_enabled,
 };
 use super::cases::{Fixture, matrix};
 use super::check::check_output;
@@ -182,13 +180,6 @@ pub fn id3_outputs(fixtures: &[Fixture]) -> Vec<OutputEntry> {
     out
 }
 
-/// [`run_rows`] for a writer that does not exist yet: only with `SC_FILE_WRITERS=1`.
-fn run_all(test: &str, fixtures: &[Fixture], rows: &[ApplyArgs], edits: &[TagEdit]) {
-    if writers_enabled(test) {
-        run_rows(fixtures, rows, edits);
-    }
-}
-
 #[test]
 fn iff_apply_carries_every_chunk_and_writes_dj_safe_headers() {
     let fixtures: Vec<_> = matrix().into_iter().filter(Fixture::is_iff).collect();
@@ -211,14 +202,103 @@ fn id3_edit_adds_our_frames_and_keeps_every_other_frame() {
     run_rows(&fixtures, &tag_rows(), &apply::id3_edits());
 }
 
+/// Every FLAC fixture over the grid with the Vorbis edits.
 #[test]
-#[ignore = "arrives with the FLAC writer"]
 fn flac_apply_carries_blocks_and_rebuilds_streaminfo() {
     let fixtures: Vec<_> = matrix().into_iter().filter(|f| !f.is_iff()).collect();
-    run_all(
-        "flac_apply_carries_blocks_and_rebuilds_streaminfo",
-        &fixtures,
-        &grid(),
-        &apply::vorbis_edits(),
-    );
+    assert_eq!(fixtures.len(), 4);
+    run_rows(&fixtures, &grid(), &apply::vorbis_edits());
+}
+
+#[test]
+fn flac_apply_writes_the_requested_bit_depth() {
+    let fixtures: Vec<_> = matrix().into_iter().filter(|f| !f.is_iff()).collect();
+    run_rows(&fixtures, &bit_depth_rows(), &[]);
+}
+
+/// SHA-256 of the `sc-io` output of every FLAC fixture for every grid and bit-depth row, then
+/// for every tag row with the Vorbis edits, in matrix order, for the golden manifest (after
+/// [`id3_outputs`]).
+#[must_use]
+pub fn flac_outputs(fixtures: &[Fixture]) -> Vec<OutputEntry> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let writer = sc_io(dir.path());
+    let plain: Vec<ApplyArgs> = grid().into_iter().chain(bit_depth_rows()).collect();
+    let edits = apply::vorbis_edits();
+    let mut out = Vec::new();
+    for fx in fixtures.iter().filter(|f| !f.is_iff()) {
+        let rows = plain
+            .iter()
+            .map(|a| (a, &[][..], String::new()))
+            .chain(
+                tag_rows()
+                    .iter()
+                    .map(|a| (a, &edits[..], ", vorbis edits".into())),
+            )
+            .map(|(a, e, suffix)| (*a, e.to_vec(), suffix))
+            .collect::<Vec<_>>();
+        for (args, edits, suffix) in rows {
+            let sha256 = match writer(fx, &args, &edits) {
+                Ok((bytes, _)) => parse::sha256_hex(&bytes),
+                Err(refusal) => format!("refused:{}", refusal.kind),
+            };
+            out.push(OutputEntry {
+                fixture: fx.name.into(),
+                row: format!("{}{suffix}", row_label(&args)),
+                sha256,
+            });
+        }
+    }
+    out
+}
+
+/// `flac -t` (libFLAC's own decoder, MD5 included) accepts every FLAC output whose input had no
+/// tags around the stream (libFLAC warns about an `ID3v2` tag and reports lost sync at an
+/// `ID3v1` tag even on the untouched input). Opt-in: `SC_FLAC_TOOLS=1` and `flac` installed.
+#[test]
+fn flac_outputs_pass_flac_t() {
+    if std::env::var("SC_FLAC_TOOLS").as_deref() != Ok("1") {
+        eprintln!("flac_outputs_pass_flac_t: skipped; set SC_FLAC_TOOLS=1 to run `flac -t`");
+        return;
+    }
+    if std::process::Command::new("flac")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("flac_outputs_pass_flac_t: skipped; the flac tool is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let writer = sc_io(dir.path());
+    let rows: Vec<ApplyArgs> = grid().into_iter().chain(bit_depth_rows()).collect();
+    let mut tested = 0;
+    for fx in matrix().iter().filter(|f| !f.is_iff()) {
+        let wrapped = parse::parse(&fx.bytes).is_ok_and(|p| {
+            p.blocks
+                .iter()
+                .any(|b| matches!(b.kind, parse::Kind::LeadingTag | parse::Kind::Trailing))
+        });
+        if wrapped {
+            continue;
+        }
+        for args in &rows {
+            let (bytes, _) = writer(fx, args, &apply::vorbis_edits()).expect("renders");
+            let path = dir.path().join(format!("{}-t.flac", fx.name));
+            std::fs::write(&path, &bytes).expect("write");
+            let run = std::process::Command::new("flac")
+                .args(["-t", "-s", "-w"])
+                .arg(&path)
+                .output()
+                .expect("run flac");
+            assert!(
+                run.status.success(),
+                "{} {args:?}: flac -t failed: {}",
+                fx.name,
+                String::from_utf8_lossy(&run.stderr)
+            );
+            tested += 1;
+        }
+    }
+    assert_eq!(tested, 3 * rows.len());
 }

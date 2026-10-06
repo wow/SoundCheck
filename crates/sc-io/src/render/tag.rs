@@ -86,5 +86,51 @@ pub(super) fn edit_chunk<R: Read + Seek>(
     Ok(edited)
 }
 
+/// The loudness frames of the file's ID3 tags that no edit replaces, by label: `TXXX` frames
+/// whose description starts with `REPLAYGAIN_` (Replay Gain 2.0, any case) and `RVA2` frames.
+/// After a gain change their values no longer describe the audio. Tags larger than
+/// [`MAX_TAG_BYTES`] or that do not parse are not looked into.
+///
+/// # Errors
+/// [`Error::Io`] when reading fails.
+pub(super) fn stale_loudness<R: Read + Seek>(
+    src: &mut R,
+    path: &Path,
+    table: &ChunkTable,
+    edits: &[Edit],
+) -> Result<Vec<String>> {
+    let mut stale = Vec::new();
+    for chunk in table.chunks.iter().filter(|c| is_id3_chunk(c.id)) {
+        let len = chunk.payload_len();
+        if len > MAX_TAG_BYTES {
+            continue;
+        }
+        let mut payload = vec![0; usize::try_from(len).unwrap_or(0)];
+        src.seek(SeekFrom::Start(chunk.payload.start))
+            .and_then(|_| src.read_exact(&mut payload))
+            .map_err(|source| Error::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        let Ok(index) = id3::parse_tag(&payload) else {
+            continue;
+        };
+        for frame in &index.frames {
+            if &frame.id == b"RVA2" {
+                stale.push("RVA2".to_string());
+                continue;
+            }
+            let Some(desc) = frame.description.as_ref().filter(|_| &frame.id == b"TXXX") else {
+                continue;
+            };
+            let replaygain = desc.len() >= 11 && desc[..11].eq_ignore_ascii_case("REPLAYGAIN_");
+            if replaygain && !edits.iter().any(|e| e.matches(frame)) {
+                stale.push(format!("TXXX:{desc}"));
+            }
+        }
+    }
+    Ok(stale)
+}
+
 #[cfg(test)]
 mod tests;

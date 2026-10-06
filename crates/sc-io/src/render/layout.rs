@@ -13,7 +13,7 @@ use sc_core::{Error, Result};
 
 use super::patch::{self, BextUpdate, PatchError};
 use super::tag::{self, TagOutcome};
-use super::{BlockFate, BlockRecord};
+use super::{BlockFate, BlockId, BlockRecord};
 use crate::id3::Edit;
 use crate::iff::{
     AudioFormat, Chunk, ChunkTable, OutContainer, SSND_FIELDS_BYTES, aiff_comm, wave_fmt_pcm,
@@ -161,7 +161,7 @@ pub(super) fn plan<R: Read + Seek>(
             ),
         };
         records.push(BlockRecord {
-            id: chunk.id,
+            id: BlockId::Chunk(chunk.id),
             fate,
             source_bytes: chunk.payload_len(),
         });

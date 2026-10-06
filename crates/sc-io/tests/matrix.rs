@@ -21,8 +21,8 @@
 //! it), and a reference writer passes every check while each injected mistake fails one
 //! (`matrix/selftest.rs`). The writer tests (`matrix/writers.rs`) run the `sc-io` writers
 //! (IFF render, ID3 edit) through the same runner and record each output's SHA-256 in the
-//! manifest's `outputs` section; the FLAC writer test, whose writer does not exist yet, runs
-//! only `--ignored` with `SC_FILE_WRITERS=1`.
+//! manifest's `outputs` section, the FLAC render included; `flac -t` checks the FLAC outputs
+//! with `SC_FLAC_TOOLS=1`.
 
 // A crate root resolves `mod x;` next to itself, so the modules are pointed at `matrix/`.
 #[path = "matrix/aiff.rs"]
