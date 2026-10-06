@@ -19,6 +19,7 @@ fn target(container: OutContainer, frames_out: u64, trim_frames: u64) -> Target 
         trim_frames,
         float_source: false,
         bext_update: BextUpdate::Keep,
+        tag_edits: Vec::new(),
     }
 }
 

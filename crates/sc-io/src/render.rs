@@ -26,6 +26,12 @@
 //! - **Carried byte for byte**, in source order with the source's pad byte value: everything
 //!   else (`LIST`, `id3 `/`ID3 `, iXML, `JUNK`, `APPL`, unknown chunks, chunks after the
 //!   audio) and the bytes after the container (an `ID3v1` tag) at the end of the file.
+//! - **Tag edits** ([`RenderRequest::tag_edits`]): the one `id3 `/`ID3 ` chunk keeps its id and
+//!   place and gets SoundCheck's text frames (replaced in place where a frame with the same
+//!   label exists, else appended; every other frame byte for byte; see [`crate::id3`]). With no
+//!   ID3 chunk (none is created), more than one (readers disagree on which counts), or a tag
+//!   that cannot be edited safely, every chunk is carried, the render goes on, and
+//!   [`RenderReport::tags_not_added`] says why.
 //!
 //! Refused, with no output file left behind: more than two channels
 //! ([`Error::UnsupportedChannels`]); a sample rate other than 44,100 or 48,000 Hz, or an output
@@ -33,7 +39,9 @@
 //! after gain at or above +1.0 or below -1.0 of full scale ([`Error::WouldClip`]: never
 //! clipped; -1.0 itself is a valid code; checked by a first pass over the samples for a float
 //! source and for a boost); data in the container's padding bits, a second format or audio
-//! chunk, more than 16 MiB of chunks to rewrite, tag edits ([`Error::UnsupportedFormat`]); a
+//! chunk, more than 16 MiB of chunks to rewrite ([`Error::UnsupportedFormat`]); an invalid
+//! tag edit (a label other than a text frame id or `TXXX:<description>`, a NUL, a label
+//! given twice) ([`Error::InvalidArgument`]); a
 //! trim that leaves no audio or starts inside a sampler loop ([`Error::InvalidArgument`]); a
 //! file cut short inside a chunk, a malformed chunk that must be rewritten
 //! ([`Error::Corrupt`]). A cancel flag, checked once per block, stops the render with
@@ -45,6 +53,7 @@
 mod audio;
 mod layout;
 pub mod patch;
+mod tag;
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
@@ -54,10 +63,12 @@ use std::sync::atomic::AtomicBool;
 use sc_core::{Error, RenderRequest, Result};
 use sc_dsp::db_to_linear;
 
+use crate::id3::{self, EditSummary, NotEditable};
 use crate::iff::{self, AudioFormat, ChunkTable, OutContainer, chunk_header, container_header};
 use audio::{AudioJob, SeedRequest};
 use layout::{Body, Layout, Target};
 use patch::BextUpdate;
+use tag::TagOutcome;
 
 /// Sample rates a DJ-safe output may have, Hz.
 pub const DJ_SAFE_RATES_HZ: [u32; 2] = [44_100, 48_000];
@@ -75,6 +86,8 @@ pub enum BlockFate {
     Carried,
     /// Copied with position or loudness fields rewritten.
     Patched,
+    /// An ID3 tag with SoundCheck's frames written and every other frame copied.
+    Edited,
     /// Written anew (format and audio chunks).
     Replaced,
     /// Left out of the output.
@@ -95,9 +108,13 @@ pub struct BlockRecord {
 /// What [`apply_iff`] wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderReport {
-    /// Whether tag edits were written (always false until tag editing exists; edits are
-    /// refused instead).
+    /// Whether the requested tag edits were written.
     pub tags_added: bool,
+    /// Why requested tag edits were not written (the tag, if any, is carried unchanged);
+    /// `None` when they were written or none were requested.
+    pub tags_not_added: Option<NotEditable>,
+    /// What the tag edit did, when it was written.
+    pub tag_edit: Option<EditSummary>,
     /// Frames in the source.
     pub frames_in: u64,
     /// Frames written.
@@ -155,11 +172,11 @@ pub fn apply_iff(
     req: &RenderRequest,
     cancel: &AtomicBool,
 ) -> Result<RenderReport> {
-    check_request(input, req)?;
+    let tag_edits = check_request(req)?;
     let mut src = File::open(input).map_err(|e| io_error(input, e))?;
     let header = iff::read_header(&mut src, input)?;
     let (table, format) = (&header.table, &header.format);
-    let target = target(input, table, format, req)?;
+    let target = target(input, table, format, req, tag_edits)?;
     let layout = layout::plan(&mut src, input, table, format, &target)?;
     tracing::debug!(
         path = %input.display(),
@@ -221,10 +238,18 @@ pub fn apply_iff(
         bits = target.bits,
         frames = target.frames_out,
         bytes = layout.total_bytes,
+        tags_added = matches!(layout.tags, TagOutcome::Edited(_)),
         "rendered"
     );
+    let (tag_edit, tags_not_added) = match &layout.tags {
+        TagOutcome::Edited(summary) => (Some(*summary), None),
+        TagOutcome::NotAdded(reason) => (None, Some(reason.clone())),
+        TagOutcome::NotRequested | TagOutcome::Pending(_) => (None, None),
+    };
     Ok(RenderReport {
-        tags_added: false,
+        tags_added: tag_edit.is_some(),
+        tags_not_added,
+        tag_edit,
         frames_in: format.frames,
         frames_out: target.frames_out,
         sample_rate_hz: format.sample_rate,
@@ -258,7 +283,8 @@ fn check_full_scale(peaks: audio::Peaks, gain_db: f64) -> Result<()> {
     Ok(())
 }
 
-fn check_request(input: &Path, req: &RenderRequest) -> Result<()> {
+/// Checks the request; returns its validated tag edits.
+fn check_request(req: &RenderRequest) -> Result<Vec<id3::Edit>> {
     if !req.gain_db.is_finite() {
         return Err(Error::InvalidArgument(format!(
             "gain {} dB is not finite",
@@ -273,13 +299,7 @@ fn check_request(input: &Path, req: &RenderRequest) -> Result<()> {
             "output depth {bits} bits; DJ-safe outputs have 16 or 24"
         )));
     }
-    if !req.tag_edits.is_empty() {
-        return Err(Error::UnsupportedFormat {
-            path: input.to_path_buf(),
-            detail: "tag edits in WAV and AIFF files are not supported yet".into(),
-        });
-    }
-    Ok(())
+    id3::edits_from(&req.tag_edits)
 }
 
 /// The output's shape, or why the source cannot be rendered DJ-safe.
@@ -288,6 +308,7 @@ fn target(
     table: &ChunkTable,
     format: &AudioFormat,
     req: &RenderRequest,
+    tag_edits: Vec<id3::Edit>,
 ) -> Result<Target> {
     if table.truncated {
         return Err(Error::Corrupt {
@@ -343,6 +364,7 @@ fn target(
         trim_frames: req.trim_frames,
         float_source,
         bext_update,
+        tag_edits,
     })
 }
 

@@ -1,9 +1,9 @@
 //! The output's chunk list, decided before a byte is written: which source chunks are carried
-//! by byte range, which are patched, replaced or dropped, every size, and the refusals that
-//! follow from the chunks (duplicated format or audio chunks, malformed position chunks, a
-//! sampler loop inside the trim, more patched bytes than [`MAX_PATCHED_TOTAL_BYTES`], an
-//! output past the 4 GiB limit of a 32-bit RIFF size or the 2 GiB limit of AIFF's signed
-//! `ckSize`).
+//! by byte range, which are patched, edited (the ID3 tag), replaced or dropped, every size, and
+//! the refusals that follow from the chunks (duplicated format or audio chunks, malformed
+//! position chunks, a sampler loop inside the trim, more patched bytes than
+//! [`MAX_PATCHED_TOTAL_BYTES`], an output past the 4 GiB limit of a 32-bit RIFF size or the
+//! 2 GiB limit of AIFF's signed `ckSize`).
 
 use std::io::{Read, Seek, SeekFrom};
 use std::ops::Range;
@@ -12,7 +12,9 @@ use std::path::Path;
 use sc_core::{Error, Result};
 
 use super::patch::{self, BextUpdate, PatchError};
+use super::tag::{self, TagOutcome};
 use super::{BlockFate, BlockRecord};
+use crate::id3::Edit;
 use crate::iff::{
     AudioFormat, Chunk, ChunkTable, OutContainer, SSND_FIELDS_BYTES, aiff_comm, wave_fmt_pcm,
 };
@@ -46,6 +48,8 @@ pub(super) struct Target {
     pub float_source: bool,
     /// What happens to the loudness fields of an existing `bext`.
     pub bext_update: BextUpdate,
+    /// Text frames to write into the file's ID3 tag.
+    pub tag_edits: Vec<Edit>,
 }
 
 impl Target {
@@ -93,6 +97,8 @@ pub(super) struct Layout {
     pub trailing: Option<Range<u64>>,
     /// Length of the output file, bytes.
     pub total_bytes: u64,
+    /// What happened to the requested tag edits.
+    pub tags: TagOutcome,
 }
 
 /// Plans the output of `format` in `table` for `target`.
@@ -114,11 +120,23 @@ pub(super) fn plan<R: Read + Seek>(
     let mut chunks = Vec::with_capacity(table.chunks.len());
     let mut records = Vec::with_capacity(table.chunks.len());
     let mut held = 0_u64;
+    let mut tags = TagOutcome::plan(table, &target.tag_edits);
     for (i, chunk) in table.chunks.iter().enumerate() {
         let decision = if i == format.format_chunk {
             Decision::Replace(format_payload(target))
         } else if Some(i) == format.audio_chunk {
             Decision::Audio
+        } else if tags == TagOutcome::Pending(i) {
+            match tag::edit_chunk(src, path, chunk, &target.tag_edits)? {
+                Ok(edited) => {
+                    tags = TagOutcome::Edited(edited.summary);
+                    Decision::Edit(edited.bytes)
+                }
+                Err(reason) => {
+                    tags = TagOutcome::NotAdded(reason);
+                    Decision::Carry
+                }
+            }
         } else {
             decide(src, path, wave, chunk, target, &mut held)?
         };
@@ -128,6 +146,10 @@ pub(super) fn plan<R: Read + Seek>(
             Decision::Patch(bytes) => (
                 BlockFate::Patched,
                 Some(new_chunk(path, chunk.id, bytes, chunk_pad(chunk))?),
+            ),
+            Decision::Edit(bytes) => (
+                BlockFate::Edited,
+                Some(new_chunk(path, chunk.id, bytes, Some(0))?),
             ),
             Decision::Replace(bytes) => (
                 BlockFate::Replaced,
@@ -174,6 +196,7 @@ pub(super) fn plan<R: Read + Seek>(
         form_size,
         trailing,
         total_bytes: 8 + u64::from(form_size) + trailing_len,
+        tags,
     })
 }
 
@@ -182,6 +205,7 @@ enum Decision {
     Drop,
     Carry,
     Patch(Vec<u8>),
+    Edit(Vec<u8>),
     Replace(Vec<u8>),
     Audio,
 }

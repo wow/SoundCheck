@@ -24,8 +24,8 @@ pub struct Manifest {
     pub fixtures: Vec<FixtureEntry>,
     /// SHA-256 of each `sc-io` writer output per fixture and row (`refused` where it refuses),
     /// so any byte change of an output shows up as a reviewed diff. Holds the IFF fixtures
-    /// over the grid and bit-depth rows; FLAC and tag-edit outputs join when their writers
-    /// exist.
+    /// over the grid and bit-depth rows, then the fixtures with an ID3 chunk over the tag rows
+    /// with the ID3 edits; FLAC outputs join when that writer exists.
     #[serde(default)]
     pub outputs: Vec<OutputEntry>,
     /// SHA-256 of every patched block's expected payload per fixture and grid row, so a change
@@ -175,7 +175,11 @@ pub fn manifest(fixtures: &[Fixture]) -> Manifest {
                     .collect(),
             })
             .collect(),
-        outputs: super::writers::iff_outputs(fixtures),
+        outputs: [
+            super::writers::iff_outputs(fixtures),
+            super::writers::id3_outputs(fixtures),
+        ]
+        .concat(),
         patched: patched_entries(fixtures),
     }
 }

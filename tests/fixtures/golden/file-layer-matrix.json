@@ -2997,6 +2997,86 @@
       "fixture": "aifc-sowt-16",
       "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
       "sha256": "f902577670d2d918bc6957db32c5007804dfac93b41a418ea7ae69f38b5b0642"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none, id3 edits",
+      "sha256": "d79747df1b7e6e4e5205a5f6b79af44194328c16cd83e51a6e3878b6a388a44c"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given, id3 edits",
+      "sha256": "2b8ca5c1ffdc308a036b13a027706bf98cc5c9296165be02bb546f55edd001f1"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none, id3 edits",
+      "sha256": "57634f204519ebae905873976978756ac7ed42ff176691e20967316c59540c65"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given, id3 edits",
+      "sha256": "2ac8cc99f64c5a9bad3a811dc654a13c68179c3dba8291bbc81157a722b1e21c"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none, id3 edits",
+      "sha256": "d99858f5d8ee5f673856fbdaab5abe0bb6cf3ea7d5f1424736b1f4e72d1ab756"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given, id3 edits",
+      "sha256": "2eb4551699d3be3bb8862cb0ecadab148116eca420f18f1aa877b23199cc3ab2"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none, id3 edits",
+      "sha256": "10d6a2ee0351094ab62318669e221a56713ba86c2fe9ee7076ee435042d7a3ab"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given, id3 edits",
+      "sha256": "35128f4427f4ba21e721437498a461b111ba929ffc24939e0bc8e4aaf2bcc46f"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none, id3 edits",
+      "sha256": "196d4cd11424768e1b3d6fa890eaa679894953b47a7675a76b0f7ad1f96f91f7"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given, id3 edits",
+      "sha256": "8bf452886349eea2bca1c9754e5a4fad25fb709e3700b9c0d083822172c2b901"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none, id3 edits",
+      "sha256": "8d824f56852572a740e133276f42ac6a1e5dad8219d5702319ce7e7ad6ff678a"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given, id3 edits",
+      "sha256": "66c4fb217c4352392b384158e6109c08747f4e0d8cf9c745118a7d924d8510b8"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none, id3 edits",
+      "sha256": "e9c4f6abec8fce9b57625ebe4d01f184d80f14a929f1111e8a7e74103bb68a41"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given, id3 edits",
+      "sha256": "e7b0edea5f2f54b29b43a3f011347d70b59c94f1b945c26992fbe403db9c8b80"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none, id3 edits",
+      "sha256": "daf437dcc68a978d1506c98fd3c54c39f12778d463250beb5942a95e0e31492a"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given, id3 edits",
+      "sha256": "126b6cc218a7173e8ba5f6aa7cf4a1e71eb728f78245576fe576a6ca937700a9"
     }
   ],
   "patched": [

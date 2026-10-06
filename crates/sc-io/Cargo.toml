@@ -39,3 +39,7 @@ harness = false
 [[bench]]
 name = "apply"
 harness = false
+
+[[bench]]
+name = "id3"
+harness = false

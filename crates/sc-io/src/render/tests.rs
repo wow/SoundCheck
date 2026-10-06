@@ -284,7 +284,7 @@ fn refusals_name_their_reason_and_leave_no_output() {
     );
     run.refused(&gain(f64::NAN), |e| matches!(e, Error::InvalidArgument(_)));
     let edits = vec![TagEdit {
-        label: "TBPM".into(),
+        label: "APIC".into(),
         value: "128".into(),
     }];
     run.refused(
@@ -292,7 +292,7 @@ fn refusals_name_their_reason_and_leave_no_output() {
             tag_edits: edits,
             ..gain(0.0)
         },
-        |e| matches!(e, Error::UnsupportedFormat { .. }),
+        |e| matches!(e, Error::InvalidArgument(m) if m.contains("APIC")),
     );
 
     let two_data = Form::riff()
