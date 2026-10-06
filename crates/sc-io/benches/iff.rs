@@ -5,7 +5,9 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use sc_io::iff::{self, PcmReader};
 
 const RATE_HZ: u32 = 44_100;

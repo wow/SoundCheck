@@ -1,7 +1,9 @@
 //! Throughput of the gain stage on 60 s of 44.1 kHz stereo.
 #![allow(missing_docs)] // criterion_group! emits an undocumented public function
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{Criterion, criterion_group, criterion_main};
 use sc_core::{AudioSpec, DbFs, testsig};
 use sc_dsp::Gain;
 

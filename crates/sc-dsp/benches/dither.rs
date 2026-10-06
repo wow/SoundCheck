@@ -2,7 +2,9 @@
 //! on 60 s of 44.1 kHz stereo 24-bit samples.
 #![allow(missing_docs)] // criterion_group! emits an undocumented public function
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use sc_core::{AudioSpec, testsig};
 use sc_dsp::{Requantiser, SourceDepth, Tpdf};
 
