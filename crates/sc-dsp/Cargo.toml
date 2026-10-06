@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 sc-core = { workspace = true }
 rubato = { workspace = true }
+libm = { workspace = true }
 
 [dev-dependencies]
 sc-core = { workspace = true, features = ["testsig"] }
@@ -24,4 +25,8 @@ harness = false
 
 [[bench]]
 name = "onset"
+harness = false
+
+[[bench]]
+name = "dither"
 harness = false

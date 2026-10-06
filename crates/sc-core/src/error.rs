@@ -44,6 +44,15 @@ pub enum Error {
     /// The job was cancelled by the user.
     #[error("cancelled")]
     Cancelled,
+    /// The output SoundCheck would write is not DJ-safe (a sample rate other than 44.1 or
+    /// 48 kHz, an output past the 4 GiB RIFF/AIFF limit), so it is not written.
+    #[error("{} cannot be written DJ-safe: {reason}", path.display())]
+    NotDjSafe {
+        /// The file concerned.
+        path: PathBuf,
+        /// What is not DJ-safe.
+        reason: String,
+    },
     /// The file is DRM-protected and cannot be decoded.
     #[error("{} is DRM-protected", path.display())]
     DrmProtected {
@@ -85,6 +94,7 @@ impl Error {
             Self::Corrupt { .. } => IpcErrorKind::Corrupt,
             Self::Io { .. } => IpcErrorKind::Io,
             Self::Cancelled => IpcErrorKind::Cancelled,
+            Self::NotDjSafe { .. } => IpcErrorKind::NotDjSafe,
             Self::DrmProtected { .. } => IpcErrorKind::DrmProtected,
             Self::WouldClip { .. } => IpcErrorKind::WouldClip,
             Self::ModelUnavailable { .. } => IpcErrorKind::ModelUnavailable,

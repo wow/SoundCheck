@@ -20,6 +20,9 @@
 //!   (container padding, which the specifications require to be zero) are dropped, and every
 //!   sample where they were not zero is counted, so a non-standard layout (a right-justified
 //!   24-in-32 file, data in padding bits) is detected rather than silently read.
+//! - The `write` helpers produce the only bytes an output does not copy from its source:
+//!   container and chunk headers, a plain-PCM `fmt `, a plain AIFF `COMM` and integer samples
+//!   (used by [`crate::render`]).
 
 mod aiff;
 mod ds64;
@@ -29,22 +32,27 @@ mod pad;
 mod pcm;
 mod walk;
 mod wave;
+mod write;
 
 #[cfg(test)]
-mod test_build;
+pub(crate) mod test_build;
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use sc_core::{Error, Result};
 
-pub use extended::{ExtendedRateError, sample_rate_from_extended};
+pub use extended::{ExtendedRateError, extended_from_sample_rate, sample_rate_from_extended};
 pub use format::{
     AudioFormat, MAX_SAMPLE_RATE_HZ, MIN_SAMPLE_RATE_HZ, SampleEncoding, read_format,
 };
 pub use pcm::{BLOCK_FRAMES, PcmReader};
 pub use walk::{
     Chunk, ChunkTable, Ds64, Ds64Entry, MAX_CHUNKS, MAX_DS64_ENTRIES, walk, walk_bytes,
+};
+pub use write::{
+    AIFF_COMM_BYTES, OutContainer, SSND_FIELDS_BYTES, WAVE_FMT_PCM_BYTES, aiff_comm, chunk_header,
+    container_header, encode_samples, wave_fmt_pcm,
 };
 
 /// Path used in errors for data read from memory.

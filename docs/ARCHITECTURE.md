@@ -10,10 +10,10 @@ crates/sc-cli           headless binary: analyze | eval | cache | process | grid
 crates/sc-engine        analyze (the per-file pipeline), run_batch(files, settings, cancel, on_event), cancellation, click player (cpal + rtrb)
 crates/sc-analysis      loudness (ebur128 wrap + S-P95/S-top30/PLR + timeline), beats (beat-this, rten), grid solver (Huber LS, comb phase, kick-band anchor, octave order, thresholds, confidence, refit), DJ-safe report
 crates/sc-dsp           gain, TPDF dither, primitives (biquad, kick-band filter, RMS/derivative onset), [v0.2 limiter, Re-Pitch], [v0.3 stretch]
-crates/sc-io            decode (symphonia + opus, LAME delay/padding applied), iff (WAV/RF64/AIFF read+write, verbatim chunk carry), tagcopy (ID3v2/ID3v1/APEv2/Vorbis opaque carry + frame-level append), flac (flac-codec frames + our own STREAMINFO with MD5, SEEKTABLE rebuilt, every other block carried), mp3gain (global_gain patch + CRC + undo), transaction (LengthPolicy, tiered verify, backup, journal, sidecar), rekordbox XML + CSV writers, cache, lofty read-only facade
+crates/sc-io            decode (symphonia + opus, LAME delay/padding applied), iff (WAV/RF64/AIFF read + header writers), render (IFF render: trim, gain via sc-dsp's Requantiser, verbatim chunk carry, position patches, tee hash), tagcopy (ID3v2/ID3v1/APEv2/Vorbis opaque carry + frame-level append), flac (flac-codec frames + our own STREAMINFO with MD5, SEEKTABLE rebuilt, every other block carried), mp3gain (global_gain patch + CRC + undo), transaction (LengthPolicy, tiered verify, backup, journal, sidecar), rekordbox XML + CSV writers, cache, lofty read-only facade
 crates/sc-core          AudioSpec/AudioBuffer, SampleIndex, Lufs/Lu/DbTp/DbFs/Bpm newtypes, Grid, reports, Plan, SkipReason, Error, IPC types (serde + ts-rs), feature "testsig" (synthetic signals)
 ```
-Dependency direction: `sc-core <- sc-dsp <- sc-analysis`, `sc-core <- sc-io`, all `<- sc-engine <- {src-tauri, sc-cli}`. `sc-core` has no I/O. Not in v0.1: `sc-testkit`, SQLite, Chromaprint, pyramid files, `peaks://`, LAME, Rubber Band.
+Dependency direction: `sc-core <- sc-dsp <- {sc-analysis, sc-io}` (`sc-io` uses `sc-dsp` only for the gain, requantisation and TPDF dither of a render), `sc-core <- sc-io`, all `<- sc-engine <- {src-tauri, sc-cli}`. `sc-core` has no I/O. Not in v0.1: `sc-testkit`, SQLite, Chromaprint, pyramid files, `peaks://`, LAME, Rubber Band.
 
 ## Data flow per file
 ```
@@ -47,6 +47,9 @@ DECIDE (pure, about 28 ns per row): decide(AnalysisRecord, Codec, DecideSettings
 
 RENDER (streamed)
   lossless: decode -> [TrimHead] -> gain -> [TPDF if 16-bit] -> iff/flac writer with carried chunks/blocks -> tagcopy append
+            (WAV/AIFF today: `sc_io::render::apply_iff`, one pass in 4,096-frame blocks plus a peak pass for float sources and boosts;
+             dither seeded from BLAKE3 of the source's format chunk, frame count and first 65,536 frames plus the gain, trim and depth;
+             gain factor from the pure-Rust `libm` pow so outputs are bit-identical across platforms; a cancel flag checked per block; about 0.17 s for a 6-minute 24-bit stereo WAV on an M1)
   mp3:      global_gain patch in place (no decode/encode) -> tagcopy append in padding
   transaction: preflight -> O_EXCL temp -> render -> fsync -> tiered verify -> backup + journal -> rename -> mtime -> sidecar
   batch artefacts: soundcheck-rekordbox.xml, grid-report.csv; per-file grid-check
@@ -57,6 +60,7 @@ RENDER (streamed)
 - `LoudnessReport { integrated, momentary_max, short_term_max, short_term_p95, short_term_top30, lra, true_peak, sample_peak, plr, dual_mono, timeline }`.
 - `Meter { beats_per_bar, unit, grouping: Vec<u8> }` and `Grid { anchor, bpm, meter, first_downbeat_index, segments, residual_p95_ms, residual_max_ms, local_bpm_range, drift_ppm, verdict: Static|StaticWarn|Drifts, confidence: Green|Amber|Red, reasons, alternatives: { octave_up, octave_down, downbeat_shift } }`.
 - `Plan`, `GainPlan`, `ReviewReason`, `DecideSettings`, `Codec` (sc-core `plan`), `LengthPolicy`, `SkipReason` (`AnalyseOnly`, `Silent`; with export: `WouldGetQuieter`, `UnsupportedFormat`, `UnsupportedChannels`, `DrmProtected`, `RekordboxUsbExport`, `SeratoTagsPresentInPlaceCut`, `GainFieldRange`, `Corrupt`, `Cancelled`), `JobEvent`, `IpcError`.
+- `RenderRequest { gain_db, trim_frames, bits, loudness: Option<BextLoudness>, tag_edits }` (sc-core `render`) is what a lossless render is asked to do; `sc_io::render::RenderReport` says what it did (frames in/out, depth, exact/dithered, saturated samples, BLAKE3 of the written PCM, each source chunk's fate, output size). A render that cannot be DJ-safe fails with `Error::NotDjSafe` (IPC kind `notDjSafe`).
 
 ## Threading and IPC
 - Analysis workers: a fixed set of threads (default a quarter of the logical cores, at most 4; `--jobs` overrides; the beat model already spreads each file over every core, so on an 8-core M1 two workers are the fastest, 54x real time against 40x for one, and each worker adds about 440 MB), each with its own analyzer and beat model, taking files in order; each file runs decode -> loudness -> beats -> solver on one worker. Workers send events over a channel to the caller's thread, which forwards them: `Started`, progress at most every 100 ms, one terminal event per file (analysed, failed, cancelled), and a batch summary (done, total, ETA, x real time) at most every 500 ms. A failing file never stops the batch; a missing model stops it before any file. Records do not depend on the worker count. `analyze --no-grid` skips the model.

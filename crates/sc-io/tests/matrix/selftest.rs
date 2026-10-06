@@ -94,7 +94,7 @@ const LOUD: ApplyArgs = ApplyArgs {
 fn samples(name: &str, args: &ApplyArgs, f: impl Fn(usize, i32, f64) -> i32) -> Options {
     let fx = fixture(name);
     let ideal = ideal_samples(&fx, args);
-    let gain = 10_f64.powf(args.gain_db / 20.0);
+    let gain = apply::gain_factor(args.gain_db);
     let scale = f64::from(1_u32 << (super::expect::out_bits(&fx, args) - 1));
     let altered = ideal
         .iter()
@@ -118,14 +118,14 @@ fn pcm_checks_reject_floor_offset_missing_dither_and_inexact_widening() {
         &GAIN,
         &[],
         floor,
-        ("floor instead of round", "mean error -0.4"),
+        ("floor instead of round", "reference"),
     );
     rejects(
         w24,
         &GAIN,
         &[],
         samples(w24, &GAIN, |_, y, _| y + 1),
-        ("+1 LSB everywhere", "mean error 0.9"),
+        ("+1 LSB everywhere", "sample 0 is"),
     );
     let widen = ApplyArgs {
         bits: Some(24),

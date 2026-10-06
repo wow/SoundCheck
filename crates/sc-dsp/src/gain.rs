@@ -2,10 +2,13 @@
 
 use sc_core::units::{DbFs, MIN_DBFS};
 
-/// Linear amplitude factor for a gain in dB.
+/// Linear amplitude factor for a gain in dB: `10^(db / 20)`.
+///
+/// Computed with the pure-Rust `libm` port of musl's `pow`, not the platform's maths library,
+/// so a rendered file is bit-identical on every operating system and architecture.
 #[must_use]
 pub fn db_to_linear(db: f64) -> f64 {
-    10f64.powf(db / 20.0)
+    libm::pow(10.0, db / 20.0)
 }
 
 /// Gain in dB for a linear amplitude factor; non-positive input clamps to [`MIN_DBFS`].

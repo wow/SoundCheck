@@ -384,6 +384,8 @@ pub enum IpcErrorKind {
     Io,
     /// See [`crate::Error::Cancelled`].
     Cancelled,
+    /// See [`crate::Error::NotDjSafe`].
+    NotDjSafe,
     /// See [`crate::Error::DrmProtected`].
     DrmProtected,
     /// See [`crate::Error::WouldClip`].

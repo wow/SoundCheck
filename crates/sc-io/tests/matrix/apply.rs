@@ -1,7 +1,9 @@
 //! The apply harness: what a writer is asked to do, what it reports, the parameter grid every
-//! writer runs, and the stand-ins for the `sc-io` writers until they exist.
+//! writer runs, and the calls into the `sc-io` writers (stand-ins where a writer does not exist
+//! yet).
 
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 /// The five `bext` v2 loudness fields (EBU Tech 3285 v2), each `round(100 x value)` as a signed
 /// 16-bit integer; a field that was not measured holds [`BextLoudness::UNMEASURED`].
@@ -152,11 +154,56 @@ pub fn vorbis_edits() -> Vec<TagEdit> {
     ]
 }
 
+/// A writer's refusal: its error class (the IPC error kind, `wouldClip`, `invalidArgument`, ...)
+/// and message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    /// Error class.
+    pub kind: String,
+    /// Why, for messages.
+    pub reason: String,
+}
+
+impl Refusal {
+    /// A refusal of class `kind`.
+    #[must_use]
+    pub fn new(kind: &str, reason: String) -> Self {
+        Self {
+            kind: kind.into(),
+            reason,
+        }
+    }
+}
+
+impl From<sc_core::Error> for Refusal {
+    fn from(e: sc_core::Error) -> Self {
+        let kind = serde_json::to_value(e.kind())
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        Self {
+            kind,
+            reason: e.to_string(),
+        }
+    }
+}
+
+/// The gain factor of `gain_db`, computed as the writers do: `10^(dB/20)` with the pure-Rust
+/// `libm` `pow`, exactly 1 at 0 dB.
+#[must_use]
+pub fn gain_factor(gain_db: f64) -> f64 {
+    if gain_db == 0.0 {
+        1.0
+    } else {
+        libm::pow(10.0, gain_db / 20.0)
+    }
+}
+
 /// Writes `input` with `args` applied to `out`.
 ///
 /// # Errors
 /// The writer's refusal; no output file exists then.
-pub fn apply(input: &Path, out: &Path, args: &ApplyArgs) -> Result<Applied, String> {
+pub fn apply(input: &Path, out: &Path, args: &ApplyArgs) -> Result<Applied, Refusal> {
     apply_with_tags(input, out, args, &[])
 }
 
@@ -169,15 +216,31 @@ pub fn apply_with_tags(
     out: &Path,
     args: &ApplyArgs,
     edits: &[TagEdit],
-) -> Result<Applied, String> {
-    let _ = (out, args);
+) -> Result<Applied, Refusal> {
     if input.extension().is_some_and(|e| e == "flac") {
         unimplemented!("sc-io writer arrives with the FLAC writer");
     }
-    if edits.is_empty() {
-        unimplemented!("sc-io writer arrives with the IFF writer");
+    if !edits.is_empty() {
+        unimplemented!("sc-io tag editing arrives with the ID3 editor");
     }
-    unimplemented!("sc-io tag editing arrives with the ID3 editor");
+    let request = sc_core::RenderRequest {
+        gain_db: args.gain_db,
+        trim_frames: args.trim_samples,
+        bits: args.bits,
+        loudness: args.loudness.map(|l| sc_core::BextLoudness {
+            integrated_lufs_x100: l.value,
+            range_lu_x100: l.range,
+            max_true_peak_dbtp_x100: l.max_true_peak,
+            max_momentary_lufs_x100: l.max_momentary,
+            max_short_term_lufs_x100: l.max_short_term,
+        }),
+        tag_edits: Vec::new(),
+    };
+    sc_io::render::apply_iff(input, out, &request, &AtomicBool::new(false))
+        .map(|report| Applied {
+            tags_added: report.tags_added,
+        })
+        .map_err(Refusal::from)
 }
 
 /// Whether the writer tests should run: they need `SC_FILE_WRITERS=1` in addition to

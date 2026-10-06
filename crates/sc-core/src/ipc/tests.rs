@@ -170,6 +170,17 @@ fn errors_map_to_their_class() {
     let ipc: IpcError = crate::Error::Cancelled.into();
     assert_eq!(ipc.kind, IpcErrorKind::Cancelled);
     assert_eq!(ipc.message, "cancelled");
+    let ipc: IpcError = crate::Error::NotDjSafe {
+        path: "a.wav".into(),
+        reason: "sample rate 96000 Hz".into(),
+    }
+    .into();
+    assert_eq!(ipc.kind, IpcErrorKind::NotDjSafe);
+    assert_eq!(serde_json::to_string(&ipc.kind).unwrap(), "\"notDjSafe\"");
+    assert_eq!(
+        ipc.message,
+        "a.wav cannot be written DJ-safe: sample rate 96000 Hz"
+    );
     assert_eq!(
         serde_json::to_string(&JobStage::NeedsReview).unwrap(),
         "\"needsReview\""

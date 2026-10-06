@@ -33,6 +33,8 @@ ebur128 = "0.1"
 lofty = "0.25"
 directories = "6"
 blake3 = "1"
+# Pure-Rust maths (musl port): the same bits on every platform, unlike the system libm.
+libm = { version = "0.2", default-features = false }
 unicode-normalization = "0.1"
 tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }

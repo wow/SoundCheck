@@ -1,28 +1,31 @@
 //! The writer tests and the runner they share with the self-tests.
 //!
-//! Each writer test is `#[ignore]`d and additionally returns early unless `SC_FILE_WRITERS=1`,
-//! so a nightly `--include-ignored` run stays green until the `sc-io` writers exist. The same
+//! The IFF writer tests run in every `cargo test`. The tests of writers that do not exist yet
+//! are `#[ignore]`d and additionally return early unless `SC_FILE_WRITERS=1`, so a nightly
+//! `--include-ignored` run stays green until those writers exist. The same
 //! [`run`] drives the reference writer in `selftest.rs`, so every assertion here is already
 //! exercised on a correct output.
 
 use std::path::Path;
 
 use super::apply::{
-    self, Applied, ApplyArgs, IDENTITY, TagEdit, apply, apply_with_tags, grid, writers_enabled,
+    self, Applied, ApplyArgs, IDENTITY, Refusal, TagEdit, apply, apply_with_tags, grid,
+    writers_enabled,
 };
 use super::cases::{Fixture, matrix};
 use super::check::check_output;
 use super::expect::refusal;
+use super::golden::{OutputEntry, row_label};
 use super::parse;
 
 /// What a writer returns: output bytes and report, or its refusal.
-pub type Written = Result<(Vec<u8>, Applied), String>;
+pub type Written = Result<(Vec<u8>, Applied), Refusal>;
 
 /// A writer under test.
 pub type Writer<'a> = dyn Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written + 'a;
 
-/// Runs `writer` twice on `fx` and checks it: refused exactly when [`refusal`] says so,
-/// otherwise identical bytes and report on both runs and every check of `check_output`.
+/// Runs `writer` twice on `fx` and checks it: refused exactly when [`refusal`] says so and
+/// with the error class it names, otherwise identical bytes and report on both runs and every check of `check_output`.
 ///
 /// # Errors
 /// What went wrong, with the fixture name and row.
@@ -35,17 +38,25 @@ pub fn run(
     let first = writer(fx, args, edits);
     let second = writer(fx, args, edits);
     match (refusal(fx, args), first, second) {
-        (Some(_), Err(_), Err(_)) => Ok(()),
-        (Some(why), _, _) => Err(format!("{} {args:?}: must be refused ({why})", fx.name)),
+        (Some(want), Err(a), Err(b)) if a.kind == want.kind && b.kind == want.kind => Ok(()),
+        (Some(want), Err(got), _) | (Some(want), _, Err(got)) => Err(format!(
+            "{} {args:?}: refused as {} ({}), want {} ({})",
+            fx.name, got.kind, got.reason, want.kind, want.reason
+        )),
+        (Some(want), _, _) => Err(format!(
+            "{} {args:?}: must be refused as {} ({})",
+            fx.name, want.kind, want.reason
+        )),
         (None, Ok((a, report_a)), Ok((b, report_b))) => {
             if a != b || report_a != report_b {
                 return Err(format!("{} {args:?}: two runs differ", fx.name));
             }
             check_output(fx, &a, args, edits, report_a)
         }
-        (None, Err(e), _) | (None, _, Err(e)) => {
-            Err(format!("{} {args:?}: refused unexpectedly: {e}", fx.name))
-        }
+        (None, Err(e), _) | (None, _, Err(e)) => Err(format!(
+            "{} {args:?}: refused unexpectedly as {}: {}",
+            fx.name, e.kind, e.reason
+        )),
     }
 }
 
@@ -94,7 +105,7 @@ pub fn has_id3(fx: &Fixture) -> bool {
 fn sc_io(dir: &Path) -> impl Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written {
     move |fx, args, edits| {
         let input = dir.join(format!("{}.{}", fx.name, fx.ext));
-        std::fs::write(&input, &fx.bytes).map_err(|e| e.to_string())?;
+        std::fs::write(&input, &fx.bytes).expect("write the fixture");
         let out = dir.join(format!("{}-out.{}", fx.name, fx.ext));
         let _ = std::fs::remove_file(&out);
         let result = if edits.is_empty() {
@@ -103,7 +114,7 @@ fn sc_io(dir: &Path) -> impl Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written {
             apply_with_tags(&input, &out, args, edits)
         };
         match result {
-            Ok(applied) => Ok((std::fs::read(&out).map_err(|e| e.to_string())?, applied)),
+            Ok(applied) => Ok((std::fs::read(&out).expect("read the output"), applied)),
             Err(e) => {
                 assert!(!out.exists(), "{}: a refusal left an output file", fx.name);
                 Err(e)
@@ -112,10 +123,8 @@ fn sc_io(dir: &Path) -> impl Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written {
     }
 }
 
-fn run_all(test: &str, fixtures: &[Fixture], rows: &[ApplyArgs], edits: &[TagEdit]) {
-    if !writers_enabled(test) {
-        return;
-    }
+/// Runs the `sc-io` writer on every fixture and row.
+fn run_rows(fixtures: &[Fixture], rows: &[ApplyArgs], edits: &[TagEdit]) {
     let dir = tempfile::tempdir().expect("tempdir");
     let writer = sc_io(dir.path());
     for fx in fixtures {
@@ -125,28 +134,47 @@ fn run_all(test: &str, fixtures: &[Fixture], rows: &[ApplyArgs], edits: &[TagEdi
     }
 }
 
-#[test]
-#[ignore = "arrives with the IFF writer"]
-fn iff_apply_carries_every_chunk_and_writes_dj_safe_headers() {
-    let fixtures: Vec<_> = matrix().into_iter().filter(Fixture::is_iff).collect();
-    run_all(
-        "iff_apply_carries_every_chunk_and_writes_dj_safe_headers",
-        &fixtures,
-        &grid(),
-        &[],
-    );
+/// SHA-256 of the `sc-io` output of every IFF fixture for every grid and bit-depth row, in
+/// matrix order (`refused:<error kind>` where the writer refuses), for the golden manifest.
+#[must_use]
+pub fn iff_outputs(fixtures: &[Fixture]) -> Vec<OutputEntry> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let writer = sc_io(dir.path());
+    let rows: Vec<ApplyArgs> = grid().into_iter().chain(bit_depth_rows()).collect();
+    let mut out = Vec::new();
+    for fx in fixtures.iter().filter(|f| f.is_iff()) {
+        for args in &rows {
+            let sha256 = match writer(fx, args, &[]) {
+                Ok((bytes, _)) => parse::sha256_hex(&bytes),
+                Err(refusal) => format!("refused:{}", refusal.kind),
+            };
+            out.push(OutputEntry {
+                fixture: fx.name.into(),
+                row: row_label(args),
+                sha256,
+            });
+        }
+    }
+    out
+}
+
+/// [`run_rows`] for a writer that does not exist yet: only with `SC_FILE_WRITERS=1`.
+fn run_all(test: &str, fixtures: &[Fixture], rows: &[ApplyArgs], edits: &[TagEdit]) {
+    if writers_enabled(test) {
+        run_rows(fixtures, rows, edits);
+    }
 }
 
 #[test]
-#[ignore = "arrives with the IFF writer"]
+fn iff_apply_carries_every_chunk_and_writes_dj_safe_headers() {
+    let fixtures: Vec<_> = matrix().into_iter().filter(Fixture::is_iff).collect();
+    run_rows(&fixtures, &grid(), &[]);
+}
+
+#[test]
 fn iff_apply_writes_the_requested_bit_depth() {
     let fixtures: Vec<_> = matrix().into_iter().filter(Fixture::is_iff).collect();
-    run_all(
-        "iff_apply_writes_the_requested_bit_depth",
-        &fixtures,
-        &bit_depth_rows(),
-        &[],
-    );
+    run_rows(&fixtures, &bit_depth_rows(), &[]);
 }
 
 #[test]

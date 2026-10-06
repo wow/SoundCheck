@@ -112,7 +112,7 @@
     {
       "name": "wav24-bwf-ixml-cue-smpl-id3v24",
       "bytes": 122068,
-      "sha256": "e57c52f23eb9438baaa128fb8ba7a277257d6aa9ee91930966f4f99843ca2ce9",
+      "sha256": "011768e7bb4ed4e9bae363de30e8c8864c89b201986876e4f329d533639f487d",
       "frames": 20000,
       "sample_rate": 44100,
       "channels": 2,
@@ -160,7 +160,7 @@
         {
           "kind": "chunk",
           "id": "smpl",
-          "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495",
+          "sha256": "abcbb79533ca0dfe01cc66d088dd7d8dd2e52d40496eff9d69c4974fb284762f",
           "expect": "patched",
           "fields": [
             "dwStart",
@@ -621,7 +621,7 @@
     {
       "name": "wav16-mono-smpl-loop-in-head",
       "bytes": 40112,
-      "sha256": "3d839cdfada3df8b26cb799963c77c1135f475739eb81a29cbe1395dd7a67856",
+      "sha256": "192603a2792787b4642cf15f351003c29e64a75014cf4f4c7e2856bc604c7506",
       "frames": 20000,
       "sample_rate": 44100,
       "channels": 1,
@@ -636,7 +636,7 @@
         {
           "kind": "chunk",
           "id": "smpl",
-          "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018",
+          "sha256": "da8d0f5d39cb3a96a811b416fa7831bc70585ae7fa6736f1ba3e1bf14655c79d",
           "expect": "patched",
           "fields": [
             "dwStart",
@@ -1497,7 +1497,1508 @@
       ]
     }
   ],
-  "outputs": [],
+  "outputs": [
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "c37fbc23e5c4cfed46d493185a2fbdd21dd7c6fcdfeddc2b772fe1a266b12af1"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "c37fbc23e5c4cfed46d493185a2fbdd21dd7c6fcdfeddc2b772fe1a266b12af1"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "c7a5424b874ecbbccadade7b4a4e0fce10178b83db6352df42171566d6e8a598"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "c7a5424b874ecbbccadade7b4a4e0fce10178b83db6352df42171566d6e8a598"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "a2bc7679b979e50830b50eccee1d4d9422f533505c1bed11d2858b32fa4d7e02"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "a2bc7679b979e50830b50eccee1d4d9422f533505c1bed11d2858b32fa4d7e02"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "228076989c1067443135f121938e538374419165a6b52ddf1c4012a128ade5bc"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "228076989c1067443135f121938e538374419165a6b52ddf1c4012a128ade5bc"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "0ae2cdd0e7e152f43447ba5df56cb7d2a0b9b978139fdd02796afe8df232df89"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "0ae2cdd0e7e152f43447ba5df56cb7d2a0b9b978139fdd02796afe8df232df89"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "735b53ace7dd2474f89d36fe92fae280e329795eaa38f143baeff67bde3eb35a"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "735b53ace7dd2474f89d36fe92fae280e329795eaa38f143baeff67bde3eb35a"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "c37fbc23e5c4cfed46d493185a2fbdd21dd7c6fcdfeddc2b772fe1a266b12af1"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "dac88e1c7b1e311c9886d7185733e8e7f2de059b07fbf0b510daa6c0ad067051"
+    },
+    {
+      "fixture": "wav16-info-id3v23-pad512",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "a2bc7679b979e50830b50eccee1d4d9422f533505c1bed11d2858b32fa4d7e02"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "011768e7bb4ed4e9bae363de30e8c8864c89b201986876e4f329d533639f487d"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "f3c6bac72af0bf39d1f5a6e8052ccc2ed57cd8c27ed835a18c648c2ae8c52414"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "c2a3dd1458f6a5b314a31dc1e53f30fbb2051089414676d2731138676660f571"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "133dcd1a960bfd64695860f98ade5facbefb1ea2516d914035933f871f13cfba"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "2451f99099ae2affaf6cafb374c4e6a9f60ed07ea745a7759efcaba768b16803"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "e5e4510344fb9d88424209c0359c4cfbc2f0a10ee1d486bc99053272c7553503"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "66962768e83b56939fbe0933f6a223fd9989807db009a515b3fb4d6dc0c914c9"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "3a4ceb614e6cffd04a86271e5a098af1eba6fa132dc90831a92c09b8d97c67f1"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "91152d23420f55ae55ef256466c73cabd39eaa038b3a330f84e7226ff17bc8df"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "ca903eba4b1a1e6314ba1400ab1876be5d9650109220555b0955940c744e6c67"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "d13bf7f5c440201fee3458856e5b004fcd6a2de05724c69a0e38003db6488cd5"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "9733f07cfff23866c3c458a2872bf405e41fbcb2439494246f1f87526ac5fa5b"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "60f1014a92094c3e6a6231f8d5959771579403ea825d5cbd6e2fe22cc77f3b52"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "011768e7bb4ed4e9bae363de30e8c8864c89b201986876e4f329d533639f487d"
+    },
+    {
+      "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "1b5e994409b25c0716995580d439a9f009bbe0697178c72a1342f4e93bdeee4c"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "ba888669a3987b36946f8bcb0d6b9fb1db7b622d8a7c0bdc7a8dccd94b5e4260"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "f96c0326ed0618978716a3990fb3743e50728b3dfbfd0b6ad0b8f21bb245ec6c"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "3bfacb1ccef3c6fafbae2a3e7e94c883be0375781d2604ce0320a6c009ce14e9"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "26675d014e6ad6b90c9e56f95147e47f611c28ba4b9c6abe791ede6244af3d7c"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "94eda832fc7f6fe74bf7d42a93de7563176861f898feb1d0bce3201a18ab7829"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "793e925edf5c3c74bc62284a59bd064b24bac0b04d7e71a238fdf71e22389941"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "70504bbf64a5efea5a1aaf8f0ce1cb0cb533cdc36810fca5ffec8b703f8b7743"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "2b832e62e66072dd30956e4a5292a366e14ae3bce2d3b7ba5d10dea2dc434131"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "838ab9e3ed23a18cc2c277fb6f2dde84b3081d97d18ba8c6318b73441fee29e6"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "dfbef5e1fc6ba9320158896287a29af71d6e4bb98d0155ce1bcaad17aaa8b5ba"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "fc7dc363c2c487a907c6c0715e2a3b638be0aa2bcc2e1e998e1a5888d69fc482"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "746623c07df4caa77473509c7faaf677644ecb0677064f1e228a47eab19949d1"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "d215eff5241bc40b65f2f5ef33471b0d4d9562ce983ef7109346b74ab8299a45"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "ba888669a3987b36946f8bcb0d6b9fb1db7b622d8a7c0bdc7a8dccd94b5e4260"
+    },
+    {
+      "fixture": "wav24-extensible-bext-v1-fact",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "23e677d2e240a78d43f1dfe1b2906a50868e264ab55d593da2e6d7dd193b2cb3"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "39c34d547fddd8d01ba8c1ec335a2411a01a7776c2dc2f4c88bd69894b320ca1"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "39c34d547fddd8d01ba8c1ec335a2411a01a7776c2dc2f4c88bd69894b320ca1"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "172cf369bc8ed60111883cf9e09f7772efe7e19620ac9a6dabb7e2307491435f"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "172cf369bc8ed60111883cf9e09f7772efe7e19620ac9a6dabb7e2307491435f"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "2592633d52eb773200c46ccb216699cab1f62eb7a2471511e8584742d69aacbc"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "2592633d52eb773200c46ccb216699cab1f62eb7a2471511e8584742d69aacbc"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "5f64d9fbcdc670e653e2584f3ee84bd1ee90328e0a554b02d4735cc42cf8f4ac"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "5f64d9fbcdc670e653e2584f3ee84bd1ee90328e0a554b02d4735cc42cf8f4ac"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "025b0ae1a655b749bc6a7433299ad1f8e45ca124c88547740a7d09811c671d2b"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "025b0ae1a655b749bc6a7433299ad1f8e45ca124c88547740a7d09811c671d2b"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "e63636be170698d0a5c9d23ced7272d1164647831dc46c9f4a7f760927cb1ace"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "e63636be170698d0a5c9d23ced7272d1164647831dc46c9f4a7f760927cb1ace"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "db2b78f62adcd256e25464c3a0f267eb4f2e81bb5ac0a653656e0bfbd3b579e4"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "39c34d547fddd8d01ba8c1ec335a2411a01a7776c2dc2f4c88bd69894b320ca1"
+    },
+    {
+      "fixture": "wav-float32-fact",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "d33f5213190dd3e64cb09cf1d4b81c004d7a0d5f503a749563ef47fbce7c090c"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "refused:wouldClip"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "refused:wouldClip"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "refused:wouldClip"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "refused:wouldClip"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "755f392efdc009796b5700719fe08ba753894ab46809db8314744a99d0bcc633"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "755f392efdc009796b5700719fe08ba753894ab46809db8314744a99d0bcc633"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "ceb696af4a3493203da26012e0cc866f196cd0e407168b79bbe0ac03417018d3"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "ceb696af4a3493203da26012e0cc866f196cd0e407168b79bbe0ac03417018d3"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "refused:wouldClip"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "refused:wouldClip"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "refused:wouldClip"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "refused:wouldClip"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "refused:wouldClip"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "refused:wouldClip"
+    },
+    {
+      "fixture": "wav-float32-mono-over-full-scale",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "8b3393e5df912845d42f76d34867243ca971415f2dd2b9faf9158e5bc5cd3764"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "703915ae00506d66b748733b06dc53e35386fefc01616b4549f1464162c88679"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "703915ae00506d66b748733b06dc53e35386fefc01616b4549f1464162c88679"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "3d064e8c85d8d95c2324fee8bb1601e64c3f39c87820ee5f84ae847e43a45056"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "3d064e8c85d8d95c2324fee8bb1601e64c3f39c87820ee5f84ae847e43a45056"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "21b1b957b56d84aaaaa99cd658111ddcc91542aff2c759619e3907559a7bc45b"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "21b1b957b56d84aaaaa99cd658111ddcc91542aff2c759619e3907559a7bc45b"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "509efebe07e8af55a06d26e9bfab0ec2df41f494c81437cee3ea58985e3dc286"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "509efebe07e8af55a06d26e9bfab0ec2df41f494c81437cee3ea58985e3dc286"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "0b149faadb08e615cc880ec5648e8915a645a39600a0b3093a74b09eaf49083c"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "0b149faadb08e615cc880ec5648e8915a645a39600a0b3093a74b09eaf49083c"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "14d3f892d5e6c387e02aa9d73545540651ec2801a407deeee99b44135126c9cb"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "14d3f892d5e6c387e02aa9d73545540651ec2801a407deeee99b44135126c9cb"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "703915ae00506d66b748733b06dc53e35386fefc01616b4549f1464162c88679"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "15b1d6466fc72988eb0e80a7b44ccdfa7ab434c25f5b322c2d920ef949bc6176"
+    },
+    {
+      "fixture": "wav16-chunks-after-data-odd-last",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "21b1b957b56d84aaaaa99cd658111ddcc91542aff2c759619e3907559a7bc45b"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "d1d2ce5fb4a1320d17eabf4f4c53d45a9e25f359e852d225f076ed76eede2960"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "d1d2ce5fb4a1320d17eabf4f4c53d45a9e25f359e852d225f076ed76eede2960"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "31467be49e49f955f3270a0ada95b5b211a3d05b2f8a47ea67dca06b3c5804d1"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "31467be49e49f955f3270a0ada95b5b211a3d05b2f8a47ea67dca06b3c5804d1"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "45c8cdb0c43c48af00fffcc7879c441ede4134555b88f4928b95e18dbbcad1b7"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "45c8cdb0c43c48af00fffcc7879c441ede4134555b88f4928b95e18dbbcad1b7"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "89405eed282d1298f24f42f70fbc347f0cab7deb1d9cf9ec28163bea7d0d0de3"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "89405eed282d1298f24f42f70fbc347f0cab7deb1d9cf9ec28163bea7d0d0de3"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "999e67576ade48d5f8350513e7deeeeca6a833af4b2213441400c19ba032dbb2"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "999e67576ade48d5f8350513e7deeeeca6a833af4b2213441400c19ba032dbb2"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "bb3cd00bc1ac59fd32e4c1291a8b2e0472d2791bfa2ca18f67a416c9493b6016"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "bb3cd00bc1ac59fd32e4c1291a8b2e0472d2791bfa2ca18f67a416c9493b6016"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "d33d3dc2c7176f031448f8632385e8283283f46024aab5b05e503d59dee2b709"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "d1d2ce5fb4a1320d17eabf4f4c53d45a9e25f359e852d225f076ed76eede2960"
+    },
+    {
+      "fixture": "wav24-mono-odd-data-no-pad-id3v1",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "d4eac26cc8ac34664e1822acc275ae0f4041f39db0e30adb3f584487e3891b6e"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "b42df6d6fcc9df236332d84693e9f1a9db6c28f83a811aeb1d37a83d8e750624"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "6a6f77592fe9a20756a5ecbe5829627e26cf9dfc4f1469301a99e8144c520545"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "6190736790da741ac549d44b9db884af4fc4964bc09642511b957bd69e97c663"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "3316fb04d109028a321892b52b0146c313588e9c2719a7c88a6c98725ba239cd"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "8150ff5d59bf651a49667ab5834e3631c9589f486496989aefa9c675ed9d6826"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "5bb23b5ced4948ff0005708b7bc82baec18e37492ed71798c9d6c93a4a2aca4e"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "6a841e0b530e444bafc7c76222417d3c70ecf527811639bc260e2b35b161a319"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "d984764b9dd5d38e7ca52fd8ff38d1e3d329ca71ac0d6a20711918837c1c799a"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "540051b68b24c64a8c3c016902d23d29c91e8ffc8493c09b38fdb424cfefc4f1"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "b248850475d41dcd02686a5e9de16068352dda34924c220e43f9af3a48505c34"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "b62d380a51fbfe09aec6c498b4a799d647991722f07347ebae7ff7306a14171d"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "962499c8c05cf6fd701150c333b2c1e232a2ff86e6cec73d5aa277fb70b4102a"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "7cf8d074ee0297e1b364ae7c9aa160badf2665ad4a99f4958c985ba49a54c2db"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "b42df6d6fcc9df236332d84693e9f1a9db6c28f83a811aeb1d37a83d8e750624"
+    },
+    {
+      "fixture": "rf64-24-48k",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "1527c94f07da54b08c1df9bbde13ac6bce64042e418101416e8daaa0f78957e1"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "f33b768ff5f9a7734af0570ff6df5ddadb8037ddba91d5497f10919b4a0af86b"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "f33b768ff5f9a7734af0570ff6df5ddadb8037ddba91d5497f10919b4a0af86b"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "457bebb873a9ae86e2a3dc3c5f88d4449ab59d353ed027fe5c00787a47bbd33e"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "457bebb873a9ae86e2a3dc3c5f88d4449ab59d353ed027fe5c00787a47bbd33e"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "53d673cfb0e58114fa63410abf54d6e253d840fcd7d5f7545881233f23b5185a"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "53d673cfb0e58114fa63410abf54d6e253d840fcd7d5f7545881233f23b5185a"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "9b9804e986b7c9ae2eaf15942a7eb67869306325b8cfda3de56dfb3d61c14d84"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "9b9804e986b7c9ae2eaf15942a7eb67869306325b8cfda3de56dfb3d61c14d84"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "261b8d605267c068663e1e888c18ae2a8f42ef5cac0bcdf038a314c3066d137c"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "261b8d605267c068663e1e888c18ae2a8f42ef5cac0bcdf038a314c3066d137c"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "810345560722174d8e575fcdefd0f2bba5479ea1a1cc4e54a18e1d4e73dd728b"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "810345560722174d8e575fcdefd0f2bba5479ea1a1cc4e54a18e1d4e73dd728b"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "f33b768ff5f9a7734af0570ff6df5ddadb8037ddba91d5497f10919b4a0af86b"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "aa90da03b272d4bebe9eb7cdc8a51420bc14c00fcc334b4b4452f0f108cede2c"
+    },
+    {
+      "fixture": "wav16-mono",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "53d673cfb0e58114fa63410abf54d6e253d840fcd7d5f7545881233f23b5185a"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "8cec807656e4817b12a98e75f7f36f98e9f598685f9dc27fdd9856877a9411ec"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "d609be2df4011a5aefe6496f7baea062939357c9d9125e2275542969b8b335c7"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "58a433401c20cc2a76c344bc8024dcbd24f10593c854276aa73b8ebb5a418820"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "702b9b75c68576e86d63e6983588dfdb161e847feb4328369af5c5af2f1f3755"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "a9c7201dd9fea1cf8b81d3853804ba35d36601b2acc45e9f4e6b6b40f2ca8fee"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "f69ff0265766932e1adfe8ffdae9d2cb58e6be1a4cb94599b870e5e37bd2d2c7"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "a4a97870d48c0142820626eca7775669ad3749882ef9a63566af3eb6c7b20a48"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "4bad991bd00eb07df60748103525c044535b290f50598ee4f8bb8ea47bf82348"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "637bcdec51170521a620697febc9542970b2ab03c6fd751ed1bde5420b88e9c0"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "d854d3dd47872ba59c789576b48fa042cb9d3c886ed8b60401c0a266cbdbecb9"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "b96e80e6f942bd9c4262be91e6ed081c1fece0604a395220e64723ceae844789"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "1c33d0a8b67a096e9185579229d0ea658886357a56af471793e2276184761bc7"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "8cec807656e4817b12a98e75f7f36f98e9f598685f9dc27fdd9856877a9411ec"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "8aaa09ac11fe10584f247fd92d3157435a47c150eb12d0b5e3bd8e90350346b1"
+    },
+    {
+      "fixture": "wav16-mono-bext-v0",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "a9c7201dd9fea1cf8b81d3853804ba35d36601b2acc45e9f4e6b6b40f2ca8fee"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "192603a2792787b4642cf15f351003c29e64a75014cf4f4c7e2856bc604c7506"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "192603a2792787b4642cf15f351003c29e64a75014cf4f4c7e2856bc604c7506"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "refused:invalidArgument"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "refused:invalidArgument"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "826e9754b11bae46194f86d54bcb54073609308d10cb8dd648fcd0a159025f04"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "826e9754b11bae46194f86d54bcb54073609308d10cb8dd648fcd0a159025f04"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "refused:invalidArgument"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "refused:invalidArgument"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "542ec435ee2b1c240f8193bcdb812eae94c42c94b9697567053b83a85618ae1f"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "542ec435ee2b1c240f8193bcdb812eae94c42c94b9697567053b83a85618ae1f"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "refused:invalidArgument"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "refused:invalidArgument"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "192603a2792787b4642cf15f351003c29e64a75014cf4f4c7e2856bc604c7506"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "5c6235e24646fc8b159aa1278754a95566a6b4069b541f44e4dcc432330dc872"
+    },
+    {
+      "fixture": "wav16-mono-smpl-loop-in-head",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "826e9754b11bae46194f86d54bcb54073609308d10cb8dd648fcd0a159025f04"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "10d6a2ee0351094ab62318669e221a56713ba86c2fe9ee7076ee435042d7a3ab"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "10d6a2ee0351094ab62318669e221a56713ba86c2fe9ee7076ee435042d7a3ab"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "640e144301cc0c558805ec1ad91b1d9dc9fbdbe7d267cc087a6072d5bed11a70"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "640e144301cc0c558805ec1ad91b1d9dc9fbdbe7d267cc087a6072d5bed11a70"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "a88e2583def02a08cc01718047a7b5dbbd5a1304304d8a016d8fc59d37155f81"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "a88e2583def02a08cc01718047a7b5dbbd5a1304304d8a016d8fc59d37155f81"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "35128f4427f4ba21e721437498a461b111ba929ffc24939e0bc8e4aaf2bcc46f"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "35128f4427f4ba21e721437498a461b111ba929ffc24939e0bc8e4aaf2bcc46f"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "69703848531d91c4280370ee6c9af8663139773537fd83f1e4c4da3065f0cf3f"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "69703848531d91c4280370ee6c9af8663139773537fd83f1e4c4da3065f0cf3f"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "e6b8ebdcfe2e63251d22fc2e47ed4e0873bd1c9dc5b0bdf3863072513bbb429d"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "e6b8ebdcfe2e63251d22fc2e47ed4e0873bd1c9dc5b0bdf3863072513bbb429d"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "10d6a2ee0351094ab62318669e221a56713ba86c2fe9ee7076ee435042d7a3ab"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "f54bec2593ff348c7605459b040d24a72eaaad305a06aa1a42fc017a6845d1d7"
+    },
+    {
+      "fixture": "wav16-mono-two-id3-chunks-ext-headers",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "a88e2583def02a08cc01718047a7b5dbbd5a1304304d8a016d8fc59d37155f81"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "095cfae14cc34203d7f089d68b168b34d1e5046227a8902fb1bcc9cab90e0d7f"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "095cfae14cc34203d7f089d68b168b34d1e5046227a8902fb1bcc9cab90e0d7f"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "2ac67f994ba2984ef8bff8af9fa04367a0905e4ee57303c9a063727c2b3e0daa"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "2ac67f994ba2984ef8bff8af9fa04367a0905e4ee57303c9a063727c2b3e0daa"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "15956b61f84fe18fdbc38df557e2c9f62f9567606c14d00b7b398bf1a709f80a"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "15956b61f84fe18fdbc38df557e2c9f62f9567606c14d00b7b398bf1a709f80a"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "72e48830437688f7223b7c5438f6c57312939838fdba269f0a2c5e3a719abb6b"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "72e48830437688f7223b7c5438f6c57312939838fdba269f0a2c5e3a719abb6b"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "ed23ef88344059eb62e6e7f3c62b78a22ba26b0b8acc569fd1c4310755fcf4a0"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "ed23ef88344059eb62e6e7f3c62b78a22ba26b0b8acc569fd1c4310755fcf4a0"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "815ead8bd0de9b0a693e9bc4acc47460e9936dfe9812edc4526dca55be816c36"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "815ead8bd0de9b0a693e9bc4acc47460e9936dfe9812edc4526dca55be816c36"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "095cfae14cc34203d7f089d68b168b34d1e5046227a8902fb1bcc9cab90e0d7f"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "f05f40307be13ca75fb41eb787be2ecae0ddf80de7c83113ade92c101d91d941"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-frame-flags",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "15956b61f84fe18fdbc38df557e2c9f62f9567606c14d00b7b398bf1a709f80a"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "8d824f56852572a740e133276f42ac6a1e5dad8219d5702319ce7e7ad6ff678a"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "8d824f56852572a740e133276f42ac6a1e5dad8219d5702319ce7e7ad6ff678a"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "d11ba584fad1c65b31eeb8fc4c08cf0bb864cb7882c1421334eae93e4e2ec695"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "d11ba584fad1c65b31eeb8fc4c08cf0bb864cb7882c1421334eae93e4e2ec695"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "da2854334502864c2e44fc3f263d68820f0643ac5d89deec1e264e0f566536d1"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "da2854334502864c2e44fc3f263d68820f0643ac5d89deec1e264e0f566536d1"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "66c4fb217c4352392b384158e6109c08747f4e0d8cf9c745118a7d924d8510b8"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "66c4fb217c4352392b384158e6109c08747f4e0d8cf9c745118a7d924d8510b8"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "f6cf991f01a74ddc6bfb4d156eb51f65853f0a6e3a08b801d2e9852dbdd972ba"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "f6cf991f01a74ddc6bfb4d156eb51f65853f0a6e3a08b801d2e9852dbdd972ba"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "8f3d3048d68c0888c247a1f0a50ea5882800256ad5c789122312ef6e16b1eb00"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "8f3d3048d68c0888c247a1f0a50ea5882800256ad5c789122312ef6e16b1eb00"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "8d824f56852572a740e133276f42ac6a1e5dad8219d5702319ce7e7ad6ff678a"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "b5344091aaa29c3f9d8125ba31ce560569b11bd6b3a2cef76e0826e1229bf486"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-tag-unsync",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "da2854334502864c2e44fc3f263d68820f0643ac5d89deec1e264e0f566536d1"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "e9c4f6abec8fce9b57625ebe4d01f184d80f14a929f1111e8a7e74103bb68a41"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "e9c4f6abec8fce9b57625ebe4d01f184d80f14a929f1111e8a7e74103bb68a41"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "7294eee94bbb3d357db2a4871e9bc8954b4d0f27904fb86185a967ea9d5e8858"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "7294eee94bbb3d357db2a4871e9bc8954b4d0f27904fb86185a967ea9d5e8858"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "8cbd3849a9c80333e1317cb6473956f08c4bc6769ede09371a698c3cfc524872"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "8cbd3849a9c80333e1317cb6473956f08c4bc6769ede09371a698c3cfc524872"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "e7b0edea5f2f54b29b43a3f011347d70b59c94f1b945c26992fbe403db9c8b80"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "e7b0edea5f2f54b29b43a3f011347d70b59c94f1b945c26992fbe403db9c8b80"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "4bc15ba802ea8df572cf5351fb80ab0c2c1de8e391704ad810cf6bdeb9a7840c"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "4bc15ba802ea8df572cf5351fb80ab0c2c1de8e391704ad810cf6bdeb9a7840c"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "6b13220f80e1ffe35e19c1562f6d31ce1078da556321a0cfb229a2c16681ba39"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "6b13220f80e1ffe35e19c1562f6d31ce1078da556321a0cfb229a2c16681ba39"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "e9c4f6abec8fce9b57625ebe4d01f184d80f14a929f1111e8a7e74103bb68a41"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "2276a052bd2d1fe5df8ba2ece0117afeb06af778921679acc74d747ace2da95d"
+    },
+    {
+      "fixture": "wav16-mono-id3v24-ext-crc",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "8cbd3849a9c80333e1317cb6473956f08c4bc6769ede09371a698c3cfc524872"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "1a685e66965265c8e638c67bb80828fc47101daa1717094e6943304516248037"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "1a685e66965265c8e638c67bb80828fc47101daa1717094e6943304516248037"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "3ea8fc5e31a92746f71e5cf67239fc0a8b92f57ae8cbafc379e4dba71620633d"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "3ea8fc5e31a92746f71e5cf67239fc0a8b92f57ae8cbafc379e4dba71620633d"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "5f46096200add1c076149fbc51a586bf59eba73b0fa9888e4f28b72785c481a4"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "5f46096200add1c076149fbc51a586bf59eba73b0fa9888e4f28b72785c481a4"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "6b3cb9874bf575f6835d55f265c9b28aa801a2d8c3585cef109e46f55b29f11a"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "6b3cb9874bf575f6835d55f265c9b28aa801a2d8c3585cef109e46f55b29f11a"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "c52f1d3923c06b70ae599f55301a80583d57791d1028167dfff9397f886444b6"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "c52f1d3923c06b70ae599f55301a80583d57791d1028167dfff9397f886444b6"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "97cbf0246746c4d31540b75123ab35e6bdeefab4925d5febd26356eda2a00677"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "97cbf0246746c4d31540b75123ab35e6bdeefab4925d5febd26356eda2a00677"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "1a685e66965265c8e638c67bb80828fc47101daa1717094e6943304516248037"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "91a1206584b904762908696e77bd6f03ae983ba5cf30850abd16c50bf3ab6294"
+    },
+    {
+      "fixture": "aiff16-serato-id3v23",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "5f46096200add1c076149fbc51a586bf59eba73b0fa9888e4f28b72785c481a4"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "5135b9e616db60e314376803dd33e581269ba095cca602ac1d2f6f9eb9922e0c"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "5135b9e616db60e314376803dd33e581269ba095cca602ac1d2f6f9eb9922e0c"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "29e4a362f8e2fb8f51461a7c06cd0a1e2096b3a81ed5970572522bbd15acbadd"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "29e4a362f8e2fb8f51461a7c06cd0a1e2096b3a81ed5970572522bbd15acbadd"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "a2a1d6bc778b152c7c858de0a79d41a7d8ceb08fb20acfefee6e01ce4cb8b502"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "a2a1d6bc778b152c7c858de0a79d41a7d8ceb08fb20acfefee6e01ce4cb8b502"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "7b27593fe9c0aa2666859e039fdf62aa590dd7ecae921a9e27d0f92d6617e10d"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "7b27593fe9c0aa2666859e039fdf62aa590dd7ecae921a9e27d0f92d6617e10d"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "6d9e3ce56353e21e7358173992d1ddca2c3e415f1a055b9db8c81d530e4c98af"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "6d9e3ce56353e21e7358173992d1ddca2c3e415f1a055b9db8c81d530e4c98af"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "64457a9f3409340f4865ca1e1d64f4f8fe88db3f0b530f0f8aa9f20c2e85818b"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "64457a9f3409340f4865ca1e1d64f4f8fe88db3f0b530f0f8aa9f20c2e85818b"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "1cfa5a7d90be1316b760ec9689372e6c2ea550ebd14912f41529a724784a0678"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "5135b9e616db60e314376803dd33e581269ba095cca602ac1d2f6f9eb9922e0c"
+    },
+    {
+      "fixture": "aiff24-48k-mark",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "269746fb393c6821ace3adb7cf217af1ef3797163303844655ccbdbb131bb5c7"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "63340e75917f0e3651c451169b568ee1cbaf23c3ed10492f81135d17098eeafb"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "63340e75917f0e3651c451169b568ee1cbaf23c3ed10492f81135d17098eeafb"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "df99a0cbb0ad58082308bd6b58909f2822b446e74fe9c6c474896421cdc41a51"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "df99a0cbb0ad58082308bd6b58909f2822b446e74fe9c6c474896421cdc41a51"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "2d730838614c6fda83397f7506180df718c888bf3d584496b4336ec0a3130c5a"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "2d730838614c6fda83397f7506180df718c888bf3d584496b4336ec0a3130c5a"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "69c5be6c9abc510f68478d47f8cb73ba47d3b7b01b8832fabaaf64e81512b74f"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "69c5be6c9abc510f68478d47f8cb73ba47d3b7b01b8832fabaaf64e81512b74f"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "9b61a94c8b0165bc9be949884d3fa79d278a0dce3a2a0997137539a4782647ee"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "9b61a94c8b0165bc9be949884d3fa79d278a0dce3a2a0997137539a4782647ee"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "f8bc7c9d3ad9d478085feef718631c720985538d81e6d37e2ff826e5c8fa28b6"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "f8bc7c9d3ad9d478085feef718631c720985538d81e6d37e2ff826e5c8fa28b6"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "63340e75917f0e3651c451169b568ee1cbaf23c3ed10492f81135d17098eeafb"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "c9dca0036168bf71180153dbf96316fa9a33043c406157ad9b961a644255cd01"
+    },
+    {
+      "fixture": "aiff16-mono-ssnd-offset",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "2d730838614c6fda83397f7506180df718c888bf3d584496b4336ec0a3130c5a"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "d99cff1bcf6b60b4c34a2a55d5e1be5b6fff514b08977cd01c212594d4d7bb77"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "d99cff1bcf6b60b4c34a2a55d5e1be5b6fff514b08977cd01c212594d4d7bb77"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "1bfa1ffd358790dc31b77840b7f1de3a3c129bb9cda97833f3449372bff1376f"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "1bfa1ffd358790dc31b77840b7f1de3a3c129bb9cda97833f3449372bff1376f"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "39119853180c70881a930f14ab7fdde5309247e38ef3423e6aaf79a968d2cd8d"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "39119853180c70881a930f14ab7fdde5309247e38ef3423e6aaf79a968d2cd8d"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "176bb68103cfb07952ca56b7254a7086bb32deb391adc620ad9482751005ee87"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "176bb68103cfb07952ca56b7254a7086bb32deb391adc620ad9482751005ee87"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "5b2087928bc55022d020c1471672568279f08df0f0d8e86ee90d915e2cf6171a"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "5b2087928bc55022d020c1471672568279f08df0f0d8e86ee90d915e2cf6171a"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "b4a893c936972edf19f0d596795bf1bb5cc6e268fb86f6e6d225f3f4db18e4ba"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "b4a893c936972edf19f0d596795bf1bb5cc6e268fb86f6e6d225f3f4db18e4ba"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "d99cff1bcf6b60b4c34a2a55d5e1be5b6fff514b08977cd01c212594d4d7bb77"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "f9eb8fb252cafe5c0e58218c34657eee42d7bf1c32f37241aa77258f2df16d56"
+    },
+    {
+      "fixture": "aifc-none-16-chan-comt-inst",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "39119853180c70881a930f14ab7fdde5309247e38ef3423e6aaf79a968d2cd8d"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "21da7e5bd70077caa76cc0241844fb57f5f7759d9b9cd56aa799dbefc9f14b8b"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "21da7e5bd70077caa76cc0241844fb57f5f7759d9b9cd56aa799dbefc9f14b8b"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "9558d2dd79c9b732e99ac3ef297e76fafb7c9c3eca068c7b89d0ef327d27c0c0"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "9558d2dd79c9b732e99ac3ef297e76fafb7c9c3eca068c7b89d0ef327d27c0c0"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "f902577670d2d918bc6957db32c5007804dfac93b41a418ea7ae69f38b5b0642"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "f902577670d2d918bc6957db32c5007804dfac93b41a418ea7ae69f38b5b0642"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "a1c142d819e439f6c58eafacc27b734dcf9f0517425e5014e3804b9b01eef0a4"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "a1c142d819e439f6c58eafacc27b734dcf9f0517425e5014e3804b9b01eef0a4"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "1af6b238e0bdad00e9ce5fb23fce9e89cd3bc1aaeac8a82b4d1fd0761a220079"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "1af6b238e0bdad00e9ce5fb23fce9e89cd3bc1aaeac8a82b4d1fd0761a220079"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "671b5513bf901116417d94c061e159ab69ce8af3f0cc7eee57b2a458569b856a"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "671b5513bf901116417d94c061e159ab69ce8af3f0cc7eee57b2a458569b856a"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "21da7e5bd70077caa76cc0241844fb57f5f7759d9b9cd56aa799dbefc9f14b8b"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "33688c1c57f4e0e4513b7cdeff171b492cd05083650362f27ab88dc1691a406d"
+    },
+    {
+      "fixture": "aifc-sowt-16",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "f902577670d2d918bc6957db32c5007804dfac93b41a418ea7ae69f38b5b0642"
+    }
+  ],
   "patched": [
     {
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
@@ -1515,7 +3016,7 @@
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
       "row": "gain +0.0 dB, trim 0, bits source, loudness none",
       "id": "smpl",
-      "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495"
+      "sha256": "abcbb79533ca0dfe01cc66d088dd7d8dd2e52d40496eff9d69c4974fb284762f"
     },
     {
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
@@ -1533,7 +3034,7 @@
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
       "row": "gain +0.0 dB, trim 0, bits source, loudness given",
       "id": "smpl",
-      "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495"
+      "sha256": "abcbb79533ca0dfe01cc66d088dd7d8dd2e52d40496eff9d69c4974fb284762f"
     },
     {
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
@@ -1551,7 +3052,7 @@
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
       "row": "gain +0.0 dB, trim 441, bits source, loudness none",
       "id": "smpl",
-      "sha256": "ea71232e6f432bdfcb258d935d006558024399b7214f29c736b920c4327954a1"
+      "sha256": "152cd7b95ddb4301b20273dbe3018f9abc65ac736278f6a96123b8359146e88f"
     },
     {
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
@@ -1569,7 +3070,7 @@
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
       "row": "gain +0.0 dB, trim 441, bits source, loudness given",
       "id": "smpl",
-      "sha256": "ea71232e6f432bdfcb258d935d006558024399b7214f29c736b920c4327954a1"
+      "sha256": "152cd7b95ddb4301b20273dbe3018f9abc65ac736278f6a96123b8359146e88f"
     },
     {
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
@@ -1587,7 +3088,7 @@
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
       "row": "gain -3.2 dB, trim 0, bits source, loudness none",
       "id": "smpl",
-      "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495"
+      "sha256": "abcbb79533ca0dfe01cc66d088dd7d8dd2e52d40496eff9d69c4974fb284762f"
     },
     {
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
@@ -1605,7 +3106,7 @@
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
       "row": "gain -3.2 dB, trim 0, bits source, loudness given",
       "id": "smpl",
-      "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495"
+      "sha256": "abcbb79533ca0dfe01cc66d088dd7d8dd2e52d40496eff9d69c4974fb284762f"
     },
     {
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
@@ -1623,7 +3124,7 @@
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
       "row": "gain -3.2 dB, trim 441, bits source, loudness none",
       "id": "smpl",
-      "sha256": "ea71232e6f432bdfcb258d935d006558024399b7214f29c736b920c4327954a1"
+      "sha256": "152cd7b95ddb4301b20273dbe3018f9abc65ac736278f6a96123b8359146e88f"
     },
     {
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
@@ -1641,7 +3142,7 @@
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
       "row": "gain -3.2 dB, trim 441, bits source, loudness given",
       "id": "smpl",
-      "sha256": "ea71232e6f432bdfcb258d935d006558024399b7214f29c736b920c4327954a1"
+      "sha256": "152cd7b95ddb4301b20273dbe3018f9abc65ac736278f6a96123b8359146e88f"
     },
     {
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
@@ -1659,7 +3160,7 @@
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
       "row": "gain +2.1 dB, trim 0, bits source, loudness none",
       "id": "smpl",
-      "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495"
+      "sha256": "abcbb79533ca0dfe01cc66d088dd7d8dd2e52d40496eff9d69c4974fb284762f"
     },
     {
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
@@ -1677,7 +3178,7 @@
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
       "row": "gain +2.1 dB, trim 0, bits source, loudness given",
       "id": "smpl",
-      "sha256": "13cbb390e8dc0bd76d6ad7840e8914fa07711b719876b25991fe01b327f4f495"
+      "sha256": "abcbb79533ca0dfe01cc66d088dd7d8dd2e52d40496eff9d69c4974fb284762f"
     },
     {
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
@@ -1695,7 +3196,7 @@
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
       "row": "gain +2.1 dB, trim 441, bits source, loudness none",
       "id": "smpl",
-      "sha256": "ea71232e6f432bdfcb258d935d006558024399b7214f29c736b920c4327954a1"
+      "sha256": "152cd7b95ddb4301b20273dbe3018f9abc65ac736278f6a96123b8359146e88f"
     },
     {
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
@@ -1713,7 +3214,7 @@
       "fixture": "wav24-bwf-ixml-cue-smpl-id3v24",
       "row": "gain +2.1 dB, trim 441, bits source, loudness given",
       "id": "smpl",
-      "sha256": "ea71232e6f432bdfcb258d935d006558024399b7214f29c736b920c4327954a1"
+      "sha256": "152cd7b95ddb4301b20273dbe3018f9abc65ac736278f6a96123b8359146e88f"
     },
     {
       "fixture": "wav24-extensible-bext-v1-fact",
@@ -1767,7 +3268,7 @@
       "fixture": "wav24-extensible-bext-v1-fact",
       "row": "gain -3.2 dB, trim 0, bits source, loudness none",
       "id": "bext",
-      "sha256": "9179fabf543461dcb59c9fce9a6729d35975dfbaf92f5e988e4907e1c3e8686d"
+      "sha256": "d4c88c4ba861d78aa75d73378276635e89381aafa381cce7169fce2bd19cc66e"
     },
     {
       "fixture": "wav24-extensible-bext-v1-fact",
@@ -1791,7 +3292,7 @@
       "fixture": "wav24-extensible-bext-v1-fact",
       "row": "gain -3.2 dB, trim 441, bits source, loudness none",
       "id": "bext",
-      "sha256": "e54d0916701c041cc2a34851971b3efbffdcc323a08b8ea7dff4dda5a3cfde30"
+      "sha256": "fce2f7ba5de6eef2413ed901426eef85e2532dda897de270246843ec4cf501f5"
     },
     {
       "fixture": "wav24-extensible-bext-v1-fact",
@@ -1815,7 +3316,7 @@
       "fixture": "wav24-extensible-bext-v1-fact",
       "row": "gain +2.1 dB, trim 0, bits source, loudness none",
       "id": "bext",
-      "sha256": "9179fabf543461dcb59c9fce9a6729d35975dfbaf92f5e988e4907e1c3e8686d"
+      "sha256": "d4c88c4ba861d78aa75d73378276635e89381aafa381cce7169fce2bd19cc66e"
     },
     {
       "fixture": "wav24-extensible-bext-v1-fact",
@@ -1839,7 +3340,7 @@
       "fixture": "wav24-extensible-bext-v1-fact",
       "row": "gain +2.1 dB, trim 441, bits source, loudness none",
       "id": "bext",
-      "sha256": "e54d0916701c041cc2a34851971b3efbffdcc323a08b8ea7dff4dda5a3cfde30"
+      "sha256": "fce2f7ba5de6eef2413ed901426eef85e2532dda897de270246843ec4cf501f5"
     },
     {
       "fixture": "wav24-extensible-bext-v1-fact",
@@ -1959,7 +3460,7 @@
       "fixture": "wav16-mono-bext-v0",
       "row": "gain -3.2 dB, trim 0, bits source, loudness none",
       "id": "bext",
-      "sha256": "95b9751942fec467d3adc0e2979165709cf47ee69c9164418d72eefb0da16b0e"
+      "sha256": "4f6648fa454f307077f642848f0b42cd222694cf470e5a2eff6b26129b2647f1"
     },
     {
       "fixture": "wav16-mono-bext-v0",
@@ -1971,7 +3472,7 @@
       "fixture": "wav16-mono-bext-v0",
       "row": "gain -3.2 dB, trim 441, bits source, loudness none",
       "id": "bext",
-      "sha256": "3e81c2e8f3fca1dc9091774374f187918e850a66cca3fc93d1b31d15c35fcd18"
+      "sha256": "390d21de3b4ecf2401a6bd1ea90e0deb494b25803ba1fd35db233fd737b3b057"
     },
     {
       "fixture": "wav16-mono-bext-v0",
@@ -1983,7 +3484,7 @@
       "fixture": "wav16-mono-bext-v0",
       "row": "gain +2.1 dB, trim 0, bits source, loudness none",
       "id": "bext",
-      "sha256": "95b9751942fec467d3adc0e2979165709cf47ee69c9164418d72eefb0da16b0e"
+      "sha256": "4f6648fa454f307077f642848f0b42cd222694cf470e5a2eff6b26129b2647f1"
     },
     {
       "fixture": "wav16-mono-bext-v0",
@@ -1995,7 +3496,7 @@
       "fixture": "wav16-mono-bext-v0",
       "row": "gain +2.1 dB, trim 441, bits source, loudness none",
       "id": "bext",
-      "sha256": "3e81c2e8f3fca1dc9091774374f187918e850a66cca3fc93d1b31d15c35fcd18"
+      "sha256": "390d21de3b4ecf2401a6bd1ea90e0deb494b25803ba1fd35db233fd737b3b057"
     },
     {
       "fixture": "wav16-mono-bext-v0",
@@ -2007,73 +3508,73 @@
       "fixture": "wav16-mono-smpl-loop-in-head",
       "row": "gain +0.0 dB, trim 0, bits source, loudness none",
       "id": "smpl",
-      "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018"
+      "sha256": "da8d0f5d39cb3a96a811b416fa7831bc70585ae7fa6736f1ba3e1bf14655c79d"
     },
     {
       "fixture": "wav16-mono-smpl-loop-in-head",
       "row": "gain +0.0 dB, trim 0, bits source, loudness given",
       "id": "smpl",
-      "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018"
+      "sha256": "da8d0f5d39cb3a96a811b416fa7831bc70585ae7fa6736f1ba3e1bf14655c79d"
     },
     {
       "fixture": "wav16-mono-smpl-loop-in-head",
       "row": "gain +0.0 dB, trim 441, bits source, loudness none",
       "id": "smpl",
-      "sha256": "bbc28ef233d66e6280b5cae4ee2a880d3c9fcd12a82ef242bf38d8f3016b8cb5"
+      "sha256": "c3976b1edbbbe497abdbbdf36cfe5032e2543519432c65773859d268475ea9d8"
     },
     {
       "fixture": "wav16-mono-smpl-loop-in-head",
       "row": "gain +0.0 dB, trim 441, bits source, loudness given",
       "id": "smpl",
-      "sha256": "bbc28ef233d66e6280b5cae4ee2a880d3c9fcd12a82ef242bf38d8f3016b8cb5"
+      "sha256": "c3976b1edbbbe497abdbbdf36cfe5032e2543519432c65773859d268475ea9d8"
     },
     {
       "fixture": "wav16-mono-smpl-loop-in-head",
       "row": "gain -3.2 dB, trim 0, bits source, loudness none",
       "id": "smpl",
-      "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018"
+      "sha256": "da8d0f5d39cb3a96a811b416fa7831bc70585ae7fa6736f1ba3e1bf14655c79d"
     },
     {
       "fixture": "wav16-mono-smpl-loop-in-head",
       "row": "gain -3.2 dB, trim 0, bits source, loudness given",
       "id": "smpl",
-      "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018"
+      "sha256": "da8d0f5d39cb3a96a811b416fa7831bc70585ae7fa6736f1ba3e1bf14655c79d"
     },
     {
       "fixture": "wav16-mono-smpl-loop-in-head",
       "row": "gain -3.2 dB, trim 441, bits source, loudness none",
       "id": "smpl",
-      "sha256": "bbc28ef233d66e6280b5cae4ee2a880d3c9fcd12a82ef242bf38d8f3016b8cb5"
+      "sha256": "c3976b1edbbbe497abdbbdf36cfe5032e2543519432c65773859d268475ea9d8"
     },
     {
       "fixture": "wav16-mono-smpl-loop-in-head",
       "row": "gain -3.2 dB, trim 441, bits source, loudness given",
       "id": "smpl",
-      "sha256": "bbc28ef233d66e6280b5cae4ee2a880d3c9fcd12a82ef242bf38d8f3016b8cb5"
+      "sha256": "c3976b1edbbbe497abdbbdf36cfe5032e2543519432c65773859d268475ea9d8"
     },
     {
       "fixture": "wav16-mono-smpl-loop-in-head",
       "row": "gain +2.1 dB, trim 0, bits source, loudness none",
       "id": "smpl",
-      "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018"
+      "sha256": "da8d0f5d39cb3a96a811b416fa7831bc70585ae7fa6736f1ba3e1bf14655c79d"
     },
     {
       "fixture": "wav16-mono-smpl-loop-in-head",
       "row": "gain +2.1 dB, trim 0, bits source, loudness given",
       "id": "smpl",
-      "sha256": "33414df473fab49edfeecfd1ed7f97d5e0dc02476e7c6b8625baf6f6d3b57018"
+      "sha256": "da8d0f5d39cb3a96a811b416fa7831bc70585ae7fa6736f1ba3e1bf14655c79d"
     },
     {
       "fixture": "wav16-mono-smpl-loop-in-head",
       "row": "gain +2.1 dB, trim 441, bits source, loudness none",
       "id": "smpl",
-      "sha256": "bbc28ef233d66e6280b5cae4ee2a880d3c9fcd12a82ef242bf38d8f3016b8cb5"
+      "sha256": "c3976b1edbbbe497abdbbdf36cfe5032e2543519432c65773859d268475ea9d8"
     },
     {
       "fixture": "wav16-mono-smpl-loop-in-head",
       "row": "gain +2.1 dB, trim 441, bits source, loudness given",
       "id": "smpl",
-      "sha256": "bbc28ef233d66e6280b5cae4ee2a880d3c9fcd12a82ef242bf38d8f3016b8cb5"
+      "sha256": "c3976b1edbbbe497abdbbdf36cfe5032e2543519432c65773859d268475ea9d8"
     },
     {
       "fixture": "aiff24-48k-mark",

@@ -9,12 +9,13 @@
 //!   (resized to absorb new fields).
 //! - Patched (same place, the named fields recomputed from the apply arguments, every other
 //!   byte identical; see `expect.rs`): `cue ` and `smpl` positions and AIFF `MARK` positions
-//!   shift by the head trim (positions inside the cut clamp to 0, a loop ending inside the cut
-//!   refuses the file); CUESHEET index points shift and clamp one by one, each track starts at
+//!   shift by the head trim (positions inside the cut clamp to 0, a loop that starts inside the
+//!   cut refuses the trim); CUESHEET index points shift and clamp one by one, each track starts at
 //!   its first index and the lead-out is the new length; a PCM `fact` follows the new length;
 //!   `bext` gets `TimeReference` plus the trim and, when loudness is given, Version 2 and its
-//!   five loudness fields; after a gain without loudness the five fields become 7FFFh ("not
-//!   measured") rather than stay stale. An existing v0/v1 `bext` is upgraded, none is added.
+//!   five loudness fields (an existing v0/v1 `bext` is upgraded; none is added); after a gain
+//!   without loudness the five fields of a version 2 `bext` become 7FFFh ("not measured")
+//!   rather than stay stale, while a v0/v1 `bext` (no loudness fields) is left as it is.
 //! - Dropped: RF64 `ds64` (the output is RIFF/WAVE), AIFF-C `FVER` (the output is FORM AIFF),
 //!   `fact` of a float source (it describes non-PCM data; the output is integer PCM).
 //! - Carried byte for byte, in order, with its pad byte value: everything else, including

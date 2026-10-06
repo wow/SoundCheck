@@ -5,17 +5,21 @@
 #![forbid(unsafe_code)]
 
 pub mod biquad;
+pub mod dither;
 pub mod downmix;
 pub mod gain;
 pub mod kick_band;
 pub mod onset;
+pub mod requantise;
 pub mod resample;
 pub mod stream_resample;
 
 pub use biquad::Biquad;
+pub use dither::Tpdf;
 pub use downmix::to_mono;
 pub use gain::{Gain, apply_gain, db_to_linear, linear_to_db};
 pub use kick_band::KickBand;
 pub use onset::{Onset, OnsetDetector};
+pub use requantise::{Requantiser, SourceDepth};
 pub use resample::Resampler;
 pub use stream_resample::StreamResampler;
