@@ -1,5 +1,13 @@
-//! The in-place and copy-to-folder transactions: preflight, temp, render, sync, verify, backup,
-//! rename, metadata, sidecar, each step journaled.
+//! The in-place and copy-to-folder transactions: checks, temp, render, sync, verify, backup,
+//! rename; [`super::finish`] does the rest. Each step is journaled.
+//!
+//! Nothing is created before every refusal check has passed. Then the backup root and the
+//! per-target lock are created and the target is locked for the whole transaction, so two
+//! transactions on one file run one after the other; the in-place checks run again under the
+//! lock and the file's identity ([`FileId`]: device, inode, length, modification and change
+//! time) is read. The identity must be unchanged before the backup copy, after it and right
+//! before the rename, so a file edited during processing (even with its length and
+//! modification time put back) is left as it is ([`Error::FileChanged`]).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -8,16 +16,19 @@ use std::time::{Duration, Instant};
 use sc_core::{Error, RenderRequest, Result};
 
 use super::crash;
+use super::finish::finish;
 use super::fsx::{
-    copy_new_hashed, exists, hash_file, hex, io_err, new_txn_id, numbered, remove_if_exists,
-    rename_noreplace, sync_dir, sync_path, temp_name, utc_date, utc_timestamp,
+    exists, hash_file, hex, io_err, local_date, new_txn_id, numbered, rename_noreplace, sync_dir,
+    sync_path, system_copy_hashed, temp_name, utc_timestamp,
 };
-use super::journal::{Entry, Journal, Line, State, TxnKind, TxnLock};
-use super::meta::{FileMeta, restore, snapshot};
+use super::journal::{Journal, Line, State, TargetLock, TxnKind, TxnLock};
+use super::meta::{FileId, FileMeta, restore, snapshot};
 use super::preflight::{
-    Container, Source, check_in_place, check_not_rekordbox, check_space, resolve, source,
+    Container, Source, check_in_place, check_not_rekordbox, check_outside_backups, check_space,
+    nearest_existing, resolve, source,
 };
-use super::sidecar::{self, Record, RenderSummary};
+use super::recover::settle_failure;
+use super::sidecar::{Record, RenderSummary};
 use super::verify::{Check, verify};
 use super::volume::Volume;
 use super::{Transaction, TxnOptions, TxnReport};
@@ -26,28 +37,39 @@ use crate::render::{self, RenderReport, check_cancel};
 /// Most numbered names tried for a backup whose name is taken.
 const MAX_BACKUP_SUFFIX: u32 = 10_000;
 
-/// What a transaction writes where.
-struct Plan<'a> {
-    id: String,
-    started_at: String,
+/// What the checks found, before anything is created.
+struct Checked {
     kind: TxnKind,
     src: Source,
-    meta: FileMeta,
     target: PathBuf,
     target_dir: PathBuf,
-    temp: PathBuf,
-    /// In place: the backup's folder and its temp file.
-    backup: Option<(PathBuf, PathBuf)>,
-    opts: &'a TxnOptions,
-    journal: Journal,
+    /// The target folder does not exist yet.
+    create_dir: bool,
+    volume: Volume,
+}
+
+/// What a transaction writes where.
+pub(super) struct Plan<'a> {
+    pub id: String,
+    pub started_at: String,
+    pub kind: TxnKind,
+    pub src: Source,
+    pub meta: FileMeta,
+    pub target: PathBuf,
+    pub target_dir: PathBuf,
+    pub temp: PathBuf,
+    /// In place: the backup's first-choice path and its temp file.
+    pub backup: Option<(PathBuf, PathBuf)>,
+    pub opts: &'a TxnOptions,
+    pub journal: Journal,
 }
 
 /// What the steps before the rename produced.
-struct Prepared {
-    report: RenderReport,
-    output: (u64, [u8; 32]),
-    original: (u64, [u8; 32]),
-    backup: Option<PathBuf>,
+pub(super) struct Prepared {
+    pub report: RenderReport,
+    pub output: (u64, [u8; 32]),
+    pub original: (u64, [u8; 32]),
+    pub backup: Option<PathBuf>,
 }
 
 /// Runs an in-place (`out_dir` `None`) or copy-to-folder transaction.
@@ -60,7 +82,13 @@ pub(super) fn apply(
     cancel: &AtomicBool,
 ) -> Result<TxnReport> {
     let started = Instant::now();
-    let plan = plan(tx, path, out_dir, req, opts)?;
+    let checked = check(tx, path, out_dir, req, opts)?;
+    let journal = Journal::open(&opts.backup_root)?;
+    if checked.create_dir {
+        std::fs::create_dir_all(&checked.target_dir).map_err(|e| io_err(&checked.target_dir, e))?;
+    }
+    let _target_lock = TargetLock::acquire(&journal, &checked.target)?;
+    let plan = plan(tx, checked, journal, opts)?;
     let lock = TxnLock::try_acquire(&plan.journal, &plan.id)?
         .ok_or_else(|| Error::Internal(format!("transaction {} is locked", plan.id)))?;
     plan.journal.append(&planned_line(&plan))?;
@@ -68,16 +96,13 @@ pub(super) fn apply(
     let mut timings = vec![(State::Planned, started.elapsed())];
     let prepared = match before_rename(tx, &plan, req, cancel, &mut timings) {
         Ok(p) => p,
-        Err(e) => {
-            roll_back(&plan, &e);
-            return Err(e);
-        }
+        Err(e) => return Err(fail(&plan, e)),
     };
     let t = Instant::now();
-    if let Err(e) = rename_into_place(&plan) {
-        roll_back(&plan, &e);
-        return Err(e);
+    if let Err(e) = rename_into_place(tx, &plan) {
+        return Err(fail(&plan, e));
     }
+    crash::point("rename");
     sync_dir(&plan.target_dir);
     plan.journal.append(&Line::new(&plan.id, State::Renamed))?;
     crash::after(State::Renamed);
@@ -87,21 +112,21 @@ pub(super) fn apply(
     Ok(report)
 }
 
-/// Checks the source and the destination, and decides every path.
-fn plan<'a>(
+/// Every refusal check, with nothing created: the source, the destination (or its nearest
+/// existing folder), the backup root, the container and free space.
+fn check(
     tx: &Transaction<'_>,
     path: &Path,
     out_dir: Option<&Path>,
     req: &RenderRequest,
-    opts: &'a TxnOptions,
-) -> Result<Plan<'a>> {
+    opts: &TxnOptions,
+) -> Result<Checked> {
     let (full, dir, name) = resolve(path)?;
-    let journal = Journal::open(&opts.backup_root)?;
-    let id = new_txn_id();
-    let (kind, target_dir, volume) = match out_dir {
+    check_outside_backups(&full, &opts.backup_root)?;
+    let (kind, target_dir, create_dir, volume) = match out_dir {
         None => {
             let volume = check_in_place(&full, &dir, tx.volumes)?;
-            (TxnKind::InPlace, dir.clone(), volume)
+            (TxnKind::InPlace, dir, false, volume)
         }
         Some(out) => {
             let meta = std::fs::metadata(&full).map_err(|e| io_err(&full, e))?;
@@ -111,39 +136,72 @@ fn plan<'a>(
                     full.display()
                 )));
             }
-            std::fs::create_dir_all(out).map_err(|e| io_err(out, e))?;
-            let out = out.canonicalize().map_err(|e| io_err(out, e))?;
-            let volume = tx.volumes.volume_of(&out)?;
-            check_not_rekordbox(&out, &volume)?;
-            (TxnKind::ToFolder, out, volume)
+            let (base, below) = nearest_existing(out)?;
+            let volume = tx.volumes.volume_of(&base)?;
+            let target_dir = base.join(&below);
+            check_not_rekordbox(&target_dir, &volume)?;
+            let create = !below.as_os_str().is_empty();
+            (TxnKind::ToFolder, target_dir, create, volume)
         }
     };
     let target = target_dir.join(&name);
-    if kind == TxnKind::ToFolder && exists(&target) {
-        return Err(Error::AlreadyExists { path: target });
+    if kind == TxnKind::ToFolder {
+        check_outside_backups(&target, &opts.backup_root)?;
+        if exists(&target) {
+            return Err(Error::AlreadyExists { path: target });
+        }
     }
+    let src_len = std::fs::metadata(&full)
+        .map_err(|e| io_err(&full, e))?
+        .len();
     let src = source(full, name, req)?;
-    let meta = snapshot(&src.path)?;
-    let backup = if kind == TxnKind::InPlace {
-        let backup_volume = tx.volumes.volume_of(journal.root())?;
-        check_space(&[(&volume, src.output_estimate), (&backup_volume, meta.len)])?;
-        let dest = backup_dest(journal.root(), &volume, &src.path);
-        let dest_dir = dest.parent().unwrap_or(journal.root()).to_path_buf();
-        let temp = dest_dir.join(temp_name(&src.name, &id));
-        Some((dest, temp))
+    if kind == TxnKind::InPlace {
+        let (root, _) = nearest_existing(&opts.backup_root)?;
+        let backup_volume = tx.volumes.volume_of(&root)?;
+        check_space(&[(&volume, src.output_estimate), (&backup_volume, src_len)])?;
     } else {
         check_space(&[(&volume, src.output_estimate)])?;
-        None
-    };
-    let temp = target_dir.join(temp_name(&src.name, &id));
+    }
+    Ok(Checked {
+        kind,
+        src,
+        target,
+        target_dir,
+        create_dir,
+        volume,
+    })
+}
+
+/// Under the target lock: the in-place checks again (the file may have changed while this
+/// waited), the metadata and identity, and every path.
+fn plan<'a>(
+    tx: &Transaction<'_>,
+    c: Checked,
+    journal: Journal,
+    opts: &'a TxnOptions,
+) -> Result<Plan<'a>> {
+    if c.kind == TxnKind::InPlace {
+        check_in_place(&c.src.path, &c.target_dir, tx.volumes)?;
+    } else if exists(&c.target) {
+        return Err(Error::AlreadyExists { path: c.target });
+    }
+    let meta = snapshot(&c.src.path)?;
+    let id = new_txn_id();
+    let backup = (c.kind == TxnKind::InPlace).then(|| {
+        let dest = backup_dest(journal.root(), &c.volume, &c.src.path);
+        let dest_dir = dest.parent().unwrap_or(journal.root()).to_path_buf();
+        let temp = dest_dir.join(temp_name(&c.src.name, &id));
+        (dest, temp)
+    });
+    let temp = c.target_dir.join(temp_name(&c.src.name, &id));
     Ok(Plan {
         id,
         started_at: utc_timestamp(std::time::SystemTime::now()),
-        kind,
-        src,
+        kind: c.kind,
+        src: c.src,
         meta,
-        target,
-        target_dir,
+        target: c.target,
+        target_dir: c.target_dir,
         temp,
         backup,
         opts,
@@ -151,12 +209,12 @@ fn plan<'a>(
     })
 }
 
-/// `<root>/<yyyy-mm-dd>/<volume name>/<path relative to the volume>` (UTC date).
+/// `<root>/<yyyy-mm-dd>/<volume name>/<path relative to the volume>` (local date).
 pub(crate) fn backup_dest(root: &Path, volume: &Volume, path: &Path) -> PathBuf {
     let relative = volume
         .relative(path)
         .map_or_else(|| path.strip_prefix("/").unwrap_or(path), |r| r);
-    root.join(utc_date(std::time::SystemTime::now()))
+    root.join(local_date(std::time::SystemTime::now()))
         .join(&volume.name)
         .join(relative)
 }
@@ -200,14 +258,21 @@ fn before_rename(
     crash::after(State::TempWritten);
     timings.push((State::TempWritten, t.elapsed()));
     #[cfg(test)]
-    if let Some(hook) = tx.after_temp_written {
-        hook(&plan.temp);
+    if let Some(hook) = tx.hooks.after_temp_written {
+        hook(&plan.temp, &plan.src.path);
     }
     #[cfg(not(test))]
     let _ = tx;
 
     let t = Instant::now();
-    let output = verify(&plan.temp, &plan.target, &report, &check, cancel)?;
+    let output = verify(
+        &plan.temp,
+        &plan.target,
+        &plan.src.path,
+        &report,
+        &check,
+        cancel,
+    )?;
     let mut line = Line::new(&plan.id, State::Verified);
     line.output_blake3 = Some(hex(&output.1));
     line.output_bytes = Some(output.0);
@@ -215,8 +280,9 @@ fn before_rename(
         request: req.clone(),
         render: RenderSummary::of(&report),
     });
-    let original = if plan.kind == TxnKind::ToFolder {
+    let folder_original = if plan.kind == TxnKind::ToFolder {
         let original = hash_file(&plan.src.path)?;
+        check_unchanged(&plan.src.path, &plan.meta, original.0)?;
         line.original_blake3 = Some(hex(&original.1));
         line.original_bytes = Some(original.0);
         Some(original)
@@ -228,7 +294,7 @@ fn before_rename(
     timings.push((State::Verified, t.elapsed()));
     check_cancel(cancel)?;
 
-    let (original, backup) = match (&plan.backup, original) {
+    let (original, backup) = match (&plan.backup, folder_original) {
         (Some((dest, temp)), _) => {
             let t = Instant::now();
             let (original, backup) = back_up(plan, dest, temp)?;
@@ -238,7 +304,6 @@ fn before_rename(
         (None, Some(original)) => (original, None),
         (None, None) => return Err(Error::Internal("no original hash".into())),
     };
-    check_unchanged(&plan.src.path, &plan.meta, original.0)?;
     check_cancel(cancel)?;
     Ok(Prepared {
         report,
@@ -248,15 +313,19 @@ fn before_rename(
     })
 }
 
-/// Copies the original to its backup temp (synced, hashed, with the original's metadata), then
-/// renames it to the first free name of `dest`, `dest (2)`, ...
+/// Copies the original to its backup temp with the system's copy (data, extended attributes,
+/// the whole resource fork; synced, hashed by reading it back), gives it the original's
+/// dates and mode, then renames it to the first free name of `dest`, `dest (2)`, ...,
+/// journaling each name before trying it.
 fn back_up(plan: &Plan<'_>, dest: &Path, temp: &Path) -> Result<((u64, [u8; 32]), PathBuf)> {
     let dir = temp.parent().unwrap_or(plan.journal.root());
     std::fs::create_dir_all(dir).map_err(|e| io_err(dir, e))?;
-    let original = copy_new_hashed(&plan.src.path, temp)?;
-    let refused = restore(temp, &plan.meta, true)?;
-    if !refused.is_empty() {
-        tracing::warn!(path = %temp.display(), refused = ?refused, "backup lacks some extended attributes");
+    check_unchanged(&plan.src.path, &plan.meta, plan.meta.len)?;
+    let original = system_copy_hashed(&plan.src.path, temp)?;
+    check_unchanged(&plan.src.path, &plan.meta, original.0)?;
+    let notes = restore(temp, &plan.meta, true)?;
+    if !notes.is_empty() {
+        tracing::warn!(path = %temp.display(), notes = ?notes, "backup lacks some metadata");
     }
     let mut n = 1;
     let backup = loop {
@@ -265,32 +334,39 @@ fn back_up(plan: &Plan<'_>, dest: &Path, temp: &Path) -> Result<((u64, [u8; 32])
         } else {
             numbered(dest, n)
         };
-        match rename_noreplace(temp, &candidate) {
-            Ok(()) => break candidate,
-            Err(Error::AlreadyExists { .. }) if n < MAX_BACKUP_SUFFIX => n += 1,
-            Err(e) => return Err(e),
+        if !exists(&candidate) {
+            let mut line = Line::new(&plan.id, State::Verified);
+            line.backup_target = Some(candidate.clone());
+            line.original_blake3 = Some(hex(&original.1));
+            line.original_bytes = Some(original.0);
+            plan.journal.append(&line)?;
+            crash::point("backup_named");
+            match rename_noreplace(temp, &candidate) {
+                Ok(()) => break candidate,
+                Err(Error::AlreadyExists { .. }) => {}
+                Err(e) => return Err(e),
+            }
         }
+        if n >= MAX_BACKUP_SUFFIX {
+            return Err(Error::AlreadyExists { path: candidate });
+        }
+        n += 1;
     };
     sync_dir(dir);
     let mut line = Line::new(&plan.id, State::BackedUp);
     line.backup = Some(backup.clone());
     line.original_blake3 = Some(hex(&original.1));
     line.original_bytes = Some(original.0);
-    if let Err(e) = plan.journal.append(&line) {
-        let _ = remove_if_exists(&backup);
-        return Err(e);
-    }
+    plan.journal.append(&line)?;
     crash::after(State::BackedUp);
     tracing::debug!(path = %plan.src.path.display(), stage = "backup", backup = %backup.display(), "backed up");
     Ok((original, backup))
 }
 
-/// [`Error::FileChanged`] when the source's length or modification time moved since the
-/// preflight, or its length differs from what was copied or hashed.
-fn check_unchanged(path: &Path, before: &FileMeta, copied_len: u64) -> Result<()> {
-    let now = std::fs::metadata(path).map_err(|e| io_err(path, e))?;
-    let modified = now.modified().map_err(|e| io_err(path, e))?;
-    if now.len() != before.len || copied_len != before.len || modified != before.modified {
+/// [`Error::FileChanged`] unless the file at `path` still has the identity read under the
+/// lock and `read_len` (what was copied or hashed) is its length.
+fn check_unchanged(path: &Path, before: &FileMeta, read_len: u64) -> Result<()> {
+    if FileId::read(path)? != before.id || read_len != before.len {
         return Err(Error::FileChanged {
             path: path.to_path_buf(),
             detail: "while SoundCheck was processing it; it was left as it is. Try again".into(),
@@ -299,139 +375,32 @@ fn check_unchanged(path: &Path, before: &FileMeta, copied_len: u64) -> Result<()
     Ok(())
 }
 
-fn rename_into_place(plan: &Plan<'_>) -> Result<()> {
+fn rename_into_place(tx: &Transaction<'_>, plan: &Plan<'_>) -> Result<()> {
+    check_unchanged(&plan.src.path, &plan.meta, plan.meta.len)?;
+    #[cfg(test)]
+    if let Some(hook) = tx.hooks.before_rename {
+        hook(&plan.temp, &plan.target);
+    }
+    #[cfg(not(test))]
+    let _ = tx;
     match plan.kind {
         TxnKind::ToFolder => rename_noreplace(&plan.temp, &plan.target),
         _ => std::fs::rename(&plan.temp, &plan.target).map_err(|e| io_err(&plan.target, e)),
     }
 }
 
-/// Removes what the transaction created before the rename and journals the failure; the
-/// target is untouched.
-fn roll_back(plan: &Plan<'_>, error: &Error) {
-    let mut leftovers = vec![plan.temp.clone()];
-    if let Some((_, backup_temp)) = &plan.backup {
-        leftovers.push(backup_temp.clone());
-    }
-    if let Ok(Some(entry)) = plan.journal.entry(&plan.id)
-        && let Some(backup) = entry.backup
-    {
-        leftovers.push(backup);
-    }
-    for path in &leftovers {
-        if let Err(e) = remove_if_exists(path) {
-            tracing::warn!(path = %path.display(), error = %e, "left behind after a failed transaction");
+/// Settles a transaction `error` stopped (rolled back and `failed`, or left pending for
+/// recovery when the rename may have happened or cleanup failed); returns the error.
+fn fail(plan: &Plan<'_>, error: Error) -> Error {
+    match plan.journal.entry(&plan.id) {
+        Ok(Some(entry)) => {
+            let rolled_back = settle_failure(&plan.journal, &entry, &error);
+            tracing::info!(path = %plan.src.path.display(), txn = %plan.id, error = %error, rolled_back, "not processed");
         }
-    }
-    let mut line = Line::new(&plan.id, State::Failed);
-    line.error = Some(error.to_string());
-    if let Err(e) = plan.journal.append(&line) {
-        tracing::warn!(txn = %plan.id, error = %e, "failure not journaled");
-    }
-    tracing::info!(path = %plan.src.path.display(), txn = %plan.id, error = %error, "not processed");
-}
-
-/// Metadata, sidecar, done: the file is in place, so nothing here undoes it; a failure leaves
-/// the transaction for [`super::recover`].
-fn finish(
-    plan: &Plan<'_>,
-    req: &RenderRequest,
-    prepared: Prepared,
-    timings: &mut Vec<(State, Duration)>,
-) -> Result<TxnReport> {
-    let t = Instant::now();
-    let notes = metadata_step(&plan.target, &plan.meta, plan.opts.keep_mtime);
-    let mut line = Line::new(&plan.id, State::MetadataDone);
-    line.notes.clone_from(&notes);
-    plan.journal.append(&line)?;
-    crash::after(State::MetadataDone);
-    timings.push((State::MetadataDone, t.elapsed()));
-
-    let t = Instant::now();
-    let entry = entry_of(plan, req, &prepared);
-    let mut line = Line::new(&plan.id, State::Done);
-    let sidecar = if plan.opts.sidecar {
-        match sidecar::write(&entry, &notes) {
-            Ok(p) => Some(p),
-            Err(e) => {
-                tracing::warn!(path = %plan.target.display(), error = %e, "sidecar not written");
-                line.notes.push(format!("sidecar not written: {e}"));
-                None
-            }
-        }
-    } else {
-        None
-    };
-    let mut notes = notes;
-    notes.extend(line.notes.iter().cloned());
-    plan.journal.append(&line)?;
-    timings.push((State::Done, t.elapsed()));
-    tracing::info!(
-        path = %plan.src.path.display(),
-        output = %plan.target.display(),
-        txn = %plan.id,
-        backup = ?prepared.backup,
-        gain_db = req.gain_db,
-        trim_frames = req.trim_frames,
-        "processed"
-    );
-    Ok(TxnReport {
-        txn: plan.id.clone(),
-        kind: plan.kind,
-        source: plan.src.path.clone(),
-        output: plan.target.clone(),
-        backup: prepared.backup,
-        sidecar,
-        render: prepared.report,
-        original_blake3: prepared.original.1,
-        output_blake3: prepared.output.1,
-        output_bytes: prepared.output.0,
-        notes,
-        timings: std::mem::take(timings),
-    })
-}
-
-/// Restores `meta` onto `target`; what could not be restored becomes notes.
-pub(crate) fn metadata_step(target: &Path, meta: &FileMeta, keep_mtime: bool) -> Vec<String> {
-    match restore(target, meta, keep_mtime) {
-        Ok(refused) => refused
-            .into_iter()
-            .map(|n| format!("extended attribute not restored: {n}"))
-            .collect(),
+        Ok(None) => tracing::warn!(txn = %plan.id, "failed transaction not in the journal"),
         Err(e) => {
-            tracing::warn!(path = %target.display(), error = %e, "metadata not restored");
-            vec![format!("metadata not restored: {e}")]
+            tracing::warn!(txn = %plan.id, error = %e, "journal not readable after a failure");
         }
     }
-}
-
-/// The journal entry of the finished transaction, built from what it knows.
-fn entry_of(plan: &Plan<'_>, req: &RenderRequest, p: &Prepared) -> Entry {
-    Entry {
-        txn: plan.id.clone(),
-        kind: plan.kind,
-        state: State::MetadataDone,
-        reached: State::MetadataDone,
-        started_at: plan.started_at.clone(),
-        path: plan.target.clone(),
-        source: plan.src.path.clone(),
-        temp: plan.temp.clone(),
-        backup_temp: plan.backup.as_ref().map(|(_, t)| t.clone()),
-        backup: p.backup.clone(),
-        keep_mtime: plan.opts.keep_mtime,
-        sidecar: plan.opts.sidecar,
-        undoes: None,
-        original_blake3: Some(hex(&p.original.1)),
-        original_bytes: Some(p.original.0),
-        output_blake3: Some(hex(&p.output.1)),
-        output_bytes: Some(p.output.0),
-        record: Some(Record {
-            request: req.clone(),
-            render: RenderSummary::of(&p.report),
-        }),
-        outcome: None,
-        error: None,
-        notes: Vec::new(),
-        undone: false,
-    }
+    error
 }

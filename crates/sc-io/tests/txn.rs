@@ -385,7 +385,10 @@ fn cancelling_during_the_render_leaves_the_original_and_no_temp() {
     assert_eq!(entries[0].state, State::Failed);
     assert_eq!(entries[0].reached, State::Planned);
     assert!(
-        txn::recover(&lib.backups).expect("recover").is_empty(),
+        txn::recover(&lib.backups)
+            .expect("recover")
+            .recovered
+            .is_empty(),
         "nothing to recover"
     );
 }
@@ -417,9 +420,24 @@ fn undo_walks_back_through_two_changes_and_refuses_an_edited_file() {
         other => panic!("undo of an edited file: {other:?}"),
     }
     // Put the first output back, as if the edit was reverted, and undo the first change.
+    // (Backups themselves are refused as sources, so render a copy of the first backup.)
+    let copy_dir = lib.dir.path().join("copy");
+    std::fs::create_dir(&copy_dir).expect("folder");
+    let copy = copy_dir.join("a.wav");
+    std::fs::copy(first.backup.as_ref().expect("backup"), &copy).expect("copy out");
+    match txn::apply_to_folder(
+        first.backup.as_ref().expect("backup"),
+        &lib.dir.path().join("unused"),
+        &gain(-1.0),
+        &opts(&lib),
+        &NOT_CANCELLED,
+    ) {
+        Err(Error::InvalidArgument(why)) => assert!(why.contains("backup folder"), "{why}"),
+        other => panic!("a backup as a source: {other:?}"),
+    }
     std::fs::write(&path, b"").expect("truncate");
     let _ = txn::apply_to_folder(
-        first.backup.as_ref().expect("backup"),
+        &copy,
         &lib.dir.path().join("unused"),
         &gain(-1.0),
         &opts(&lib),

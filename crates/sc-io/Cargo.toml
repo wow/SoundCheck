@@ -33,6 +33,7 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 xattr = { workspace = true }
 rustix = { workspace = true }
+jiff = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 exacl = { workspace = true }

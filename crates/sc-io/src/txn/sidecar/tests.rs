@@ -16,6 +16,7 @@ fn entry(path: &Path) -> Entry {
         temp: path.with_file_name(".x.tmp"),
         backup_temp: None,
         backup: Some(PathBuf::from("/backups/2026-10-07/Disk/a.wav")),
+        backup_target: None,
         keep_mtime: true,
         sidecar: true,
         undoes: None,

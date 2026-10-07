@@ -1,8 +1,10 @@
 //! Verifying the temp file after it is synced, before anything else happens.
 //!
-//! - WAV/AIFF: the header is read again (container, channels, rate, depth, frame count as the
-//!   render reported them), the file length must equal the render's, and the audio bytes must
-//!   hash (BLAKE3) to what the render hashed while writing them.
+//! - WAV/AIFF: the chunk table and header are read again (container, channels, rate, depth,
+//!   frame count as the render reported them); every chunk the render reported as carried must
+//!   be in the output, in order, with the source's id, payload bytes and pad byte, and so must
+//!   the bytes after the container; the file length must equal the render's, and the audio
+//!   bytes must hash (BLAKE3) to what the render hashed while writing them.
 //! - FLAC: the render's own check (metadata as planned, STREAMINFO as written, every frame
 //!   decoded by an independent decoder to the encoded samples), run on the synced file.
 //!
@@ -17,7 +19,7 @@ use sc_core::{Error, Result};
 
 use super::fsx::{COPY_BUFFER_BYTES, hash_file, io_err};
 use crate::iff;
-use crate::render::{FlacCheck, RenderReport};
+use crate::render::{BlockFate, FlacCheck, RenderReport};
 
 /// What to check the temp file against, besides the render report.
 pub(crate) enum Check {
@@ -46,6 +48,7 @@ fn failed(target: &Path, detail: impl Into<String>) -> Error {
 pub(crate) fn verify(
     temp: &Path,
     target: &Path,
+    source: &Path,
     report: &RenderReport,
     check: &Check,
     cancel: &AtomicBool,
@@ -57,7 +60,10 @@ pub(crate) fn verify(
         other => other,
     };
     let (len, hash) = match check {
-        Check::Iff { wave } => verify_iff(temp, target, report, *wave).map_err(as_failure)?,
+        Check::Iff { wave } => {
+            verify_carried(temp, target, source, report).map_err(as_failure)?;
+            verify_iff(temp, target, report, *wave).map_err(as_failure)?
+        }
         Check::Flac(flac) => {
             flac.run(temp, cancel).map_err(as_failure)?;
             hash_file(temp)?
@@ -71,6 +77,94 @@ pub(crate) fn verify(
     }
     tracing::debug!(path = %target.display(), stage = "verify", bytes = len, "verified");
     Ok((len, hash))
+}
+
+/// Every chunk the render carried is in the output at its place with the source's id,
+/// payload and pad byte; the bytes after the container are the source's.
+fn verify_carried(temp: &Path, target: &Path, source: &Path, report: &RenderReport) -> Result<()> {
+    let mut src = File::open(source).map_err(|e| io_err(source, e))?;
+    let mut out = File::open(temp).map_err(|e| io_err(temp, e))?;
+    let src_table = iff::walk(&mut src, source)?;
+    let out_table = iff::walk(&mut out, temp)?;
+    if report.blocks.len() != src_table.chunks.len() {
+        return Err(failed(
+            target,
+            "the source's chunks changed during processing",
+        ));
+    }
+    let kept = src_table
+        .chunks
+        .iter()
+        .zip(&report.blocks)
+        .filter(|(_, r)| r.fate != BlockFate::Dropped);
+    if kept.clone().count() != out_table.chunks.len() {
+        return Err(failed(target, "the output's chunk list is not as written"));
+    }
+    for ((chunk, record), written) in kept.zip(&out_table.chunks) {
+        if chunk.id != written.id {
+            return Err(failed(target, "the output's chunk order is not as written"));
+        }
+        if record.fate == BlockFate::Carried {
+            let same = chunk.pad == written.pad
+                && same_bytes(
+                    &mut src,
+                    source,
+                    &chunk.payload,
+                    &mut out,
+                    temp,
+                    &written.payload,
+                )?;
+            if !same {
+                return Err(failed(
+                    target,
+                    format!(
+                        "the carried chunk '{}' differs from the source's",
+                        chunk.id_text()
+                    ),
+                ));
+            }
+        }
+    }
+    let empty = 0..0;
+    let src_tail = src_table.trailing.clone().unwrap_or(empty.clone());
+    let out_tail = out_table.trailing.clone().unwrap_or(empty);
+    if !same_bytes(&mut src, source, &src_tail, &mut out, temp, &out_tail)? {
+        return Err(failed(
+            target,
+            "the bytes after the container differ from the source's",
+        ));
+    }
+    Ok(())
+}
+
+/// Whether range `a` of `fa` and range `b` of `fb` hold the same bytes (read in blocks).
+fn same_bytes(
+    fa: &mut File,
+    pa: &Path,
+    a: &std::ops::Range<u64>,
+    fb: &mut File,
+    pb: &Path,
+    b: &std::ops::Range<u64>,
+) -> Result<bool> {
+    if a.end - a.start != b.end - b.start {
+        return Ok(false);
+    }
+    fa.seek(SeekFrom::Start(a.start))
+        .map_err(|e| io_err(pa, e))?;
+    fb.seek(SeekFrom::Start(b.start))
+        .map_err(|e| io_err(pb, e))?;
+    let (mut ba, mut bb) = (vec![0_u8; 1 << 16], vec![0_u8; 1 << 16]);
+    let mut left = a.end - a.start;
+    while left > 0 {
+        let n = usize::try_from(left).map_or(ba.len(), |l| l.min(ba.len()));
+        fa.read_exact(&mut ba[..n]).map_err(|e| io_err(pa, e))?;
+        fb.read_exact(&mut bb[..n]).map_err(|e| io_err(pb, e))?;
+        if ba[..n] != bb[..n] {
+            return Ok(false);
+        }
+        left -= n as u64;
+    }
+    Ok(true)
 }
 
 fn verify_iff(

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use sc_core::{Error, InPlaceRefusal, RenderRequest, Result};
 
 use super::fsx::io_err;
-use super::meta::{has_acl, is_locked};
+use super::meta::{effective_uid, has_acl, is_locked, owned_by_other};
 use super::volume::{Volume, VolumeProvider};
 use crate::{flac, iff};
 
@@ -57,30 +57,115 @@ fn refuse(path: &Path, reason: InPlaceRefusal) -> Error {
     }
 }
 
-/// `path` with its folder resolved: absolute, links in the folder part followed, the file name
-/// kept as given. Refuses a path that is not valid UTF-8 (the journal stores paths as text).
+/// The path the file system itself holds for the existing file or folder `path`: absolute,
+/// links followed, and every name as stored on disk (on macOS read back from the open file,
+/// `F_GETPATH`, so `track.wav` reached as `Track.wav`, or a decomposed `Café` reached through a
+/// precomposed one, gives one path).
 ///
 /// # Errors
-/// [`Error::Io`] when the folder does not resolve; [`Error::InvalidArgument`] for a path
+/// [`Error::Io`] naming `path`.
+pub(crate) fn real_path(path: &Path) -> Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let file = std::fs::File::open(path).map_err(|e| io_err(path, e))?;
+        let raw = rustix::fs::getpath(&file).map_err(|e| io_err(path, e.into()))?;
+        Ok(PathBuf::from(OsString::from_vec(raw.into_bytes())))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        path.canonicalize().map_err(|e| io_err(path, e))
+    }
+}
+
+/// The nearest existing folder at or above `path` (resolved), and the part below it.
+pub(crate) fn nearest_existing(path: &Path) -> Result<(PathBuf, PathBuf)> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| io_err(path, e))?
+            .join(path)
+    };
+    let mut existing = absolute.as_path();
+    let mut rest = Vec::new();
+    while !existing.is_dir() {
+        rest.push(existing.file_name().unwrap_or_default().to_os_string());
+        existing = existing.parent().ok_or_else(|| {
+            Error::InvalidArgument(format!("{} has no existing folder", path.display()))
+        })?;
+    }
+    let below: PathBuf = rest.iter().rev().collect();
+    Ok((real_path(existing)?, below))
+}
+
+/// Whether `path` (resolved) lies in the backup root `root` (which may not exist yet). Library
+/// scanners must skip these paths: the backups are SoundCheck's own copies.
+///
+/// # Errors
+/// [`Error::Io`] when neither path resolves.
+pub fn is_under_backup_root(path: &Path, root: &Path) -> Result<bool> {
+    let (base, below) = nearest_existing(root)?;
+    let root = base.join(below);
+    let path = if let Ok(p) = real_path(path) {
+        p
+    } else {
+        let (base, below) = nearest_existing(path)?;
+        base.join(below)
+    };
+    Ok(path.starts_with(&root))
+}
+
+/// [`Error::InvalidArgument`] when `path` lies in the backup root.
+pub(crate) fn check_outside_backups(path: &Path, root: &Path) -> Result<()> {
+    if is_under_backup_root(path, root)? {
+        return Err(Error::InvalidArgument(format!(
+            "{} is inside the backup folder {}; SoundCheck does not process its own backups. \
+             Copy the file out of it first",
+            path.display(),
+            root.display()
+        )));
+    }
+    Ok(())
+}
+
+/// `path` as the file system holds it: `(full path, folder, file name)`. A symbolic link is
+/// kept as a link in its resolved folder (so it can be refused in place); anything else is
+/// [`real_path`]. Refuses a path that is not valid UTF-8 (the journal stores paths as text).
+///
+/// # Errors
+/// [`Error::Io`] when the path does not resolve; [`Error::InvalidArgument`] for a path
 /// without a file name or not valid UTF-8.
 pub(crate) fn resolve(path: &Path) -> Result<(PathBuf, PathBuf, OsString)> {
-    let name = path
-        .file_name()
-        .ok_or_else(|| Error::InvalidArgument(format!("{} names no file", path.display())))?
-        .to_os_string();
-    let parent = match path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
-        _ => PathBuf::from("."),
+    let link = std::fs::symlink_metadata(path)
+        .map_err(|e| io_err(path, e))?
+        .file_type()
+        .is_symlink();
+    let full = if link {
+        let name = path
+            .file_name()
+            .ok_or_else(|| Error::InvalidArgument(format!("{} names no file", path.display())))?;
+        let parent = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+        real_path(&parent)?.join(name)
+    } else {
+        real_path(path)?
     };
-    let dir = parent.canonicalize().map_err(|e| io_err(&parent, e))?;
-    let full = dir.join(&name);
+    let (Some(dir), Some(name)) = (full.parent(), full.file_name()) else {
+        return Err(Error::InvalidArgument(format!(
+            "{} names no file",
+            path.display()
+        )));
+    };
     if full.to_str().is_none() {
         return Err(Error::InvalidArgument(format!(
             "{} is not a UTF-8 path",
             full.display()
         )));
     }
-    Ok((full, dir, name))
+    Ok((full.clone(), dir.to_path_buf(), name.to_os_string()))
 }
 
 /// The in-place checks on `path` (resolved); returns the file's volume.
@@ -107,6 +192,9 @@ pub(crate) fn check_in_place(
     check_not_rekordbox(path, &volume)?;
     if is_locked(&meta) {
         return Err(refuse(path, InPlaceRefusal::FinderLocked));
+    }
+    if owned_by_other(meta.uid(), effective_uid()) {
+        return Err(refuse(path, InPlaceRefusal::OwnedByOtherUser));
     }
     if meta.nlink() > 1 {
         return Err(refuse(

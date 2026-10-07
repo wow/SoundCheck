@@ -87,7 +87,7 @@ fn a_rename_the_journal_missed_is_completed() {
     let s = scene();
     // Crashed after the rename, before its line: the temp is gone, the target is the output.
     std::fs::write(&s.target, OUTPUT).expect("output in place");
-    let r = recover(&s.root).expect("recovered");
+    let r = recover(&s.root).expect("recovered").recovered;
     assert_eq!(r.len(), 1);
     assert_eq!(
         (r[0].reached, r[0].outcome),
@@ -104,12 +104,15 @@ fn an_interrupted_change_is_rolled_back_and_its_backup_removed() {
     let s = scene();
     std::fs::write(&s.target, ORIGINAL).expect("original in place");
     std::fs::write(&s.temp, OUTPUT).expect("temp");
-    let r = recover(&s.root).expect("recovered");
+    let r = recover(&s.root).expect("recovered").recovered;
     assert_eq!(r[0].outcome, Outcome::RolledBack);
     assert!(r[0].notes.is_empty(), "{:?}", r[0].notes);
     assert!(!s.temp.exists() && !s.backup.exists());
     assert_eq!(std::fs::read(&s.target).expect("target"), ORIGINAL);
-    assert!(recover(&s.root).expect("again").is_empty(), "idempotent");
+    assert!(
+        recover(&s.root).expect("again").recovered.is_empty(),
+        "idempotent"
+    );
 }
 
 #[test]
@@ -117,7 +120,7 @@ fn a_backup_is_kept_when_the_file_no_longer_matches_it() {
     let s = scene();
     std::fs::write(&s.target, b"edited meanwhile").expect("target");
     std::fs::write(&s.temp, OUTPUT).expect("temp");
-    let r = recover(&s.root).expect("recovered");
+    let r = recover(&s.root).expect("recovered").recovered;
     assert_eq!(r[0].outcome, Outcome::RolledBack);
     assert_eq!(r[0].notes.len(), 1, "{:?}", r[0].notes);
     assert!(s.backup.exists());
@@ -130,17 +133,23 @@ fn a_running_transaction_is_left_alone() {
     let lock = TxnLock::try_acquire(&s.journal, "t")
         .expect("io")
         .expect("free");
-    assert!(recover(&s.root).expect("read").is_empty(), "skipped");
+    assert!(
+        recover(&s.root).expect("read").recovered.is_empty(),
+        "skipped"
+    );
     assert!(s.temp.exists());
     drop(lock);
-    assert_eq!(recover(&s.root).expect("now").len(), 1);
+    assert_eq!(recover(&s.root).expect("now").recovered.len(), 1);
 }
 
 #[test]
 fn no_backup_root_means_nothing_to_recover() {
     let dir = tempfile::tempdir().expect("temp dir");
     assert!(
-        recover(&dir.path().join("none")).expect("ok").is_empty(),
+        recover(&dir.path().join("none"))
+            .expect("ok")
+            .recovered
+            .is_empty(),
         "nothing"
     );
     assert!(

@@ -8,7 +8,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -33,21 +33,29 @@ pub(crate) fn io_err(path: &Path, source: std::io::Error) -> Error {
     }
 }
 
-/// Flushes `file` to stable storage: `F_FULLFSYNC` where the volume supports it (std's
-/// `sync_all` on Apple systems), else a plain `fsync`.
+/// Whether a failed `F_FULLFSYNC` means the volume does not support it (`ENOTSUP`,
+/// `EOPNOTSUPP`, `EINVAL`, `ENOTTY`), so a plain `fsync` is the best it offers; any other
+/// error is a real failure to write.
+pub(crate) fn full_sync_unsupported(e: &std::io::Error) -> bool {
+    use rustix::io::Errno;
+    [Errno::NOTSUP, Errno::OPNOTSUPP, Errno::INVAL, Errno::NOTTY]
+        .iter()
+        .any(|n| e.raw_os_error() == Some(n.raw_os_error()))
+}
+
+/// Flushes `file` to stable storage: on Apple systems `F_FULLFSYNC` (std's `sync_all`), and a
+/// plain `fsync` only where the volume does not support it; elsewhere one `fsync`.
 ///
 /// # Errors
-/// [`Error::Io`] naming `path` when both fail.
+/// [`Error::Io`] naming `path`.
 pub(crate) fn sync_file(file: &File, path: &Path) -> Result<()> {
     match file.sync_all() {
         Ok(()) => Ok(()),
-        Err(full) => match rustix::fs::fsync(file) {
-            Ok(()) => {
-                tracing::debug!(path = %path.display(), error = %full, "full sync refused; fsync used");
-                Ok(())
-            }
-            Err(_) => Err(io_err(path, full)),
-        },
+        Err(full) if cfg!(target_vendor = "apple") && full_sync_unsupported(&full) => {
+            tracing::debug!(path = %path.display(), error = %full, "full sync unsupported; fsync used");
+            rustix::fs::fsync(file).map_err(|e| io_err(path, e.into()))
+        }
+        Err(e) => Err(io_err(path, e)),
     }
 }
 
@@ -124,76 +132,64 @@ pub(crate) fn hash_file(path: &Path) -> Result<(u64, [u8; 32])> {
     Ok((len, *hasher.finalize().as_bytes()))
 }
 
-/// Copies the file `src` into the new file `dst` (created, never overwritten), hashing the
-/// bytes as they pass, and syncs `dst`. Memory is bounded by one buffer. On any error `dst` is
-/// removed.
+/// Copies the file `src` to `dst`, which must not exist, with the system's copy (on macOS a
+/// clone on APFS, else `copyfile(3)`: data, extended attributes and the whole resource fork),
+/// syncs it and hashes it by reading it back. On any error `dst` is removed.
 ///
 /// # Errors
-/// [`Error::Io`] naming `src` when reading fails and `dst` when creating or writing fails
-/// (`dst` existing included).
-pub(crate) fn copy_new_hashed(src: &Path, dst: &Path) -> Result<(u64, [u8; 32])> {
-    let mut input = File::open(src).map_err(|e| io_err(src, e))?;
-    let mut out = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(dst)
-        .map_err(|e| io_err(dst, e))?;
-    let copied = copy_into(&mut input, src, &mut out, dst).and_then(|done| {
-        sync_file(&out, dst)?;
-        Ok(done)
-    });
-    if copied.is_err() {
-        drop(out);
-        if let Err(e) = remove_if_exists(dst) {
-            tracing::warn!(path = %dst.display(), error = %e, "partial copy not removed");
-        }
+/// [`Error::AlreadyExists`] when `dst` exists; [`Error::Io`] naming `src` or `dst`.
+pub(crate) fn system_copy_hashed(src: &Path, dst: &Path) -> Result<(u64, [u8; 32])> {
+    if exists(dst) {
+        return Err(Error::AlreadyExists {
+            path: dst.to_path_buf(),
+        });
+    }
+    let copied = std::fs::copy(src, dst)
+        .map_err(|e| io_err(dst, e))
+        .and_then(|_| {
+            crate::txn::crash::point("backup_copy");
+            sync_path(dst)?;
+            hash_file(dst)
+        });
+    if copied.is_err()
+        && let Err(e) = remove_if_exists(dst)
+    {
+        tracing::warn!(path = %dst.display(), error = %e, "partial copy not removed");
     }
     copied
 }
 
-fn copy_into(input: &mut File, src: &Path, out: &mut File, dst: &Path) -> Result<(u64, [u8; 32])> {
-    let mut hasher = blake3::Hasher::new();
-    let mut buf = vec![0_u8; COPY_BUFFER_BYTES];
-    let mut len = 0_u64;
-    loop {
-        let n = match input.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(e) => return Err(io_err(src, e)),
-        };
-        hasher.update(&buf[..n]);
-        out.write_all(&buf[..n]).map_err(|e| io_err(dst, e))?;
-        len += n as u64;
-    }
-    Ok((len, *hasher.finalize().as_bytes()))
-}
-
 /// Renames `from` to `to` unless something exists at `to`, atomically where the volume can
-/// (`renameatx_np(RENAME_EXCL)` on Apple systems, `renameat2(RENAME_NOREPLACE)` on Linux); a
-/// volume without that falls back to a hard link and an unlink, which also never replaces.
+/// (`renameatx_np(RENAME_EXCL)` on Apple systems, `renameat2(RENAME_NOREPLACE)` on Linux). A
+/// volume without that (exFAT, FAT32: no exclusive rename and no hard links) gets an empty
+/// placeholder created exclusively at `to` (`O_EXCL`), which a plain rename then replaces, so
+/// another file there is never replaced either; recovery removes a placeholder left by a crash.
 ///
 /// # Errors
 /// [`Error::AlreadyExists`] naming `to`; [`Error::Io`] naming `from` otherwise.
 pub(crate) fn rename_noreplace(from: &Path, to: &Path) -> Result<()> {
     use rustix::fs::{CWD, RenameFlags, renameat_with};
     use rustix::io::Errno;
+    let exists_error = || Error::AlreadyExists {
+        path: to.to_path_buf(),
+    };
     match renameat_with(CWD, from, CWD, to, RenameFlags::NOREPLACE) {
         Ok(()) => Ok(()),
-        Err(Errno::EXIST) => Err(Error::AlreadyExists {
-            path: to.to_path_buf(),
-        }),
-        Err(e) if e == Errno::INVAL || e == Errno::NOSYS || e == Errno::NOTSUP => {
-            tracing::debug!(path = %to.display(), "no-replace rename unsupported; linking");
-            match std::fs::hard_link(from, to) {
-                Ok(()) => remove_if_exists(from).map(|_| ()),
+        Err(Errno::EXIST) => Err(exists_error()),
+        Err(e) if [Errno::INVAL, Errno::NOSYS, Errno::NOTSUP, Errno::OPNOTSUPP].contains(&e) => {
+            tracing::debug!(path = %to.display(), "no exclusive rename here; placeholder used");
+            match OpenOptions::new().write(true).create_new(true).open(to) {
+                Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    Err(Error::AlreadyExists {
-                        path: to.to_path_buf(),
-                    })
+                    return Err(exists_error());
                 }
-                Err(e) => Err(io_err(from, e)),
+                Err(e) => return Err(io_err(to, e)),
             }
+            crate::txn::crash::point("placeholder");
+            std::fs::rename(from, to).map_err(|e| {
+                let _ = remove_if_exists(to);
+                io_err(from, e)
+            })
         }
         Err(e) => Err(io_err(from, e.into())),
     }
@@ -264,6 +260,18 @@ fn unix_secs(t: SystemTime) -> i64 {
 pub(crate) fn utc_date(t: SystemTime) -> String {
     let (y, m, d) = civil_from_days(unix_secs(t).div_euclid(86_400));
     format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// The date of `t` in the system's time zone as `yyyy-mm-dd` (the UTC date when the system
+/// names no zone jiff can read).
+pub(crate) fn local_date(t: SystemTime) -> String {
+    let local = jiff::Timestamp::try_from(t)
+        .ok()
+        .map(|ts| ts.to_zoned(jiff::tz::TimeZone::system()).date());
+    match local {
+        Some(d) => format!("{:04}-{:02}-{:02}", d.year(), d.month(), d.day()),
+        None => utc_date(t),
+    }
 }
 
 /// `t` as an RFC 3339 UTC timestamp with seconds: `yyyy-mm-ddThh:mm:ssZ`.

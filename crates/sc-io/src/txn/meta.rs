@@ -1,15 +1,18 @@
-//! File metadata a rename does not carry, and the checks that decide whether a file may be
-//! replaced in place.
+//! File metadata a rename does not carry, the identity of a file, and the checks that decide
+//! whether a file may be replaced in place.
 //!
 //! A new file renamed over an old one has the new file's metadata: no extended attributes (on
 //! macOS: Finder tags and colour label, Finder comment, "Where from", quarantine, the resource
-//! fork), a new creation date, the default mode. [`snapshot`] reads them from the original
-//! before the rename and [`restore`] writes them onto the new file after it: every extended
-//! attribute byte for byte, the creation date (macOS `setattrlist(ATTR_CMN_CRTIME)` through
-//! std), the modification time when asked, and the mode last. Access control lists are not
-//! carried; files that have one are refused in place instead ([`has_acl`]).
+//! fork), a new creation date, the default mode and group. [`snapshot`] reads them from the
+//! original before the rename and [`restore`] writes them onto the new file after it: every
+//! extended attribute byte for byte (each read at its full size: `getxattr(2)` with no buffer
+//! gives the size, which matters for the resource fork, whose reads are silently cut to the
+//! buffer), read back to check it, then the group, the creation date (macOS
+//! `setattrlist(ATTR_CMN_CRTIME)` through std), the modification time when asked, and the mode
+//! last. Access control lists are not carried; files that have one are refused in place
+//! instead ([`has_acl`]).
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::{FileTimes, Metadata, OpenOptions};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
@@ -19,19 +22,112 @@ use sc_core::Result;
 
 use super::fsx::io_err;
 
+/// What identifies one version of a file: replacing it, writing to it or changing its
+/// metadata changes at least one field (the change time moves on every write and every
+/// metadata change, even when the modification time is set back).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FileId {
+    /// Device.
+    pub dev: u64,
+    /// Inode.
+    pub ino: u64,
+    /// Length, bytes.
+    pub len: u64,
+    /// Modification time, seconds and nanoseconds.
+    pub mtime: (i64, i64),
+    /// Status change time, seconds and nanoseconds.
+    pub ctime: (i64, i64),
+}
+
+impl FileId {
+    /// The identity in `meta`.
+    pub fn of(meta: &Metadata) -> Self {
+        Self {
+            dev: meta.dev(),
+            ino: meta.ino(),
+            len: meta.len(),
+            mtime: (meta.mtime(), meta.mtime_nsec()),
+            ctime: (meta.ctime(), meta.ctime_nsec()),
+        }
+    }
+
+    /// The identity of the file at `path` now.
+    ///
+    /// # Errors
+    /// [`sc_core::Error::Io`] naming `path`.
+    pub fn read(path: &Path) -> Result<Self> {
+        let meta = std::fs::symlink_metadata(path).map_err(|e| io_err(path, e))?;
+        Ok(Self::of(&meta))
+    }
+}
+
 /// The metadata of a file that SoundCheck restores after replacing it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FileMeta {
-    /// Length, bytes (to notice a change, not restored).
+    /// The file's identity when it was read (to notice a change, not restored).
+    pub id: FileId,
+    /// Length, bytes.
     pub len: u64,
     /// Permission bits (`st_mode & 0o7777`).
     pub mode: u32,
+    /// Owner.
+    pub uid: u32,
+    /// Group.
+    pub gid: u32,
     /// Modification time.
     pub modified: SystemTime,
     /// Creation (birth) time, where the system reports one.
     pub created: Option<SystemTime>,
     /// Every extended attribute, by name in byte order.
     pub xattrs: Vec<(OsString, Vec<u8>)>,
+}
+
+/// Whether a file owned by `file_uid` must not be replaced by a process running as `euid`:
+/// the replacement would belong to `euid` (only the superuser may give a file away).
+pub(crate) fn owned_by_other(file_uid: u32, euid: u32) -> bool {
+    euid != 0 && file_uid != euid
+}
+
+/// This process's effective user id.
+pub(crate) fn effective_uid() -> u32 {
+    rustix::process::geteuid().as_raw()
+}
+
+/// The error for a missing extended attribute (`ENOATTR` on Apple systems, `ENODATA` on
+/// Linux).
+#[cfg(target_os = "macos")]
+const NO_ATTR: rustix::io::Errno = rustix::io::Errno::NOATTR;
+#[cfg(not(target_os = "macos"))]
+const NO_ATTR: rustix::io::Errno = rustix::io::Errno::NODATA;
+
+/// The extended attribute `name` of `path` (not following a link) at its full size, or `None`
+/// when it does not exist.
+///
+/// # Errors
+/// The system's error.
+pub(crate) fn read_xattr(path: &Path, name: &OsStr) -> std::io::Result<Option<Vec<u8>>> {
+    use rustix::io::Errno;
+    // The size can grow between the two calls; try again a few times.
+    for _ in 0..4 {
+        let size = match rustix::fs::lgetxattr(path, name, &mut [0_u8; 0][..]) {
+            Ok(n) => n,
+            Err(e) if e == NO_ATTR => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let mut value = vec![0_u8; size];
+        match rustix::fs::lgetxattr(path, name, &mut value[..]) {
+            Ok(n) if n == size => return Ok(Some(value)),
+            // Shrank meanwhile: ask again.
+            Ok(_) => {}
+            Err(e) if e == NO_ATTR => return Ok(None),
+            Err(e) if e == Errno::RANGE => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(std::io::Error::other(format!(
+        "extended attribute {} keeps changing size",
+        name.to_string_lossy()
+    )))
 }
 
 /// Reads the metadata of the file at `path` (not following a symbolic link).
@@ -49,43 +145,60 @@ pub(crate) fn snapshot(path: &Path) -> Result<FileMeta> {
     names.sort();
     let mut xattrs = Vec::with_capacity(names.len());
     for name in names {
-        match xattr::get(path, &name) {
+        match read_xattr(path, &name) {
             Ok(Some(value)) => xattrs.push((name, value)),
-            // Removed between the list and the read, or not readable by this user.
+            // Removed between the list and the read.
             Ok(None) => {}
-            Err(e) => {
-                tracing::warn!(path = %path.display(), name = %name.to_string_lossy(), error = %e, "extended attribute not readable");
-            }
+            Err(e) => return Err(io_err(path, e)),
         }
     }
     Ok(FileMeta {
+        id: FileId::of(&meta),
         len: meta.len(),
         mode: meta.mode() & 0o7777,
+        uid: meta.uid(),
+        gid: meta.gid(),
         modified,
         created: meta.created().ok(),
         xattrs,
     })
 }
 
-/// Writes `meta` onto the file at `path`: every extended attribute, then the creation date and
-/// (with `keep_mtime`) the modification time, then the mode. Returns the names of extended
-/// attributes the volume or the system refused (for example a protected `com.apple.*` name);
-/// they are logged and the rest is restored.
+/// Writes `meta` onto the file at `path`: every extended attribute (each read back and
+/// compared), the group, then the creation date and (with `keep_mtime`) the modification time,
+/// then the mode. Returns notes for what the volume or the system refused (a protected
+/// `com.apple.*` name, an attribute that reads back differently, a group this user is not in);
+/// the rest is restored.
 ///
 /// # Errors
 /// [`sc_core::Error::Io`] naming `path` when the times or the mode cannot be set.
 pub(crate) fn restore(path: &Path, meta: &FileMeta, keep_mtime: bool) -> Result<Vec<String>> {
-    let mut refused = Vec::new();
+    let mut notes = Vec::new();
     for (name, value) in &meta.xattrs {
-        let same = matches!(xattr::get(path, name), Ok(Some(v)) if v == *value);
-        if same {
+        let shown = name.to_string_lossy();
+        if matches!(read_xattr(path, name), Ok(Some(v)) if v == *value) {
             continue;
         }
         if let Err(e) = xattr::set(path, name, value) {
-            let name = name.to_string_lossy().into_owned();
-            tracing::warn!(path = %path.display(), name, error = %e, "extended attribute not restored");
-            refused.push(name);
+            tracing::warn!(path = %path.display(), name = %shown, error = %e, "extended attribute not restored");
+            notes.push(format!("extended attribute not restored: {shown} ({e})"));
+            continue;
         }
+        match read_xattr(path, name) {
+            Ok(Some(v)) if v == *value => {}
+            Ok(v) => notes.push(format!(
+                "extended attribute {shown} reads back as {} bytes, {} were written",
+                v.map_or(0, |v| v.len()),
+                value.len()
+            )),
+            Err(e) => notes.push(format!("extended attribute {shown} not readable: {e}")),
+        }
+    }
+    let now = std::fs::symlink_metadata(path).map_err(|e| io_err(path, e))?;
+    if now.gid() != meta.gid
+        && let Err(e) = std::os::unix::fs::chown(path, None, Some(meta.gid))
+    {
+        notes.push(format!("group {} not restored: {e}", meta.gid));
     }
     let mut times = FileTimes::new();
     if keep_mtime {
@@ -100,7 +213,7 @@ pub(crate) fn restore(path: &Path, meta: &FileMeta, keep_mtime: bool) -> Result<
     drop(file);
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(meta.mode))
         .map_err(|e| io_err(path, e))?;
-    Ok(refused)
+    Ok(notes)
 }
 
 #[cfg(target_os = "macos")]
@@ -159,7 +272,7 @@ pub(crate) fn has_acl(path: &Path) -> Result<bool> {
 #[allow(clippy::unnecessary_wraps)]
 pub(crate) fn has_acl(path: &Path) -> Result<bool> {
     Ok(matches!(
-        xattr::get(path, "system.posix_acl_access"),
+        read_xattr(path, OsStr::new("system.posix_acl_access")),
         Ok(Some(_))
     ))
 }

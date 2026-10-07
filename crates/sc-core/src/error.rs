@@ -162,6 +162,8 @@ pub enum InPlaceRefusal {
     ReadOnlyFile,
     /// The file's folder is read-only or locked, so no file can be created next to it.
     ReadOnlyFolder,
+    /// The file belongs to another user; the new version would belong to this one.
+    OwnedByOtherUser,
     /// The file has other hard links, which replacing it would break.
     HardLinked {
         /// The file's link count.
@@ -189,6 +191,10 @@ impl std::fmt::Display for InPlaceRefusal {
             Self::ReadOnlyFolder => f.write_str(
                 "its folder is read-only or locked. Allow writing to the folder, or write a copy \
                  to another folder",
+            ),
+            Self::OwnedByOtherUser => f.write_str(
+                "it belongs to another user, and the new version would belong to you. Process \
+                 it as its owner, or write a copy to a folder",
             ),
             Self::HardLinked { links } => write!(
                 f,

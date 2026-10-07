@@ -71,16 +71,13 @@ fn copies_hash_what_they_write_and_never_overwrite() {
     let bytes: Vec<u8> = (0..3_000_000_u32).map(|i| (i % 251) as u8).collect();
     std::fs::write(&src, &bytes).expect("write");
     let dst = dir.path().join("dst");
-    let (len, hash) = copy_new_hashed(&src, &dst).expect("copied");
+    let (len, hash) = system_copy_hashed(&src, &dst).expect("copied");
     assert_eq!(len, bytes.len() as u64);
     assert_eq!(hash, *blake3::hash(&bytes).as_bytes());
     assert_eq!(std::fs::read(&dst).expect("read"), bytes);
     assert_eq!(hash_file(&dst).expect("hash"), (len, hash));
-    match copy_new_hashed(&src, &dst) {
-        Err(Error::Io { path, source }) => {
-            assert_eq!(path, dst);
-            assert_eq!(source.kind(), std::io::ErrorKind::AlreadyExists);
-        }
+    match system_copy_hashed(&src, &dst) {
+        Err(Error::AlreadyExists { path }) => assert_eq!(path, dst),
         other => panic!("copy over an existing file: {other:?}"),
     }
     assert_eq!(std::fs::read(&dst).expect("read"), bytes, "dst untouched");
@@ -106,6 +103,28 @@ fn no_replace_renames_refuse_an_existing_target() {
     assert_eq!(std::fs::read(&c).expect("read"), b"a");
     assert!(remove_if_exists(&c).expect("removed"));
     assert!(!remove_if_exists(&c).expect("nothing to remove"));
+}
+
+#[test]
+fn only_an_unsupported_full_sync_falls_back_to_fsync() {
+    use rustix::io::Errno;
+    for unsupported in [Errno::NOTSUP, Errno::OPNOTSUPP, Errno::INVAL, Errno::NOTTY] {
+        let e = std::io::Error::from_raw_os_error(unsupported.raw_os_error());
+        assert!(full_sync_unsupported(&e), "{e}");
+    }
+    for real in [Errno::IO, Errno::NOSPC, Errno::BADF, Errno::ROFS] {
+        let e = std::io::Error::from_raw_os_error(real.raw_os_error());
+        assert!(!full_sync_unsupported(&e), "{e}");
+    }
+    assert!(!full_sync_unsupported(&std::io::Error::other("no code")));
+}
+
+#[test]
+fn the_local_date_is_a_calendar_date() {
+    let t = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    let d = local_date(t);
+    // 2001-09-09 01:46:40 UTC is the 8th or 9th somewhere on Earth.
+    assert!(d == "2001-09-09" || d == "2001-09-08", "{d}");
 }
 
 #[test]

@@ -13,14 +13,13 @@ use std::path::{Path, PathBuf};
 use sc_core::{Error, Result};
 
 use super::Transaction;
-use super::apply::metadata_step;
 use super::crash;
-use super::fsx::{
-    copy_new_hashed, hash_file, hex, io_err, new_txn_id, remove_if_exists, sync_dir, temp_name,
-};
-use super::journal::{Entry, Journal, Line, State, TxnKind, TxnLock};
-use super::meta::snapshot;
-use super::preflight::{check_in_place, check_space, resolve};
+use super::finish::metadata_step;
+use super::fsx::{hash_file, hex, io_err, new_txn_id, sync_dir, system_copy_hashed, temp_name};
+use super::journal::{Entry, Journal, Line, State, TargetLock, TxnKind, TxnLock};
+use super::meta::{FileId, snapshot};
+use super::preflight::{check_in_place, check_outside_backups, check_space, resolve};
+use super::recover::settle_failure;
 use super::sidecar;
 
 /// What happened to the sidecar.
@@ -62,23 +61,26 @@ pub(super) fn undo(tx: &Transaction<'_>, path: &Path, backup_root: &Path) -> Res
     if !backup_root.is_dir() {
         return Err(nothing());
     }
+    check_outside_backups(&full, backup_root)?;
+    let volume = check_in_place(&full, &dir, tx.volumes)?;
     let journal = Journal::open(backup_root)?;
-    let entries = journal.entries()?;
-    let target = entries
-        .iter()
+    let _target_lock = TargetLock::acquire(&journal, &full)?;
+    let target = journal
+        .entries()?
+        .into_iter()
         .rev()
         .find(|e| undoable(e, &full))
-        .ok_or_else(nothing)?
-        .clone();
+        .ok_or_else(nothing)?;
     let backup = target
         .backup
         .clone()
         .ok_or_else(|| Error::Internal(format!("transaction {} has no backup", target.txn)))?;
-    let volume = check_in_place(&full, &dir, tx.volumes)?;
+    check_in_place(&full, &dir, tx.volumes)?;
     let backup_meta = snapshot(&backup)?;
     check_space(&[(&volume, backup_meta.len)])?;
+    let before = FileId::read(&full)?;
     let (_, now) = hash_file(&full)?;
-    if Some(hex(&now)) != target.output_blake3 {
+    if Some(hex(&now)) != target.output_blake3 || FileId::read(&full)? != before {
         return Err(Error::FileChanged {
             path: full.clone(),
             detail: format!(
@@ -106,20 +108,26 @@ pub(super) fn undo(tx: &Transaction<'_>, path: &Path, backup_root: &Path) -> Res
     journal.append(&line)?;
     crash::after(State::Planned);
 
-    let restored =
-        match copy_and_verify(&journal, &id, &backup, &temp, &full, &target).and_then(|h| {
-            std::fs::rename(&temp, &full).map_err(|e| io_err(&full, e))?;
-            Ok(h)
-        }) {
-            Ok(h) => h,
-            Err(e) => {
-                let _ = remove_if_exists(&temp);
-                let mut line = Line::new(&id, State::Failed);
-                line.error = Some(e.to_string());
-                let _ = journal.append(&line);
-                return Err(e);
+    let renamed = copy_and_verify(&journal, &id, &backup, &temp, &full, &target).and_then(|h| {
+        if FileId::read(&full)? != before {
+            return Err(Error::FileChanged {
+                path: full.clone(),
+                detail: "while SoundCheck was undoing its change; it was left as it is".into(),
+            });
+        }
+        std::fs::rename(&temp, &full).map_err(|e| io_err(&full, e))?;
+        Ok(h)
+    });
+    let restored = match renamed {
+        Ok(h) => h,
+        Err(e) => {
+            if let Ok(Some(entry)) = journal.entry(&id) {
+                settle_failure(&journal, &entry, &e);
             }
-        };
+            return Err(e);
+        }
+    };
+    crash::point("rename");
     sync_dir(&dir);
     journal.append(&Line::new(&id, State::Renamed))?;
     crash::after(State::Renamed);
@@ -152,7 +160,7 @@ fn copy_and_verify(
     target: &Path,
     entry: &Entry,
 ) -> Result<[u8; 32]> {
-    copy_new_hashed(backup, temp)?;
+    system_copy_hashed(backup, temp)?;
     journal.append(&Line::new(id, State::TempWritten))?;
     crash::after(State::TempWritten);
     let (len, hash) = hash_file(temp)?;

@@ -43,7 +43,8 @@
 //! named by `SC_TEST_CRASH_AFTER_STEP` (see [`CRASH_ENV`]).
 
 mod apply;
-mod crash;
+pub(crate) mod crash;
+mod finish;
 mod fsx;
 pub mod journal;
 mod meta;
@@ -65,8 +66,8 @@ use crate::render::RenderReport;
 pub use crash::CRASH_ENV;
 pub use fsx::{TEMP_MARKER, hex};
 pub use journal::{Entry, JOURNAL_FILE, Outcome, State, TxnKind};
-pub use preflight::SPACE_MARGIN_BYTES;
-pub use recover::{Recovered, recover};
+pub use preflight::{SPACE_MARGIN_BYTES, is_under_backup_root};
+pub use recover::{Pending, Recovered, RecoveryReport, recover};
 pub use sidecar::{SIDECAR_SUFFIX, sidecar_path};
 pub use undo::{SidecarAfterUndo, UndoReport};
 pub use volume::{SystemVolumes, Volume, VolumeProvider};
@@ -150,9 +151,19 @@ pub struct TxnReport {
 /// simulates volumes).
 pub struct Transaction<'v> {
     volumes: &'v dyn VolumeProvider,
-    /// Runs on the temp file right after it is synced (tests: to corrupt it).
+    /// Fault injection for unit tests.
     #[cfg(test)]
-    pub(crate) after_temp_written: Option<fn(&Path)>,
+    pub(crate) hooks: Hooks,
+}
+
+/// Functions unit tests run inside a transaction to inject faults.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Hooks {
+    /// Runs with the temp file and the source right after the temp file is synced.
+    pub after_temp_written: Option<fn(&Path, &Path)>,
+    /// Runs with the temp file and the target right before the rename.
+    pub before_rename: Option<fn(&Path, &Path)>,
 }
 
 impl std::fmt::Debug for Transaction<'_> {
@@ -176,7 +187,7 @@ impl<'v> Transaction<'v> {
         Self {
             volumes,
             #[cfg(test)]
-            after_temp_written: None,
+            hooks: Hooks::default(),
         }
     }
 

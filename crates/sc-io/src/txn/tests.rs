@@ -38,7 +38,7 @@ fn flac(frames: usize) -> Vec<u8> {
 }
 
 /// Flips one byte 200 bytes before the end of the file (inside the audio of both fixtures).
-fn corrupt(path: &Path) {
+fn corrupt(path: &Path, _source: &Path) {
     let mut f = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -60,7 +60,10 @@ fn verify_failure_leaves_nothing(name: &str, bytes: &[u8]) {
     std::fs::write(&path, bytes).expect("fixture");
     let backups = base.join("backups");
     let tx = Transaction {
-        after_temp_written: Some(corrupt),
+        hooks: Hooks {
+            after_temp_written: Some(corrupt),
+            ..Hooks::default()
+        },
         ..Transaction::default()
     };
     let req = RenderRequest {
@@ -98,7 +101,7 @@ fn verify_failure_leaves_nothing(name: &str, bytes: &[u8]) {
         .collect();
     assert!(dated.is_empty(), "nothing backed up: {dated:?}");
     assert!(
-        recover(&backups).expect("recovery").is_empty(),
+        recover(&backups).expect("recovery").recovered.is_empty(),
         "nothing to recover"
     );
 }

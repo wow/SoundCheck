@@ -70,7 +70,7 @@ fn crash_case(example: &Path, name: &str, bytes: &[u8], step: State) {
     let original = blake3_of(&path);
     crash_after(example, &path, &lib.backups, step);
 
-    let recovered = txn::recover(&lib.backups).expect("recovery");
+    let recovered = txn::recover(&lib.backups).expect("recovery").recovered;
     assert_eq!(recovered.len(), 1, "{name} after {step:?}");
     let r = &recovered[0];
     assert_eq!(r.reached, step);
@@ -108,7 +108,10 @@ fn crash_case(example: &Path, name: &str, bytes: &[u8], step: State) {
     let locks = files_under(&lib.backups.join("locks"));
     assert!(locks.is_empty(), "lock files left: {locks:?}");
     assert!(
-        txn::recover(&lib.backups).expect("again").is_empty(),
+        txn::recover(&lib.backups)
+            .expect("again")
+            .recovered
+            .is_empty(),
         "recovery is idempotent"
     );
 

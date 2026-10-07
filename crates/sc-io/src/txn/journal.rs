@@ -132,6 +132,9 @@ pub(crate) struct Line {
     pub backup_temp: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup: Option<PathBuf>,
+    /// The backup's final name, journaled before the backup is renamed to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_target: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_mtime: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -169,6 +172,7 @@ impl Line {
             temp: None,
             backup_temp: None,
             backup: None,
+            backup_target: None,
             keep_mtime: None,
             sidecar: None,
             undoes: None,
@@ -207,6 +211,8 @@ pub struct Entry {
     pub backup_temp: Option<PathBuf>,
     /// The backup, once made (in place), or the backup restored (undo).
     pub backup: Option<PathBuf>,
+    /// The name the backup was being renamed to (it may exist without `backed_up`).
+    pub backup_target: Option<PathBuf>,
     /// Whether the modification time is restored.
     pub keep_mtime: bool,
     /// Whether a sidecar is written.
@@ -253,6 +259,7 @@ impl Entry {
             started_at: line.at,
             backup_temp: line.backup_temp,
             backup: line.backup,
+            backup_target: line.backup_target,
             keep_mtime: line.keep_mtime.unwrap_or(true),
             sidecar: line.sidecar.unwrap_or(true),
             undoes: line.undoes,
@@ -274,6 +281,7 @@ impl Entry {
             self.reached = self.reached.max(line.state);
         }
         self.backup = line.backup.or(self.backup.take());
+        self.backup_target = line.backup_target.or(self.backup_target.take());
         self.original_blake3 = line.original_blake3.or(self.original_blake3.take());
         self.original_bytes = line.original_bytes.or(self.original_bytes);
         self.output_blake3 = line.output_blake3.or(self.output_blake3.take());
@@ -348,11 +356,17 @@ impl Journal {
         text.push('\n');
         let path = &self.path;
         let mut file = OpenOptions::new()
+            .read(true)
             .append(true)
             .create(true)
             .open(path)
             .map_err(|e| io_err(path, e))?;
         file.lock().map_err(|e| io_err(path, e))?;
+        if !ends_with_newline(&mut file).map_err(|e| io_err(path, e))? {
+            // A crash cut the last line short: end it, so this record stands on its own line
+            // (the cut one is skipped when read).
+            text.insert(0, '\n');
+        }
         file.write_all(text.as_bytes())
             .map_err(|e| io_err(path, e))?;
         sync_file(&file, path)?;
@@ -402,6 +416,86 @@ impl Journal {
     fn lock_path(&self, txn: &str) -> PathBuf {
         self.root.join(LOCK_DIR).join(format!("{txn}.lock"))
     }
+}
+
+/// The exclusive lock on one target path, held for a whole transaction so two transactions
+/// on the same file run one after the other. The lock file (`locks/target-<BLAKE3 of the
+/// path>.lock`) is removed when the lock is dropped; a waiter that wakes up on a removed file
+/// takes the lock again on the new one.
+#[derive(Debug)]
+pub(crate) struct TargetLock {
+    _held: TxnLock,
+}
+
+impl TargetLock {
+    /// Waits for and takes the lock on `target`.
+    ///
+    /// # Errors
+    /// [`Error::Io`] naming the lock file.
+    pub fn acquire(journal: &Journal, target: &Path) -> Result<Self> {
+        use std::os::unix::fs::MetadataExt;
+        let key = blake3::hash(target.as_os_str().as_encoded_bytes());
+        let path = journal
+            .root
+            .join(LOCK_DIR)
+            .join(format!("target-{}.lock", &key.to_hex()[..32]));
+        loop {
+            let file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+                .map_err(|e| io_err(&path, e))?;
+            file.lock().map_err(|e| io_err(&path, e))?;
+            // Still the file at `path`, not one its last holder removed meanwhile?
+            let held = file.metadata().map_err(|e| io_err(&path, e))?;
+            let linked = std::fs::metadata(&path)
+                .is_ok_and(|m| m.dev() == held.dev() && m.ino() == held.ino());
+            if linked {
+                return Ok(Self {
+                    _held: TxnLock {
+                        file: Some(file),
+                        path,
+                    },
+                });
+            }
+        }
+    }
+}
+
+impl Journal {
+    /// Removes target lock files nobody holds (left by a crash). A waiter that opened one
+    /// before it went notices it was removed and takes a new one (see [`TargetLock`]).
+    pub fn sweep_target_locks(&self) {
+        let dir = self.root.join(LOCK_DIR);
+        let Ok(list) = std::fs::read_dir(&dir) else {
+            return;
+        };
+        for entry in list.flatten() {
+            if !entry.file_name().to_string_lossy().starts_with("target-") {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(file) = OpenOptions::new().write(true).open(&path) else {
+                continue;
+            };
+            if file.try_lock().is_ok() {
+                let _ = remove_if_exists(&path);
+            }
+        }
+    }
+}
+
+/// Whether `file` is empty or its last byte is a newline.
+fn ends_with_newline(file: &mut File) -> std::io::Result<bool> {
+    use std::io::{Seek, SeekFrom};
+    if file.seek(SeekFrom::End(0))? == 0 {
+        return Ok(true);
+    }
+    file.seek(SeekFrom::End(-1))?;
+    let mut last = [0_u8; 1];
+    file.read_exact(&mut last)?;
+    Ok(last[0] == b'\n')
 }
 
 /// The exclusive lock a running transaction holds on its lock file; dropping it removes the

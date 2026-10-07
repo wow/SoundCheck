@@ -191,6 +191,7 @@ pub(crate) struct OutputGuard<'a> {
 impl<'a> OutputGuard<'a> {
     /// Guards the file at `path`, which the caller has just created.
     pub(crate) fn new(path: &'a Path) -> Self {
+        crate::txn::crash::point("render");
         Self { path, keep: false }
     }
 
