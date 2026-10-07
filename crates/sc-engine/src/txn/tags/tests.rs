@@ -58,8 +58,9 @@ fn container_labels_and_bad_values_are_refused() {
         }
     };
     refused("TXXX:BPM=128", "use the neutral name (BPM for TXXX:BPM)");
-    refused("TBPM=128", "looks like an ID3 frame id");
-    refused("TKEY=8A", "looks like an ID3 frame id");
+    refused("TBPM=128", "is an ID3 frame id");
+    refused("TKEY=8A", "is an ID3 frame id");
+    refused("tcmp=1", "is an ID3 frame id");
     refused("MY-TAG=x", "upper-case letters, digits or _");
     refused("BPM=fast", "positive number");
     refused("BPM=-1", "positive number");
@@ -69,4 +70,25 @@ fn container_labels_and_bad_values_are_refused() {
     assert!(Tag::parse("BPM").is_err() && Tag::parse("=1").is_err());
     let eq = tag("COMMENT=a=b");
     assert_eq!((eq.name.as_str(), eq.value.as_str()), ("COMMENT", "a=b"));
+}
+
+#[test]
+fn only_real_frame_ids_are_refused() {
+    let mut sorted = ID3_FRAME_IDS.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted, ID3_FRAME_IDS.to_vec(), "sorted and unique");
+    let tags = [
+        tag("MOOD=happy"),
+        tag("year=2026"),
+        tag("DATE=2026-10-07"),
+        tag("LABEL=X"),
+    ];
+    check_tags(&tags).expect("ordinary names");
+    let id3 = labels(&tag_edits(&tags, TagFamily::Id3));
+    assert_eq!(id3[0], ("TXXX:MOOD".to_owned(), "happy".to_owned()));
+    assert_eq!(id3[1], ("TXXX:YEAR".to_owned(), "2026".to_owned()));
+    let vorbis = labels(&tag_edits(&tags, TagFamily::Vorbis));
+    assert_eq!(vorbis[0], ("MOOD".to_owned(), "happy".to_owned()));
+    assert_eq!(vorbis[1], ("YEAR".to_owned(), "2026".to_owned()));
 }

@@ -208,11 +208,11 @@ fn neutral_tags_go_into_wav_aiff_and_flac_in_one_run() {
 }
 
 #[test]
-fn container_tag_labels_stop_the_run_before_any_file() {
+fn frame_ids_and_container_labels_stop_the_run_and_other_names_pass() {
     let lib = Library::new();
     let wav = lib.file("Track.wav", &wav_bytes(true));
     for (tag, why) in [
-        ("TBPM=128", "looks like an ID3 frame id"),
+        ("TBPM=128", "is an ID3 frame id"),
         ("TXXX:BPM=128.00", "use the neutral name (BPM for TXXX:BPM)"),
         ("BPM=fast", "positive number"),
     ] {
@@ -226,6 +226,32 @@ fn container_tag_labels_stop_the_run_before_any_file() {
         !lib.backups.exists(),
         "nothing written, not even the journal"
     );
+
+    // Four-letter names that are not frame ids are ordinary neutral names.
+    let args = [
+        "apply",
+        arg(&wav),
+        "--gain-db",
+        "0",
+        "--tag",
+        "MOOD=happy",
+        "--tag",
+        "YEAR=2026",
+    ];
+    let run = lib.run(&args);
+    assert!(run.ok, "{}", run.text());
+    assert!(
+        run.stdout.contains(", 2 tags added; verified"),
+        "{}",
+        run.text()
+    );
+    let bytes = std::fs::read(&wav).expect("tagged");
+    for needle in [&b"TXXX"[..], b"MOOD", b"happy", b"YEAR", b"2026"] {
+        assert!(
+            bytes.windows(needle.len()).any(|w| w == needle),
+            "{needle:?}"
+        );
+    }
 }
 
 #[test]

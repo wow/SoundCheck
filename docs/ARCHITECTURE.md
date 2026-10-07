@@ -74,8 +74,8 @@ RENDER (streamed)
              entry points: `sc_engine::apply_file(path, ApplyRequest{gain_db, trim_frames, bits, loudness, tags}, ApplyOptions{place: InPlace|Folder, backup_root,
              keep_mtime, sidecar}, cancel)`; `check_inputs(files, place)` first refuses a file listed twice (resolved like the transaction: on-disk name, case,
              Unicode form) and copies into one folder that would share a name, before anything is written; tags use neutral names mapped per container
-             (`BPM` -> ID3 `TBPM` integer + `TXXX:BPM` / Vorbis `BPM`; `INITIALKEY` -> `TKEY` / `INITIALKEY`; `NAME` -> `TXXX:NAME` / `NAME`; ID3 frame ids
-             and labels with `:` refused); `undo_file`; `recover_at_start(root) -> RecoveryStatus` (never fails: an unreadable journal is `failed`), which the
+             (`BPM` -> ID3 `TBPM` integer + `TXXX:BPM` / Vorbis `BPM`; `INITIALKEY` -> `TKEY` / `INITIALKEY`; `NAME` -> `TXXX:NAME` / `NAME`; the frame ids
+             declared by ID3v2.3/2.4 plus iTunes' own, and labels with `:`, refused); `undo_file`; `recover_at_start(root) -> RecoveryStatus` (never fails: an unreadable journal is `failed`), which the
              desktop shell runs on a background thread at start, keeping the result for the `recovery_status` command and logging it, and which
              `sc-cli apply`/`undo` run before writing; `collect_audio_files` never lists a file in the backup root (resolved once per call);
              copy-to-folder mode: same steps, no backup, never replaces a file. Crash matrix behind the test-only `crash-test` feature

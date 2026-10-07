@@ -9,8 +9,8 @@
 //!
 //! A name is upper-case letters, digits and `_` (`REPLAYGAIN_TRACK_GAIN`, `SOUNDCHECK`).
 //! Container-specific labels are refused rather than written somewhere they mean nothing: a
-//! label with `:` (`TXXX:BPM`) and a four-character name shaped like an ID3 frame id
-//! (`TBPM`, `TKEY`; `[A-Z][A-Z0-9]{3}`).
+//! label with `:` (`TXXX:BPM`) and an ID3 frame id ([`ID3_FRAME_IDS`]: `TBPM`, `TKEY`, ...).
+//! Other four-letter names (`MOOD`, `YEAR`, `DATE`) are neutral names like any other.
 
 use sc_core::{Error, Result, TagEdit};
 use sc_io::txn::TagFamily;
@@ -47,14 +47,24 @@ fn invalid(msg: String) -> Error {
     Error::InvalidArgument(msg)
 }
 
-/// Whether `name` has the shape of an ID3v2.3/2.4 frame id.
-fn looks_like_frame_id(name: &str) -> bool {
-    let b = name.as_bytes();
-    b.len() == 4
-        && b[0].is_ascii_uppercase()
-        && b[1..]
-            .iter()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+/// The frame ids declared in ID3v2.3.0 section 4 and ID3v2.4.0-frames section 4 (their union),
+/// plus the non-standard ones iTunes writes (`TCMP`, `TSO2`, `TSOC`, `GRP1`, `MVNM`, `MVIN`).
+/// Sorted, for a binary search.
+pub const ID3_FRAME_IDS: [&str; 98] = [
+    "AENC", "APIC", "ASPI", "COMM", "COMR", "ENCR", "EQU2", "EQUA", "ETCO", "GEOB", "GRID", "GRP1",
+    "IPLS", "LINK", "MCDI", "MLLT", "MVIN", "MVNM", "OWNE", "PCNT", "POPM", "POSS", "PRIV", "RBUF",
+    "RVA2", "RVAD", "RVRB", "SEEK", "SIGN", "SYLT", "SYTC", "TALB", "TBPM", "TCMP", "TCOM", "TCON",
+    "TCOP", "TDAT", "TDEN", "TDLY", "TDOR", "TDRC", "TDRL", "TDTG", "TENC", "TEXT", "TFLT", "TIME",
+    "TIPL", "TIT1", "TIT2", "TIT3", "TKEY", "TLAN", "TLEN", "TMCL", "TMED", "TMOO", "TOAL", "TOFN",
+    "TOLY", "TOPE", "TORY", "TOWN", "TPE1", "TPE2", "TPE3", "TPE4", "TPOS", "TPRO", "TPUB", "TRCK",
+    "TRDA", "TRSN", "TRSO", "TSIZ", "TSO2", "TSOA", "TSOC", "TSOP", "TSOT", "TSRC", "TSSE", "TSST",
+    "TXXX", "TYER", "UFID", "USER", "USLT", "WCOM", "WCOP", "WOAF", "WOAR", "WOAS", "WORS", "WPAY",
+    "WPUB", "WXXX",
+];
+
+/// Whether `name` is an ID3 frame id (see [`ID3_FRAME_IDS`]).
+fn is_frame_id(name: &str) -> bool {
+    ID3_FRAME_IDS.binary_search(&name).is_ok()
 }
 
 /// Checks every tag: a valid neutral name, not given twice, a value without NUL, a `BPM` that is
@@ -71,9 +81,9 @@ pub fn check_tags(tags: &[Tag]) -> Result<()> {
                 name.rsplit(':').next().unwrap_or_default()
             )));
         }
-        if looks_like_frame_id(name) {
+        if is_frame_id(name) {
             return Err(invalid(format!(
-                "tag {name} looks like an ID3 frame id; use a neutral name (BPM, INITIALKEY, or \
+                "tag {name} is an ID3 frame id; use a neutral name (BPM, INITIALKEY, or \
                  another NAME, which becomes TXXX:NAME in ID3 and NAME in FLAC)"
             )));
         }

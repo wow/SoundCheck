@@ -76,7 +76,7 @@ pub struct ApplyArgs {
     no_sidecar: bool,
     /// A tag item to add or replace, by a container-neutral name: `BPM=128.00` (ID3 `TBPM` 128 and
     /// `TXXX:BPM` 128.00 in WAV/AIFF, `BPM` in FLAC), `INITIALKEY=8A` (`TKEY` / `INITIALKEY`),
-    /// any other `NAME=VALUE` (`TXXX:NAME` / `NAME`). ID3 frame ids and labels with `:` are
+    /// any other `NAME=VALUE` (`TXXX:NAME` / `NAME`). ID3 frame ids (`TBPM`) and labels with `:` are
     /// refused. Repeatable; tags go into an existing tag only, none is created.
     #[arg(long = "tag", value_name = "NAME=VALUE", value_parser = parse_tag)]
     tags: Vec<Tag>,
