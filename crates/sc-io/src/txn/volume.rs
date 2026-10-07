@@ -162,7 +162,14 @@ pub fn volume_identity(path: &Path, cached: bool) -> Option<String> {
     {
         use std::sync::Mutex;
         use std::time::Instant;
-        type Key = (PathBuf, u64, u64, u64, Option<std::time::SystemTime>);
+        type Key = (
+            PathBuf,
+            u64,
+            u64,
+            u64,
+            Option<std::time::SystemTime>,
+            String,
+        );
         static CACHE: Mutex<Vec<(Key, Instant, String)>> = Mutex::new(Vec::new());
         let s = rustix::fs::statfs(path).ok()?;
         let (mount, _) = mount_and_free(path).ok()?;
@@ -176,6 +183,8 @@ pub fn volume_identity(path: &Path, cached: bool) -> Option<String> {
             s.f_blocks,
             root.ino(),
             root.created().ok(),
+            // Two same-sized FAT sticks swapped within the reuse window share every other part.
+            format!("{:?}", s.f_fsid),
         );
         let mut cache = CACHE
             .lock()
@@ -185,16 +194,10 @@ pub fn volume_identity(path: &Path, cached: bool) -> Option<String> {
             return Some(id.clone());
         }
         drop(cache);
-        let out = std::process::Command::new("/usr/sbin/diskutil")
-            .args(["info", "-plist"])
-            .arg(&mount)
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let id = plist_string(&String::from_utf8_lossy(&out.stdout), "VolumeUUID")?;
+        let mut command = std::process::Command::new("/usr/sbin/diskutil");
+        command.args(["info", "-plist"]).arg(&mount);
+        let stdout = run_with_deadline(command, DISKUTIL_DEADLINE)?;
+        let id = plist_string(&String::from_utf8_lossy(&stdout), "VolumeUUID")?;
         let mut cache = CACHE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -207,6 +210,51 @@ pub fn volume_identity(path: &Path, cached: bool) -> Option<String> {
         let s = rustix::fs::statfs(path).ok()?;
         Some(format!("fsid:{:?}", s.f_fsid))
     }
+}
+
+/// The longest [`volume_identity`] waits for `diskutil`, which can stall on an unresponsive
+/// drive; past it the volume has no identity (a write records none, recovery stays pending).
+pub const DISKUTIL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Runs `command` and returns its standard output when it exits successfully within
+/// `deadline`; kills it and returns `None` when it does not.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS asks diskutil
+pub(crate) fn run_with_deadline(
+    mut command: std::process::Command,
+    deadline: std::time::Duration,
+) -> Option<Vec<u8>> {
+    use std::io::Read;
+    use std::time::Instant;
+    let mut child = command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    // Read on another thread so a full pipe cannot stall the child while we wait.
+    let mut pipe = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        pipe.read_to_end(&mut out).map(|_| out)
+    });
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if start.elapsed() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    let out = reader.join().ok()?.ok()?;
+    status
+        .filter(std::process::ExitStatus::success)
+        .map(|_| out)
 }
 
 /// How long [`volume_identity`] reuses an answer.

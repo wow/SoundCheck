@@ -79,3 +79,32 @@ fn the_system_reports_a_volume_with_free_space() {
     let file_meta = std::fs::metadata(&path).expect("metadata");
     assert_eq!(v.id, file_meta.dev());
 }
+
+#[test]
+fn a_command_past_its_deadline_is_killed_and_gives_nothing() {
+    let start = std::time::Instant::now();
+    let mut slow = std::process::Command::new("/bin/sleep");
+    slow.arg("10");
+    assert_eq!(
+        run_with_deadline(slow, std::time::Duration::from_millis(200)),
+        None
+    );
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(3),
+        "killed promptly"
+    );
+
+    let mut quick = std::process::Command::new("/bin/echo");
+    quick.arg("VolumeUUID");
+    assert_eq!(
+        run_with_deadline(quick, std::time::Duration::from_secs(5)).as_deref(),
+        Some(&b"VolumeUUID\n"[..])
+    );
+
+    // A command that fails gives nothing either.
+    let failing = std::process::Command::new("/usr/bin/false");
+    assert_eq!(
+        run_with_deadline(failing, std::time::Duration::from_secs(5)),
+        None
+    );
+}
