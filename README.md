@@ -4,12 +4,16 @@
 
 SoundCheck is a free, open-source desktop app for DJs and producers. Drop a folder, see what every track needs, fix the few grids that are wrong, and export files that rekordbox, Serato and Traktor agree with.
 
-> **Status: under construction.** This repository holds the project skeleton. The first usable release is `v0.1.0`; nothing here processes audio yet. Watch the releases page or the changelog.
+> **Status: in development, no usable release yet.** What works today, from source:
+> - **The app** analyses a dropped library (loudness, BPM, meter and bar 1, with a Needs-review queue) and opens any track in a grid view to inspect and fix its grid while a click plays along. It does not write files yet.
+> - **`sc-cli apply`** already changes WAV, AIFF and FLAC files: gain and an optional head trim, every other chunk, block and tag carried byte for byte, verified, with a backup in `~/Music/SoundCheck Backups` and `sc-cli undo`.
+>
+> Exporting from the app, the rekordbox XML and MP3 output come next. The first pre-release, `v0.1.0-alpha.1`, follows once exported files pass rekordbox 7's own analysis; `v0.1.0` is the first release for everyone. Watch the releases page or the changelog.
 
 ## What v0.1 will do
 
 - **Same loudness**: every track lands on one persisted DJ target (measured on the loud parts of the track, not the intro) or on a streaming target (integrated loudness). Gain only. When the true-peak ceiling would be hit, the row says "Short by X LU" instead of squashing the sound.
-- **Fits the grid**: beats, downbeats and an exact two-decimal BPM, with a static grid you can inspect and fix in seconds (anchor, nudge, BPM, half/double, which beat is beat 1). Odd meters such as 9/8 and 6/8 are recognised and shown with their grouping. Files are cut so beat 1 is the first sample, and a per-batch rekordbox XML carries the grid.
+- **Fits the grid**: beats, downbeats and an exact two-decimal BPM, with a static grid you can inspect and fix in seconds (anchor, nudge, BPM, half/double, which beat is beat 1). Odd meters such as 9/8 and 6/8 are recognised and shown with their grouping. For tracks whose tempo changes, the grid can be fitted to the start. In **Prepare** mode (new tracks) lossless files are cut so beat 1 is the first sample; in **Library** mode (tracks already in a DJ app, with cue points) a file's length never changes. A per-batch rekordbox XML carries the grid.
 - **Nothing lost**: every ID3, Vorbis, RIFF and AIFF block, cover art and DJ-app cue blob is carried byte for byte and verified after writing. Originals are backed up and every change can be reverted. Files are never renamed.
 - Formats: WAV, AIFF, FLAC and MP3 in and out (MP3 loudness through the lossless global-gain patch, no re-encode); M4A, AAC, ALAC, Ogg and Opus are analysed only.
 - A headless `sc-cli` that prints exactly the numbers the app shows.
@@ -20,7 +24,7 @@ No limiter or compression, no EQ, no "enhancement", no pitch correction, no warp
 
 ## Building from source
 
-Requires a stable Rust toolchain, Node 22+ and pnpm 10+. On macOS, Xcode command line tools.
+Requires a stable Rust toolchain, Node 22+ and pnpm 11+. On macOS, Xcode command line tools.
 
 ```
 git clone https://github.com/wow/SoundCheck && cd SoundCheck
@@ -30,8 +34,11 @@ pnpm install
 ./scripts/verify.sh           # fmt, clippy, tests, typecheck, vitest
 pnpm tauri dev                # run the app
 pnpm dev:mock                 # the UI alone in a browser, with synthetic tracks (open /?demo=1)
-cargo run --release -p sc-cli -- plan <files>            # what processing would do to each file
 cargo run --release -p sc-cli -- analyze <file>          # loudness, BPM, meter and bar 1
+cargo run --release -p sc-cli -- plan <files>            # what processing would do to each file
+cargo run --release -p sc-cli -- apply <files> --gain-db -3   # change files (backup first; --out <dir> for copies)
+cargo run --release -p sc-cli -- undo <files>            # put the previous version back
+cargo run --release -p sc-cli -- journal                 # recorded changes; `recover` finishes interrupted ones
 cargo run --release -p sc-cli -- bench <file>            # speed of each analysis stage
 ```
 
