@@ -34,7 +34,7 @@ fn folders_are_walked_in_natural_order_without_hidden_files_links_or_duplicates(
         root.join("Track 10.wav"),
         root.join("notes.txt"),
     ];
-    let files = collect_audio_files(&dropped);
+    let files = collect_audio_files(&dropped, None);
     let names: Vec<String> = files
         .iter()
         .map(|p| p.strip_prefix(&root).unwrap().display().to_string())
@@ -51,12 +51,47 @@ fn folders_are_walked_in_natural_order_without_hidden_files_links_or_duplicates(
 }
 
 #[test]
+fn nothing_in_the_backup_root_is_listed() {
+    let dir = tempfile::tempdir().unwrap();
+    let music = dir.path().join("Music");
+    let backups = music.join("SoundCheck Backups");
+    let day = backups.join("2026-10-07/Macintosh HD/Users/me/Music");
+    std::fs::create_dir_all(&day).unwrap();
+    common::tone_wav(&music, "Track.wav", 0.5, 0.1);
+    let backup = common::tone_wav(&day, "Track.wav", 0.5, 0.1);
+
+    // Links into the backup root: one dropped directly, one inside a walked folder.
+    let elsewhere = dir.path().join("Elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let file_link = elsewhere.join("Alias.wav");
+    std::os::unix::fs::symlink(&backup, &file_link).unwrap();
+    std::os::unix::fs::symlink(&day, elsewhere.join("Backups alias")).unwrap();
+
+    // A folder above the backup root, the root itself, a folder and a file inside it, links.
+    let dropped = vec![
+        music.clone(),
+        backups.clone(),
+        day.clone(),
+        backup,
+        file_link,
+        elsewhere,
+    ];
+    let files = collect_audio_files(&dropped, Some(&backups));
+    assert_eq!(files, vec![music.join("Track.wav")]);
+    // Without a backup root everything is listed.
+    assert_eq!(collect_audio_files(&[music], None).len(), 2);
+}
+
+#[test]
 fn a_symlinked_file_dropped_directly_is_followed() {
     let dir = tempfile::tempdir().unwrap();
     let real = common::tone_wav(dir.path(), "real.wav", 0.5, 0.1);
     let link = dir.path().join("alias.wav");
     std::os::unix::fs::symlink(&real, &link).unwrap();
-    assert_eq!(collect_audio_files(std::slice::from_ref(&link)), vec![link]);
+    assert_eq!(
+        collect_audio_files(std::slice::from_ref(&link), None),
+        vec![link]
+    );
 }
 
 #[test]

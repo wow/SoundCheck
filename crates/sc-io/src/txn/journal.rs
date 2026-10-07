@@ -30,7 +30,7 @@ pub const JOURNAL_FILE: &str = "journal.jsonl";
 /// Folder of the per-transaction lock files in the backup root.
 const LOCK_DIR: &str = "locks";
 
-/// A transaction's state, in the order the steps happen; the last three end a transaction.
+/// A transaction's state, in the order the steps happen; the last four end a transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum State {
@@ -53,6 +53,9 @@ pub enum State {
     Failed,
     /// Finished or rolled back by [`super::recover`] after a crash.
     Recovered,
+    /// Given up by the user ([`super::forget`]) while it was pending: recovery no longer
+    /// touches it, and every file it left (the backup, a temp file) is kept where it is.
+    Forgotten,
 }
 
 impl State {
@@ -69,13 +72,17 @@ impl State {
             Self::Done => "done",
             Self::Failed => "failed",
             Self::Recovered => "recovered",
+            Self::Forgotten => "forgotten",
         }
     }
 
     /// Whether the transaction is over.
     #[must_use]
     pub fn is_final(self) -> bool {
-        matches!(self, Self::Done | Self::Failed | Self::Recovered)
+        matches!(
+            self,
+            Self::Done | Self::Failed | Self::Recovered | Self::Forgotten
+        )
     }
 }
 
@@ -349,10 +356,15 @@ impl Journal {
     /// [`Error::Io`] naming `root`.
     pub fn open(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root.join(LOCK_DIR)).map_err(|e| io_err(root, e))?;
-        Ok(Self {
+        Ok(Self::at(root))
+    }
+
+    /// The journal in `root`, for reading only: nothing is created.
+    pub fn at(root: &Path) -> Self {
+        Self {
             root: root.to_path_buf(),
             path: root.join(JOURNAL_FILE),
-        })
+        }
     }
 
     /// The backup root.
@@ -428,9 +440,44 @@ impl Journal {
         Ok(self.entries()?.into_iter().find(|e| e.txn == txn))
     }
 
-    fn lock_path(&self, txn: &str) -> PathBuf {
-        self.root.join(LOCK_DIR).join(format!("{txn}.lock"))
+    /// The lock file of `txn`, always inside the lock folder.
+    ///
+    /// # Errors
+    /// [`Error::InvalidArgument`] when `txn` could not name a file there (see
+    /// [`is_safe_lock_name`]).
+    fn lock_path(&self, txn: &str) -> Result<PathBuf> {
+        if !is_safe_lock_name(txn) {
+            return Err(Error::InvalidArgument(format!(
+                "{txn:?} is not a valid change id"
+            )));
+        }
+        Ok(self.root.join(LOCK_DIR).join(format!("{txn}.lock")))
     }
+}
+
+/// Whether `id` has the shape of the ids SoundCheck generates: `<seconds in hex>-<process
+/// id>-<counter>`, e.g. `6ac5b4f4-75821-0`.
+#[must_use]
+pub fn is_txn_id(id: &str) -> bool {
+    let parts: Vec<&str> = id.split('-').collect();
+    id.len() <= 64
+        && parts.len() == 3
+        && !parts[0].is_empty()
+        && parts[0]
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && parts[1..]
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Whether `name` can name a lock file without leaving the lock folder: 1 to 64 ASCII
+/// letters, digits, `-` and `_` (so no separator, no `..`).
+pub(crate) fn is_safe_lock_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// How often a waiter tries the target lock again (and looks at its cancel flag).
@@ -452,7 +499,25 @@ impl TargetLock {
     /// # Errors
     /// [`Error::Cancelled`]; [`Error::Io`] naming the lock file.
     pub fn acquire(journal: &Journal, target: &Path, cancel: &AtomicBool) -> Result<Self> {
+        loop {
+            if let Some(lock) = Self::try_acquire(journal, target)? {
+                return Ok(lock);
+            }
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Error::Cancelled);
+            }
+            std::thread::sleep(LOCK_POLL);
+        }
+    }
+
+    /// Takes the lock on `target` if nobody holds it; `None` when a transaction on that file
+    /// is running.
+    ///
+    /// # Errors
+    /// [`Error::Io`] naming the lock file.
+    pub fn try_acquire(journal: &Journal, target: &Path) -> Result<Option<Self>> {
         use std::os::unix::fs::MetadataExt;
+        // The name is a hash, so any target path gives a file inside the lock folder.
         let key = blake3::hash(target.as_os_str().as_encoded_bytes());
         let path = journal
             .root
@@ -465,29 +530,22 @@ impl TargetLock {
                 .truncate(false)
                 .open(&path)
                 .map_err(|e| io_err(&path, e))?;
-            loop {
-                match file.try_lock() {
-                    Ok(()) => break,
-                    Err(std::fs::TryLockError::WouldBlock) => {
-                        if cancel.load(Ordering::Relaxed) {
-                            return Err(Error::Cancelled);
-                        }
-                        std::thread::sleep(LOCK_POLL);
-                    }
-                    Err(std::fs::TryLockError::Error(e)) => return Err(io_err(&path, e)),
-                }
+            match file.try_lock() {
+                Ok(()) => {}
+                Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
+                Err(std::fs::TryLockError::Error(e)) => return Err(io_err(&path, e)),
             }
             // Still the file at `path`, not one its last holder removed meanwhile?
             let held = file.metadata().map_err(|e| io_err(&path, e))?;
             let linked = std::fs::metadata(&path)
                 .is_ok_and(|m| m.dev() == held.dev() && m.ino() == held.ino());
             if linked {
-                return Ok(Self {
+                return Ok(Some(Self {
                     _held: TxnLock {
                         file: Some(file),
                         path,
                     },
-                });
+                }));
             }
         }
     }
@@ -541,9 +599,10 @@ impl TxnLock {
     /// holds it (the transaction is running).
     ///
     /// # Errors
-    /// [`Error::Io`] naming the lock file.
+    /// [`Error::InvalidArgument`] for an id that cannot name a lock file; [`Error::Io`] naming
+    /// the lock file.
     pub fn try_acquire(journal: &Journal, txn: &str) -> Result<Option<Self>> {
-        let path = journal.lock_path(txn);
+        let path = journal.lock_path(txn)?;
         let file = OpenOptions::new()
             .write(true)
             .create(true)

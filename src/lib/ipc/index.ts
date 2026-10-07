@@ -3,6 +3,7 @@ import type { AnalyzeRequest } from './generated/AnalyzeRequest';
 import type { DecideSettings } from './generated/DecideSettings';
 import type { FileEntry } from './generated/FileEntry';
 import type { JobEvent } from './generated/JobEvent';
+import type { RecoveryStatus } from './generated/RecoveryStatus';
 import type { Replan } from './generated/Replan';
 import type { SessionSnapshot } from './generated/SessionSnapshot';
 
@@ -25,7 +26,11 @@ export type { JobEvent } from './generated/JobEvent';
 export type { JobStage } from './generated/JobStage';
 export type { LoudnessMode } from './generated/LoudnessMode';
 export type { Plan } from './generated/Plan';
+export type { PendingChange } from './generated/PendingChange';
 export type { Reason } from './generated/Reason';
+export type { RecoveredChange } from './generated/RecoveredChange';
+export type { RecoveryOutcome } from './generated/RecoveryOutcome';
+export type { RecoveryStatus } from './generated/RecoveryStatus';
 export type { ReviewReason } from './generated/ReviewReason';
 export type { RowAnalysis } from './generated/RowAnalysis';
 export type { RowGrid } from './generated/RowGrid';
@@ -81,6 +86,14 @@ export function restoreSession(): Promise<SessionSnapshot> {
 /** The median S-P95 of the analysed rows, or null before any row has one. */
 export function calibrationTarget(): Promise<number | null> {
   return invoke<number | null>('calibration_target');
+}
+
+/**
+ * What the crash recovery run at start found: file changes a crash interrupted, finished or
+ * rolled back, and those left pending; `running` until it ends.
+ */
+export function recoveryStatus(): Promise<RecoveryStatus> {
+  return invoke<RecoveryStatus>('recovery_status');
 }
 
 export * from './grid';

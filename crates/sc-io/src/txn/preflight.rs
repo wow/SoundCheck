@@ -141,15 +141,43 @@ pub(crate) fn nearest_existing(path: &Path) -> Result<(PathBuf, PathBuf)> {
 /// # Errors
 /// [`Error::Io`] when neither path resolves.
 pub fn is_under_backup_root(path: &Path, root: &Path) -> Result<bool> {
+    is_in_resolved_backup_root(path, &resolve_backup_root(root)?)
+}
+
+/// The backup root `root` (which may not exist yet) as the file system names it, for
+/// [`is_in_resolved_backup_root`]: a scanner resolves it once, not once per path.
+///
+/// # Errors
+/// [`Error::Io`] when no folder above it resolves.
+pub fn resolve_backup_root(root: &Path) -> Result<PathBuf> {
     let (base, below) = nearest_existing(root)?;
-    let root = base.join(below);
+    Ok(base.join(below))
+}
+
+/// Whether `path` (resolved here) lies in `resolved_root`, a root from
+/// [`resolve_backup_root`].
+///
+/// # Errors
+/// [`Error::Io`] when `path` does not resolve.
+pub fn is_in_resolved_backup_root(path: &Path, resolved_root: &Path) -> Result<bool> {
     let path = if let Ok(p) = real_path(path) {
         p
     } else {
         let (base, below) = nearest_existing(path)?;
         base.join(below)
     };
-    Ok(path.starts_with(&root))
+    Ok(path.starts_with(resolved_root))
+}
+
+/// The path a transaction on `path` keys its journal entry and lock on: the file system's own
+/// name for it (case and Unicode form as stored, links in its folders followed; a link itself is
+/// kept). Two spellings of one file give the same path, so callers can find a file given twice.
+///
+/// # Errors
+/// [`Error::Io`] when it does not resolve; [`Error::InvalidArgument`] for a path that names no
+/// file or is not UTF-8.
+pub fn resolve_file(path: &Path) -> Result<PathBuf> {
+    Ok(resolve(path)?.0)
 }
 
 /// [`Error::InvalidArgument`] when `path` lies in the backup root.
@@ -295,7 +323,13 @@ pub(crate) fn source(path: PathBuf, name: OsString, req: &RenderRequest) -> Resu
             other + audio + 64,
         )
     } else if magic.starts_with(&flac::MARKER) || magic.starts_with(b"ID3") {
-        let layout = flac::read_layout(&mut file, &path)?;
+        let layout = match flac::read_layout(&mut file, &path) {
+            // ID3v2 tags in front of something else (an MP3): not a FLAC file at all.
+            Err(Error::UnsupportedFormat { .. }) if !magic.starts_with(&flac::MARKER) => {
+                return Err(unsupported(path));
+            }
+            other => other?,
+        };
         let info = &layout.streaminfo;
         let frames = match info.total_samples {
             // Unknown total: bounded by the source's own size.
@@ -310,10 +344,7 @@ pub(crate) fn source(path: PathBuf, name: OsString, req: &RenderRequest) -> Resu
             - layout.frames_limit();
         (Container::Flac, estimate)
     } else {
-        return Err(Error::UnsupportedFormat {
-            path,
-            detail: "only WAV, RF64, AIFF, AIFF-C and FLAC files are written".into(),
-        });
+        return Err(unsupported(path));
     };
     Ok(Source {
         path,
@@ -321,6 +352,42 @@ pub(crate) fn source(path: PathBuf, name: OsString, req: &RenderRequest) -> Resu
         container,
         output_estimate,
     })
+}
+
+/// The kind of tag a file's tag edits go into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagFamily {
+    /// `ID3v2` frames in the `id3 `/`ID3 ` chunk of a WAV or AIFF file.
+    Id3,
+    /// Fields of a FLAC file's Vorbis comment.
+    Vorbis,
+}
+
+/// Which tag family the file at `path` uses, from its first bytes (the render decides the rest).
+///
+/// # Errors
+/// [`Error::UnsupportedFormat`] for anything but WAV, RF64, AIFF, AIFF-C and FLAC (a file
+/// starting with an `ID3v2` tag is taken for FLAC here; the render refuses it if it is not);
+/// [`Error::Io`].
+pub fn tag_family(path: &Path) -> Result<TagFamily> {
+    let mut file = File::open(path).map_err(|e| io_err(path, e))?;
+    let mut magic = [0_u8; 12];
+    let got = read_up_to(&mut file, &mut magic).map_err(|e| io_err(path, e))?;
+    let magic = &magic[..got];
+    if is_iff(magic) {
+        Ok(TagFamily::Id3)
+    } else if magic.starts_with(&flac::MARKER) || magic.starts_with(b"ID3") {
+        Ok(TagFamily::Vorbis)
+    } else {
+        Err(unsupported(path.to_path_buf()))
+    }
+}
+
+fn unsupported(path: PathBuf) -> Error {
+    Error::UnsupportedFormat {
+        path,
+        detail: "only WAV, RF64, AIFF, AIFF-C and FLAC files are written".into(),
+    }
 }
 
 fn is_iff(magic: &[u8]) -> bool {

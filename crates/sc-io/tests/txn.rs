@@ -410,6 +410,10 @@ fn undo_walks_back_through_two_changes_and_refuses_an_edited_file() {
 
     let undone = txn::undo(&path, &lib.backups).expect("undo 2");
     assert_eq!(undone.undone, second.txn);
+    assert_eq!(
+        undone.earlier_changes, 1,
+        "the first change is still in effect"
+    );
     assert_eq!(blake3_of(&path), first.output_blake3);
     assert_eq!(
         undone.sidecar,
@@ -456,7 +460,8 @@ fn undo_walks_back_through_two_changes_and_refuses_an_edited_file() {
         first.output_blake3,
         "the render is deterministic"
     );
-    txn::undo(&path, &lib.backups).expect("undo 1");
+    let last = txn::undo(&path, &lib.backups).expect("undo 1");
+    assert_eq!(last.earlier_changes, 0);
     assert_eq!(blake3_of(&path), original);
     assert!(!sidecar_path(&path).exists());
 }

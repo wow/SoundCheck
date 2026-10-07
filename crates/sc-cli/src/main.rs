@@ -1,10 +1,15 @@
-//! Headless SoundCheck: the same analysis the app shows, printed as text or JSON.
+//! Headless SoundCheck: the same analysis the app shows, printed as text or JSON, and the
+//! file changes (apply, undo) with their journal and crash recovery.
 #![forbid(unsafe_code)]
 
+mod apply;
 mod eval;
+mod journal;
 mod labels;
 mod plan;
+mod refusal;
 mod report;
+mod vocab;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -166,6 +171,17 @@ enum Command {
         #[command(flatten)]
         analysis: AnalysisArgs,
     },
+    /// Change files' level (and optionally cut their start), verified, losing nothing else: in
+    /// place after backing up the original (default), or as copies with --out. Runs crash
+    /// recovery first. WAV, AIFF and FLAC.
+    Apply(apply::ApplyArgs),
+    /// Put back the original of each file's newest change, verified.
+    Undo(apply::UndoArgs),
+    /// List the recorded changes, newest first, or give up on a pending one (--forget).
+    Journal(journal::JournalArgs),
+    /// Finish or roll back changes a crash interrupted and list those left pending (exit code 3
+    /// when any is).
+    Recover(journal::RecoverArgs),
     /// Inspect or empty the analysis cache.
     Cache {
         #[command(subcommand)]
@@ -289,6 +305,15 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Command::Apply(args) => exit_with_failures(apply::run_apply(args)),
+        Command::Undo(args) => exit_with_failures(apply::run_undo(&args)),
+        Command::Journal(args) => exit_with_failures(journal::run_journal(&args)),
+        Command::Recover(args) => {
+            if !journal::run_recover(&args)? {
+                std::process::exit(journal::EXIT_PENDING);
+            }
+            Ok(())
+        }
         Command::Cache { action } => cache_command(action),
     }
 }
@@ -321,6 +346,12 @@ fn decide_settings(
     }
     decide.bpm_range = (Bpm(analysis.bpm_range.0), Bpm(analysis.bpm_range.1));
     decide
+}
+
+/// Passes an error on, else exits with [`EXIT_FAILED`] when any file failed.
+fn exit_with_failures(failed: anyhow::Result<usize>) -> anyhow::Result<()> {
+    exit_if_failed(failed?);
+    Ok(())
 }
 
 /// Exits with [`EXIT_FAILED`] when any file failed.

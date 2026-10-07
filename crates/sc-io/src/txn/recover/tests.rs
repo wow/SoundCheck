@@ -247,3 +247,48 @@ fn a_file_at_the_backup_name_that_is_not_the_original_is_kept() {
     );
     assert!(!s.backup.exists(), "this change's own backup is removed");
 }
+
+#[test]
+fn a_file_another_change_holds_is_left_busy() {
+    let s = scene();
+    std::fs::write(&s.target, ORIGINAL).expect("original in place");
+    std::fs::write(&s.temp, OUTPUT).expect("temp");
+    // A new change of the same file is running: it holds the file's lock.
+    let newer = TargetLock::try_acquire(&s.journal, &s.target)
+        .expect("io")
+        .expect("free");
+    let r = recover(&s.root).expect("read");
+    assert!(r.recovered.is_empty(), "{r:?}");
+    assert_eq!(r.pending.len(), 1);
+    assert!(r.pending[0].reason.starts_with("busy"), "{r:?}");
+    assert!(s.temp.exists() && s.backup.exists(), "nothing touched");
+    assert!(
+        TargetLock::try_acquire(&s.journal, &s.target)
+            .expect("io")
+            .is_none(),
+        "still held"
+    );
+    drop(newer);
+    assert_eq!(recover(&s.root).expect("now").recovered.len(), 1);
+    assert!(!s.temp.exists());
+}
+
+#[test]
+fn an_entry_whose_id_cannot_name_a_lock_stays_pending() {
+    let s = scene();
+    let mut planned = Line::new("../../escape", State::Planned);
+    planned.kind = Some(TxnKind::InPlace);
+    planned.path = Some(s.target.clone());
+    planned.source = Some(s.target.clone());
+    planned.temp = Some(s.temp.clone());
+    s.journal.append(&planned).expect("planned");
+    std::fs::write(&s.target, ORIGINAL).expect("original in place");
+    let r = recover(&s.root).expect("the others still run");
+    assert_eq!(r.recovered.len(), 1, "{r:?}");
+    assert_eq!(r.pending.len(), 1, "{r:?}");
+    assert!(
+        r.pending[0].reason.contains("not a valid change id"),
+        "{r:?}"
+    );
+    assert!(!s.root.join("escape.lock").exists());
+}

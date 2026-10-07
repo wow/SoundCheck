@@ -58,13 +58,16 @@
 //! FAT volumes, which have no exclusive rename, through an empty placeholder created
 //! exclusively). [`recover`] finishes or rolls back transactions a crash interrupted and leaves
 //! unreachable ones (an unmounted volume) pending (call it at start and before every batch);
-//! [`Transaction::undo`] puts the newest backup of a file back through the same steps. With
+//! [`forget`] ends a pending one the user gives up on (state `forgotten`, every file it left
+//! kept), so recovery skips it from then on. [`Transaction::undo`] puts the newest backup of a
+//! file back through the same steps. With
 //! the `crash-test` feature (tests only) the process aborts at the crash point named by
 //! `SC_TEST_CRASH_AFTER_STEP` (see [`CRASH_ENV`]).
 
 mod apply;
 pub(crate) mod crash;
 mod finish;
+mod forget;
 mod fsx;
 pub mod journal;
 pub(crate) mod meta;
@@ -84,9 +87,13 @@ use sc_core::{Error, RenderRequest, Result};
 use crate::render::RenderReport;
 
 pub use crash::CRASH_ENV;
+pub use forget::{Forgotten, forget};
 pub use fsx::{TEMP_MARKER, hex};
-pub use journal::{Entry, JOURNAL_FILE, Outcome, State, TxnKind};
-pub use preflight::{SPACE_MARGIN_BYTES, is_under_backup_root};
+pub use journal::{Entry, JOURNAL_FILE, Outcome, State, TxnKind, is_txn_id};
+pub use preflight::{
+    SPACE_MARGIN_BYTES, TagFamily, is_in_resolved_backup_root, is_under_backup_root,
+    resolve_backup_root, resolve_file, tag_family,
+};
 pub use recover::{Pending, Recovered, RecoveryReport, recover};
 pub use sidecar::{SIDECAR_SUFFIX, sidecar_path};
 pub use undo::{SidecarAfterUndo, UndoReport};
@@ -304,7 +311,7 @@ pub fn journal_entries(backup_root: &Path) -> Result<Vec<Entry>> {
     if !backup_root.is_dir() {
         return Ok(Vec::new());
     }
-    journal::Journal::open(backup_root)?.entries()
+    journal::Journal::at(backup_root).entries()
 }
 
 #[cfg(test)]

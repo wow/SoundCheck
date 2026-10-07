@@ -8,14 +8,24 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use sc_core::Lufs;
 use sc_core::analysis::AnalysisSettings;
-use sc_core::ipc::{AnalyzeRequest, FileEntry, IpcError, JobEvent, JobId, Replan, SessionSnapshot};
+use sc_core::ipc::{
+    AnalyzeRequest, FileEntry, IpcError, JobEvent, JobId, RecoveryStatus, Replan, SessionSnapshot,
+};
 use sc_core::plan::{DecideSettings, check_bpm_range};
 use sc_engine::player::Player;
 use sc_engine::{
-    BatchSettings, CancelToken, Session, collect_audio_files, default_workers, probe_all, run_job,
+    BatchSettings, CancelToken, Session, collect_audio_files, default_workers, probe_all,
+    recover_at_start, run_job,
 };
 use sc_io::cache::Cache;
 use sc_io::edits::EditStore;
+use sc_io::txn::default_backup_root;
+
+fn no_backup_folder() -> RecoveryStatus {
+    RecoveryStatus::Skipped {
+        reason: "there is no backup folder (no home folder found)".into(),
+    }
+}
 
 /// State shared by every command.
 #[derive(Clone)]
@@ -35,6 +45,10 @@ pub(crate) struct Inner {
     pub(crate) view: Mutex<Option<crate::grid_view::OpenTrack>>,
     /// The click player, started with the first track opened.
     pub(crate) player: Mutex<Option<Player>>,
+    /// Where SoundCheck keeps its backups; nothing in it is ever added as a row.
+    backup_root: Option<PathBuf>,
+    /// What the crash recovery run at start found.
+    recovery: Mutex<RecoveryStatus>,
     workers: usize,
 }
 
@@ -42,8 +56,22 @@ impl Shell {
     /// A shell with an empty session deciding with the DJ defaults (the UI sends its persisted
     /// settings at start), analysing on `workers` threads with `cache` and applying the grid
     /// edits saved in `edits`.
+    #[cfg(test)]
     #[must_use]
     pub fn new(cache: Option<Cache>, edits: Option<EditStore>, workers: usize) -> Self {
+        Self::with_backup_root(cache, edits, workers, None)
+    }
+
+    /// A shell with an empty session deciding with the DJ defaults, analysing on `workers`
+    /// threads with `cache`, applying the grid edits saved in `edits`, and never adding a file
+    /// in `backup_root` as a row.
+    #[must_use]
+    pub fn with_backup_root(
+        cache: Option<Cache>,
+        edits: Option<EditStore>,
+        workers: usize,
+        backup_root: Option<PathBuf>,
+    ) -> Self {
         let session = Session::new(DecideSettings::dj());
         let session = match &edits {
             Some(store) => session.with_edits(store.clone()),
@@ -58,20 +86,71 @@ impl Shell {
                 analysis: Mutex::new(AnalysisSettings::default()),
                 view: Mutex::new(None),
                 player: Mutex::new(None),
+                recovery: Mutex::new(match &backup_root {
+                    Some(_) => RecoveryStatus::Running,
+                    None => no_backup_folder(),
+                }),
+                backup_root,
                 workers,
             }),
         }
     }
 
-    /// The shell the app runs: the user's analysis cache and saved grid edits, and the default
-    /// worker count.
+    /// The shell the app runs: the user's analysis cache and saved grid edits, the default
+    /// worker count, and the user's backup root kept out of the rows.
     #[must_use]
     pub fn for_app() -> Self {
-        Self::new(
+        Self::with_backup_root(
             Cache::default_dir().ok().map(Cache::open),
             EditStore::default_dir().ok().map(EditStore::open),
             default_workers(),
+            default_backup_root().ok(),
         )
+    }
+
+    /// Recovers, on a background thread so the window opens at once, the file changes a crash
+    /// interrupted (see `sc_engine::recover_at_start`, which logs what it did); the result is
+    /// kept for [`Shell::recovery_status`]. A failure never stops the app. Returns the thread,
+    /// or `None` without a backup folder.
+    pub(crate) fn recover_in_background(&self) -> Option<std::thread::JoinHandle<()>> {
+        let Some(root) = self.inner.backup_root.clone() else {
+            tracing::warn!("no backup folder; recovery skipped");
+            return None;
+        };
+        let inner = Arc::clone(&self.inner);
+        let spawned = std::thread::Builder::new()
+            .name("sc-recover".into())
+            .spawn(move || {
+                let status = recover_at_start(&root);
+                tracing::info!(status = ?status, "startup recovery finished");
+                *inner
+                    .recovery
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = status;
+            });
+        match spawned {
+            Ok(handle) => Some(handle),
+            Err(e) => {
+                tracing::warn!(error = %e, "recovery thread not started");
+                *self.recovery() = RecoveryStatus::Failed {
+                    message: format!("the recovery thread did not start: {e}"),
+                };
+                None
+            }
+        }
+    }
+
+    /// What the start-up recovery found (`Running` until it ends).
+    #[must_use]
+    pub fn recovery_status(&self) -> RecoveryStatus {
+        self.recovery().clone()
+    }
+
+    fn recovery(&self) -> std::sync::MutexGuard<'_, RecoveryStatus> {
+        self.inner
+            .recovery
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     pub(crate) fn session(&self) -> std::sync::MutexGuard<'_, Session> {
@@ -93,7 +172,7 @@ impl Shell {
     #[must_use]
     pub fn expand(&self, paths: Vec<String>) -> Vec<FileEntry> {
         let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-        let files = collect_audio_files(&paths);
+        let files = collect_audio_files(&paths, self.inner.backup_root.as_deref());
         let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
         let infos = probe_all(&files, threads);
         self.session().add(files.into_iter().zip(infos).collect())

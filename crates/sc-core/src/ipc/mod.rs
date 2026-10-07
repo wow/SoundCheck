@@ -4,11 +4,13 @@
 //! type here has a byte budget that tests enforce. `#[ts(export)]` writes the TypeScript bindings
 //! into `src/lib/ipc/generated/` when `cargo test -p sc-core` runs.
 
+mod recovery;
 mod track;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+pub use recovery::{PendingChange, RecoveredChange, RecoveryOutcome, RecoveryStatus};
 pub use track::{FitChoice, GridFitHeader, RowUpdate, TrackEvent, TrackOpened};
 
 use crate::analysis::{AnalysisRecord, AnalysisSettings, Confidence, Reason, Verdict};
@@ -410,6 +412,10 @@ pub enum IpcErrorKind {
     NothingToUndo,
     /// See [`crate::Error::AlreadyExists`].
     AlreadyExists,
+    /// See [`crate::Error::ListedTwice`].
+    ListedTwice,
+    /// See [`crate::Error::SameOutputName`].
+    SameOutputName,
 }
 
 /// An error crossing IPC: a class the UI can branch on plus a human-readable message.

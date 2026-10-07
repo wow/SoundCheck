@@ -27,6 +27,8 @@ tauri-plugin-store = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+directories = { workspace = true }
 
 [dev-dependencies]
 sc-core = { workspace = true, features = ["testsig"] }

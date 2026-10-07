@@ -4504,6 +4504,7 @@ dependencies = [
 name = "soundcheck-desktop"
 version = "0.0.3"
 dependencies = [
+ "directories",
  "hound",
  "sc-core",
  "sc-engine",
@@ -4517,6 +4518,7 @@ dependencies = [
  "tauri-plugin-store",
  "tempfile",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

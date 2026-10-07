@@ -178,3 +178,53 @@ fn a_cleared_list_takes_the_same_files_again() {
 fn cancelling_an_unknown_job_says_so() {
     assert!(!Shell::new(None, None, 1).cancel(42));
 }
+
+#[test]
+fn files_in_the_backup_folder_never_become_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let backups = dir.path().join("SoundCheck Backups");
+    std::fs::create_dir_all(backups.join("2026-10-07")).unwrap();
+    tone_wav(dir.path(), "a.wav", 0.1);
+    tone_wav(&backups.join("2026-10-07"), "a.wav", 0.1);
+    let shell = Shell::with_backup_root(None, None, 1, Some(backups));
+    let rows = shell.expand(vec![dir.path().display().to_string()]);
+    assert_eq!(rows.len(), 1);
+}
+
+#[test]
+fn startup_recovery_rolls_back_an_interrupted_change_and_keeps_the_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let backups = base.join("backups");
+    std::fs::create_dir_all(&backups).unwrap();
+    tone_wav(&base, "a.wav", 0.1);
+    // What a crash right after the change was planned leaves: its line and a temp file.
+    let temp = base.join(".a.wav.soundcheck-tmp-6ac5b4f4-1-0");
+    std::fs::write(&temp, b"half a render").unwrap();
+    let line = serde_json::json!({
+        "txn": "6ac5b4f4-1-0", "state": "planned", "at": "2026-10-07T10:00:00Z",
+        "kind": "in_place", "path": base.join("a.wav"), "source": base.join("a.wav"),
+        "temp": temp,
+    });
+    std::fs::write(backups.join("journal.jsonl"), format!("{line}\n")).unwrap();
+
+    let shell = Shell::with_backup_root(None, None, 1, Some(backups));
+    let handle = shell.recover_in_background().expect("a recovery thread");
+    handle.join().expect("recovery does not panic");
+    match shell.recovery_status() {
+        RecoveryStatus::Finished { recovered, pending } => {
+            assert_eq!(recovered.len(), 1, "{recovered:?}");
+            assert_eq!(recovered[0].txn, "6ac5b4f4-1-0");
+            assert_eq!(pending, vec![]);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(!temp.exists(), "rolled back");
+
+    let none = Shell::new(None, None, 1);
+    assert!(none.recover_in_background().is_none());
+    assert!(matches!(
+        none.recovery_status(),
+        RecoveryStatus::Skipped { .. }
+    ));
+}
