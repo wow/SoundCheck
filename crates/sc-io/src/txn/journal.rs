@@ -30,7 +30,7 @@ pub const JOURNAL_FILE: &str = "journal.jsonl";
 /// Folder of the per-transaction lock files in the backup root.
 const LOCK_DIR: &str = "locks";
 
-/// A transaction's state, in the order the steps happen; the last three end a transaction.
+/// A transaction's state, in the order the steps happen; the last four end a transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum State {
@@ -53,6 +53,9 @@ pub enum State {
     Failed,
     /// Finished or rolled back by [`super::recover`] after a crash.
     Recovered,
+    /// Given up by the user ([`super::forget`]) while it was pending: recovery no longer
+    /// touches it, and every file it left (the backup, a temp file) is kept where it is.
+    Forgotten,
 }
 
 impl State {
@@ -69,13 +72,17 @@ impl State {
             Self::Done => "done",
             Self::Failed => "failed",
             Self::Recovered => "recovered",
+            Self::Forgotten => "forgotten",
         }
     }
 
     /// Whether the transaction is over.
     #[must_use]
     pub fn is_final(self) -> bool {
-        matches!(self, Self::Done | Self::Failed | Self::Recovered)
+        matches!(
+            self,
+            Self::Done | Self::Failed | Self::Recovered | Self::Forgotten
+        )
     }
 }
 

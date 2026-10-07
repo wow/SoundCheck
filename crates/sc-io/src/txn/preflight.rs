@@ -295,7 +295,13 @@ pub(crate) fn source(path: PathBuf, name: OsString, req: &RenderRequest) -> Resu
             other + audio + 64,
         )
     } else if magic.starts_with(&flac::MARKER) || magic.starts_with(b"ID3") {
-        let layout = flac::read_layout(&mut file, &path)?;
+        let layout = match flac::read_layout(&mut file, &path) {
+            // ID3v2 tags in front of something else (an MP3): not a FLAC file at all.
+            Err(Error::UnsupportedFormat { .. }) if !magic.starts_with(&flac::MARKER) => {
+                return Err(unsupported(path));
+            }
+            other => other?,
+        };
         let info = &layout.streaminfo;
         let frames = match info.total_samples {
             // Unknown total: bounded by the source's own size.
@@ -310,10 +316,7 @@ pub(crate) fn source(path: PathBuf, name: OsString, req: &RenderRequest) -> Resu
             - layout.frames_limit();
         (Container::Flac, estimate)
     } else {
-        return Err(Error::UnsupportedFormat {
-            path,
-            detail: "only WAV, RF64, AIFF, AIFF-C and FLAC files are written".into(),
-        });
+        return Err(unsupported(path));
     };
     Ok(Source {
         path,
@@ -321,6 +324,13 @@ pub(crate) fn source(path: PathBuf, name: OsString, req: &RenderRequest) -> Resu
         container,
         output_estimate,
     })
+}
+
+fn unsupported(path: PathBuf) -> Error {
+    Error::UnsupportedFormat {
+        path,
+        detail: "only WAV, RF64, AIFF, AIFF-C and FLAC files are written".into(),
+    }
 }
 
 fn is_iff(magic: &[u8]) -> bool {

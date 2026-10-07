@@ -52,7 +52,7 @@ fn row_and_plan(
     cache: &Cache,
     analysis: sc_core::analysis::AnalysisSettings,
 ) -> (RowAnalysis, Plan) {
-    let files: Vec<PathBuf> = collect_audio_files(&[wav.to_path_buf()]);
+    let files: Vec<PathBuf> = collect_audio_files(&[wav.to_path_buf()], None);
     let infos = probe_all(&files, 1);
     let ids: Vec<u32> = {
         let mut s = session.lock().unwrap();

@@ -12,7 +12,7 @@ use sc_core::plan::{DecideSettings, GainPlan};
 use sc_engine::{BatchSettings, CancelToken, Session, collect_audio_files, probe_all, run_job};
 
 fn add(session: &mut Session, paths: &[PathBuf]) -> Vec<u32> {
-    let files = collect_audio_files(paths);
+    let files = collect_audio_files(paths, None);
     let infos = probe_all(&files, 2);
     session
         .add(files.into_iter().zip(infos).collect())

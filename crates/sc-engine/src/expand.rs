@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use sc_core::ipc::FileInfo;
 use sc_core::plan::Codec;
 use sc_io::probe;
+use sc_io::txn::is_under_backup_root;
 use unicode_normalization::UnicodeNormalization;
 
 /// File extensions SoundCheck opens, lower case.
@@ -22,18 +23,32 @@ pub const AUDIO_EXTENSIONS: [&str; 14] = [
 ///
 /// Hidden entries (see [`is_hidden`]) and symbolic links inside folders are skipped; a path
 /// dropped directly is followed. A file reached twice (the same NFC path) appears once.
+/// Nothing in `backup_root` (SoundCheck's own backups of the originals it changed) is listed,
+/// whether dropped directly or reached through a folder above it.
 #[must_use]
-pub fn collect_audio_files(paths: &[PathBuf]) -> Vec<PathBuf> {
+pub fn collect_audio_files(paths: &[PathBuf], backup_root: Option<&Path>) -> Vec<PathBuf> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for path in paths {
+        if in_backups(path, backup_root) {
+            continue;
+        }
         if path.is_dir() {
-            walk(path, &mut seen, &mut out);
+            walk(path, backup_root, &mut seen, &mut out);
         } else if is_audio(path) {
             push_unique(path.clone(), &mut seen, &mut out);
         }
     }
     out
+}
+
+/// Whether `path` lies in the backup root (false when either path cannot be resolved).
+fn in_backups(path: &Path, backup_root: Option<&Path>) -> bool {
+    let inside = backup_root.is_some_and(|root| is_under_backup_root(path, root).unwrap_or(false));
+    if inside {
+        tracing::debug!(path = %path.display(), "skipped: in the backup folder");
+    }
+    inside
 }
 
 /// Probes `files` on up to `workers` threads; the result is in the same order.
@@ -76,7 +91,12 @@ pub fn probe_all(files: &[PathBuf], workers: usize) -> Vec<FileInfo> {
     infos
 }
 
-fn walk(dir: &Path, seen: &mut HashSet<String>, out: &mut Vec<PathBuf>) {
+fn walk(
+    dir: &Path,
+    backup_root: Option<&Path>,
+    seen: &mut HashSet<String>,
+    out: &mut Vec<PathBuf>,
+) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -99,7 +119,11 @@ fn walk(dir: &Path, seen: &mut HashSet<String>, out: &mut Vec<PathBuf>) {
             continue;
         }
         if kind.is_dir() {
-            walk(&path, seen, out);
+            // A folder outside the backup root holds only files outside it (links are not
+            // followed), so the check is made once per folder.
+            if !in_backups(&path, backup_root) {
+                walk(&path, backup_root, seen, out);
+            }
         } else if kind.is_file() && is_audio(&path) {
             push_unique(path, seen, out);
         }

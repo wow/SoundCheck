@@ -223,11 +223,13 @@ async fn player_set_click(shell: State<'_, Shell>, on: bool) -> Result<(), IpcEr
 /// If the Tauri runtime fails to start, which is unrecoverable.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let shell = Shell::for_app();
+    shell.recover_in_background();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .manage(Shell::for_app())
+        .manage(shell)
         .invoke_handler(tauri::generate_handler![
             app_version,
             expand_paths,

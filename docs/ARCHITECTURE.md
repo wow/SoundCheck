@@ -6,8 +6,9 @@ Status: v0.1 architecture fixed 2026-09-24.
 ```
 src        React 19 + TS (Vite, Tailwind 4, shadcn, zustand, xstate)   -- renders; never holds PCM
 src-tauri  Tauri 2 shell: commands, Channel<JobEvent>, read_peaks         -- thin; calls sc-engine
-crates/sc-cli           headless binary: analyze | eval | cache | process | grid-check | bench | undo -- thin; calls sc-engine and only prints
-crates/sc-engine        analyze (the per-file pipeline), run_batch(files, settings, cancel, on_event), cancellation, click player (cpal + rtrb)
+crates/sc-cli           headless binary: analyze | plan | labels | eval | bench | cache | apply | undo | journal | recover (later: process | grid-check) -- thin; calls sc-engine (and sc-io's journal) and only prints
+crates/sc-engine        analyze (the per-file pipeline), run_batch(files, settings, cancel, on_event), cancellation, click player (cpal + rtrb),
+                        apply_file / undo_file / recover_at_start over sc_io::txn, folder expansion that skips the backup root
 crates/sc-analysis      loudness (ebur128 wrap + S-P95/S-top30/PLR + timeline), beats (beat-this, rten), grid solver (Huber LS, comb phase, kick-band anchor, octave order, thresholds, confidence, refit), DJ-safe report
 crates/sc-dsp           gain, TPDF dither, primitives (biquad, kick-band filter, RMS/derivative onset), [v0.2 limiter, Re-Pitch], [v0.3 stretch]
 crates/sc-io            decode (symphonia + opus, LAME delay/padding applied), iff (WAV/RF64/AIFF read + header writers), render (IFF and FLAC renders: trim, gain via sc-dsp's Requantiser, verbatim chunk/block carry, position patches, ID3/Vorbis edit, tee hash, FLAC full-decode verify), id3 (ID3v2.3/2.4 tag index and frame-level replace/append: every other frame byte for byte, padding reused before the tag grows), tagcopy (ID3v1/APEv2/Vorbis opaque carry + append), flac (FLAC walk, flac-codec frames-only encoder and decoder, our own STREAMINFO with MD5, SEEKTABLE rebuild, Vorbis comment re-emit, CUESHEET shift; symphonia decode for verification), mp3gain (global_gain patch + CRC + undo), transaction (LengthPolicy, tiered verify, backup, journal, sidecar), rekordbox XML + CSV writers, cache, lofty read-only facade
@@ -66,7 +67,11 @@ RENDER (streamed)
              `<backup root>/<local yyyy-mm-dd>/<volume>/<relative path>` (never overwritten, synced, read-back BLAKE3, name journaled first)
              -> identity re-checked -> atomic rename + folder sync -> xattrs (full size, read back), group, creation date, mtime, mode -> sidecar
              `<file>.soundcheck.json` (atomic); one synced `journal.jsonl` line per state in the backup root, a lock file per running transaction;
-             `recover` rolls back before the rename and completes after it, leaving unreachable or failing entries pending; `undo` restores the newest backup through the same steps;
+             `recover` rolls back before the rename and completes after it, leaving unreachable or failing entries pending; `forget` ends a pending entry as `forgotten`
+             (recovery skips it, nothing deleted); `undo` restores the newest backup through the same steps;
+             entry points: `sc_engine::apply_file(path, req, ApplyOptions{place: InPlace|Folder, backup_root, keep_mtime, sidecar}, cancel)`, `undo_file`,
+             `recover_at_start` (the desktop shell runs it on a background thread at start, `sc-cli apply`/`undo` before writing; failures are logged, never fatal);
+             `collect_audio_files` never lists a file in the backup root;
              copy-to-folder mode: same steps, no backup, never replaces a file. Crash matrix behind the test-only `crash-test` feature
   batch artefacts: soundcheck-rekordbox.xml, grid-report.csv; per-file grid-check
 ```

@@ -24,6 +24,7 @@ fn state_names_are_the_serialised_names_and_follow_the_steps() {
         State::Done,
         State::Failed,
         State::Recovered,
+        State::Forgotten,
     ];
     for s in all {
         let json = serde_json::to_string(&s).expect("serialises");
@@ -31,6 +32,7 @@ fn state_names_are_the_serialised_names_and_follow_the_steps() {
     }
     assert!(all.windows(2).all(|w| w[0] < w[1]));
     assert!(State::Done.is_final() && State::Failed.is_final() && State::Recovered.is_final());
+    assert!(State::Forgotten.is_final());
     assert!(!State::MetadataDone.is_final());
     assert_eq!(TxnKind::InPlace.pre_rename(), State::BackedUp);
     assert_eq!(TxnKind::ToFolder.pre_rename(), State::Verified);

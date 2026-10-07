@@ -178,3 +178,17 @@ fn a_cleared_list_takes_the_same_files_again() {
 fn cancelling_an_unknown_job_says_so() {
     assert!(!Shell::new(None, None, 1).cancel(42));
 }
+
+#[test]
+fn files_in_the_backup_folder_never_become_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let backups = dir.path().join("SoundCheck Backups");
+    std::fs::create_dir_all(backups.join("2026-10-07")).unwrap();
+    tone_wav(dir.path(), "a.wav", 0.1);
+    tone_wav(&backups.join("2026-10-07"), "a.wav", 0.1);
+    let shell = Shell::with_backup_root(None, None, 1, Some(backups));
+    let rows = shell.expand(vec![dir.path().display().to_string()]);
+    assert_eq!(rows.len(), 1);
+    // Recovery of an empty backup root finds nothing and does not stop the shell.
+    shell.recover_in_background();
+}

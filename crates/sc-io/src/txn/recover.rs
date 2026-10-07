@@ -21,7 +21,8 @@
 //! fails, or whose lock is held stays pending, untouched, and is listed in
 //! [`RecoveryReport::pending`]; a later recovery tries again. One transaction's failure never
 //! stops the others. Each recovered transaction gets a `recovered` line, so running recovery
-//! again finds nothing to do.
+//! again finds nothing to do. A transaction the user gave up on ([`super::forget`], state
+//! `forgotten`) has ended and is skipped.
 
 use std::path::{Path, PathBuf};
 
