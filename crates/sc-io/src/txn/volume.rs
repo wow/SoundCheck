@@ -157,6 +157,7 @@ fn startup_disk_name() -> Option<String> {
 ///
 /// `diskutil` takes about 0.2 s, so with `cached` an answer is reused for [`IDENTITY_TTL`] for
 /// the same mount point, device, size and root folder; recovery asks afresh.
+#[must_use]
 pub fn volume_identity(path: &Path, cached: bool) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
@@ -261,6 +262,7 @@ pub(crate) fn run_with_deadline(
 pub const IDENTITY_TTL: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The `<string>` value following `<key>key</key>` in a property list.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS reads diskutil's plist
 pub(crate) fn plist_string(plist: &str, key: &str) -> Option<String> {
     let after = &plist[plist.find(&format!("<key>{key}</key>"))?..];
     let start = after.find("<string>")? + "<string>".len();
