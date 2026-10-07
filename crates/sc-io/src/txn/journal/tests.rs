@@ -132,7 +132,7 @@ fn a_held_lock_cannot_be_taken_and_is_removed_when_dropped() {
         .expect("io")
         .expect("free");
     assert!(TxnLock::try_acquire(&journal, "t").expect("io").is_none());
-    let path = journal.lock_path("t");
+    let path = journal.lock_path("t").expect("a valid name");
     assert!(path.exists());
     drop(held);
     assert!(!path.exists());
@@ -185,4 +185,26 @@ fn waiting_for_a_target_lock_stops_on_cancel() {
     assert!(started.elapsed() < LOCK_POLL * 10);
     drop(held);
     assert!(TargetLock::acquire(&journal, target, &never).is_ok());
+}
+
+#[test]
+fn ids_have_the_generated_shape_and_lock_names_stay_in_their_folder() {
+    assert!(is_txn_id("6ac5b4f4-75821-0"));
+    assert!(is_txn_id(&crate::txn::fsx::new_txn_id()));
+    for bad in [
+        "",
+        "t",
+        "6AC5-1-0",
+        "6ac5-1",
+        "6ac5-1-0-0",
+        "6ac5--0",
+        "../6ac5-1-0",
+        "g-1-0",
+    ] {
+        assert!(!is_txn_id(bad), "{bad:?}");
+    }
+    assert!(is_safe_lock_name("t") && is_safe_lock_name("6ac5b4f4-75821-0"));
+    for bad in ["", "..", "a/b", "../x", "a.b", "a\\b", &"x".repeat(65)] {
+        assert!(!is_safe_lock_name(bad), "{bad:?}");
+    }
 }

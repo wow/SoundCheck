@@ -25,10 +25,10 @@ fn wav(dir: &Path) -> PathBuf {
     path
 }
 
-fn gain(gain_db: f64) -> RenderRequest {
-    RenderRequest {
+fn gain(gain_db: f64) -> ApplyRequest {
+    ApplyRequest {
         gain_db,
-        ..RenderRequest::default()
+        ..ApplyRequest::default()
     }
 }
 
@@ -104,11 +104,20 @@ fn a_cancelled_apply_changes_nothing() {
 fn recovery_at_start_never_fails() {
     let s = scene();
     let none = recover_at_start(&s.base.join("no backups yet"));
-    assert!(none.recovered.is_empty() && none.pending.is_empty());
-    // A journal that cannot be read (a folder in its place) is logged, not fatal.
+    assert_eq!(
+        none,
+        RecoveryStatus::Finished {
+            recovered: vec![],
+            pending: vec![]
+        }
+    );
+    // A journal that cannot be read (a folder in its place) is reported, not fatal.
     std::fs::create_dir_all(s.backups.join(sc_io::txn::JOURNAL_FILE)).expect("folder");
     let unreadable = recover_at_start(&s.backups);
-    assert!(unreadable.recovered.is_empty() && unreadable.pending.is_empty());
+    assert!(
+        matches!(unreadable, RecoveryStatus::Failed { .. }),
+        "{unreadable:?}"
+    );
 }
 
 #[test]
@@ -124,4 +133,25 @@ fn undo_puts_the_original_back() {
         undo_file(&s.file, &s.backups),
         Err(Error::NothingToUndo { .. })
     ));
+}
+
+#[test]
+fn neutral_tags_reach_the_id3_chunk_and_bad_ones_change_nothing() {
+    let s = scene();
+    let before = std::fs::read(&s.file).expect("read");
+    let opts = ApplyOptions::in_place(&s.backups);
+    let bad = ApplyRequest {
+        tags: vec![Tag::parse("TBPM=128").expect("parsed")],
+        ..gain(-1.0)
+    };
+    let err = apply_file(&s.file, &bad, &opts, &CancelToken::new()).expect_err("refused");
+    assert!(matches!(err, Error::InvalidArgument(_)), "{err}");
+    assert_eq!(std::fs::read(&s.file).expect("untouched"), before);
+    // The hound WAV has no ID3 chunk: the edits are mapped, then reported as not added.
+    let good = ApplyRequest {
+        tags: vec![Tag::parse("BPM=128.00").expect("parsed")],
+        ..gain(-1.0)
+    };
+    let r = apply_file(&s.file, &good, &opts, &CancelToken::new()).expect("applied");
+    assert!(!r.render.tags_added && r.render.tags_not_added.is_some());
 }

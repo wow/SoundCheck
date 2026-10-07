@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
-use sc_core::{Error, Result};
+use sc_core::{ChangeCause, Error, Result};
 
 use super::Transaction;
 use super::crash;
@@ -50,6 +50,9 @@ pub struct UndoReport {
     pub restored_blake3: [u8; 32],
     /// What happened to the sidecar.
     pub sidecar: SidecarAfterUndo,
+    /// Earlier changes of the file that are still in effect (another undo goes one further
+    /// back).
+    pub earlier_changes: usize,
 }
 
 /// Whether `e` is a finished in-place change of `path` that no undo has reversed.
@@ -90,6 +93,7 @@ pub(super) fn undo(tx: &Transaction<'_>, path: &Path, backup_root: &Path) -> Res
                  original is kept at {}",
                 backup.display()
             ),
+            cause: ChangeCause::SinceProcessed,
         });
     }
     let id = new_txn_id();
@@ -117,6 +121,7 @@ pub(super) fn undo(tx: &Transaction<'_>, path: &Path, backup_root: &Path) -> Res
             return Err(Error::FileChanged {
                 path: full.clone(),
                 detail: "while SoundCheck was undoing its change; it was left as it is".into(),
+                cause: ChangeCause::DuringProcessing,
             });
         }
         std::fs::rename(&temp, &full).map_err(|e| io_err(&full, e))?;
@@ -140,7 +145,7 @@ pub(super) fn undo(tx: &Transaction<'_>, path: &Path, backup_root: &Path) -> Res
     line.notes = notes;
     journal.append(&line)?;
     crash::after(State::MetadataDone);
-    let sidecar = settle_sidecar(&journal.entries()?, &full, &target.txn)?;
+    let (sidecar, earlier_changes) = settle_after(&journal, &full, &target.txn)?;
     journal.append(&Line::new(&id, State::Done))?;
     drop(lock);
     tracing::info!(path = %full.display(), txn = %id, undone = %target.txn, "undone");
@@ -151,7 +156,20 @@ pub(super) fn undo(tx: &Transaction<'_>, path: &Path, backup_root: &Path) -> Res
         backup,
         restored_blake3: restored,
         sidecar,
+        earlier_changes,
     })
+}
+
+/// After `undone` was undone on `path`: the sidecar settled, and how many earlier changes of
+/// the file are still in effect.
+fn settle_after(journal: &Journal, path: &Path, undone: &str) -> Result<(SidecarAfterUndo, usize)> {
+    let entries = journal.entries()?;
+    let sidecar = settle_sidecar(&entries, path, undone)?;
+    let earlier = entries
+        .iter()
+        .filter(|e| e.txn != undone && undoable(e, path))
+        .count();
+    Ok((sidecar, earlier))
 }
 
 /// Copies the backup into the temp file and checks that the synced copy hashes to the

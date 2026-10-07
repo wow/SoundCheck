@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use sc_core::{Error, Result};
 
 use super::fsx::exists;
-use super::journal::{Journal, Line, State, TxnKind, TxnLock};
+use super::journal::{Journal, Line, State, TxnKind, TxnLock, is_txn_id};
 
 /// What [`forget`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,10 +36,16 @@ pub struct Forgotten {
 /// every file it left.
 ///
 /// # Errors
-/// [`Error::InvalidArgument`] when no such transaction is journaled, when it has already ended
+/// [`Error::InvalidArgument`] for an id that does not have the shape of a generated one (see
+/// [`super::is_txn_id`]), when no such transaction is journaled, when it has already ended
 /// (done, failed, recovered or forgotten), or while it runs; [`Error::Io`] when the journal
 /// cannot be read or written.
 pub fn forget(backup_root: &Path, txn: &str) -> Result<Forgotten> {
+    if !is_txn_id(txn) {
+        return Err(Error::InvalidArgument(format!(
+            "{txn:?} is not a change id (ids look like 6ac5b4f4-75821-0; the journal lists them)"
+        )));
+    }
     let unknown = || {
         Error::InvalidArgument(format!(
             "no change {txn} is recorded in {}",
@@ -49,18 +55,27 @@ pub fn forget(backup_root: &Path, txn: &str) -> Result<Forgotten> {
     if !backup_root.is_dir() {
         return Err(unknown());
     }
+    // Looked up before any lock is taken, so an unknown id creates and removes nothing.
+    let ended = |state: State| {
+        Error::InvalidArgument(format!(
+            "change {txn} is already {}; only an unfinished change can be forgotten",
+            state.as_str()
+        ))
+    };
+    let first = Journal::at(backup_root).entry(txn)?.ok_or_else(unknown)?;
+    if first.state.is_final() {
+        return Err(ended(first.state));
+    }
     let journal = Journal::open(backup_root)?;
     let Some(_lock) = TxnLock::try_acquire(&journal, txn)? else {
         return Err(Error::InvalidArgument(format!(
             "change {txn} is running; it can only be forgotten once it has stopped"
         )));
     };
+    // Read again under the lock: recovery may have ended it meanwhile.
     let entry = journal.entry(txn)?.ok_or_else(unknown)?;
     if entry.state.is_final() {
-        return Err(Error::InvalidArgument(format!(
-            "change {txn} is already {}; only an unfinished change can be forgotten",
-            entry.state.as_str()
-        )));
+        return Err(ended(entry.state));
     }
     let backup = entry
         .backup

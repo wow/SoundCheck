@@ -30,4 +30,6 @@ pub use edits::{EditState, apply_saved, fit_choice, save_edit};
 pub use expand::{collect_audio_files, probe_all};
 pub use session::{Session, run_job};
 pub use track::{Track, TrackProgress};
-pub use txn::{ApplyOptions, Place, apply_file, recover_at_start, undo_file};
+pub use txn::{
+    ApplyOptions, ApplyRequest, Place, Tag, apply_file, check_inputs, recover_at_start, undo_file,
+};

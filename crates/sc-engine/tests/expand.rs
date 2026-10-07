@@ -60,8 +60,22 @@ fn nothing_in_the_backup_root_is_listed() {
     common::tone_wav(&music, "Track.wav", 0.5, 0.1);
     let backup = common::tone_wav(&day, "Track.wav", 0.5, 0.1);
 
-    // A folder above the backup root, the root itself, a folder and a file inside it.
-    let dropped = vec![music.clone(), backups.clone(), day.clone(), backup];
+    // Links into the backup root: one dropped directly, one inside a walked folder.
+    let elsewhere = dir.path().join("Elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let file_link = elsewhere.join("Alias.wav");
+    std::os::unix::fs::symlink(&backup, &file_link).unwrap();
+    std::os::unix::fs::symlink(&day, elsewhere.join("Backups alias")).unwrap();
+
+    // A folder above the backup root, the root itself, a folder and a file inside it, links.
+    let dropped = vec![
+        music.clone(),
+        backups.clone(),
+        day.clone(),
+        backup,
+        file_link,
+        elsewhere,
+    ];
     let files = collect_audio_files(&dropped, Some(&backups));
     assert_eq!(files, vec![music.join("Track.wav")]);
     // Without a backup root everything is listed.

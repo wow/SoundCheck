@@ -8,7 +8,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use sc_core::Lufs;
 use sc_core::analysis::AnalysisSettings;
-use sc_core::ipc::{AnalyzeRequest, FileEntry, IpcError, JobEvent, JobId, Replan, SessionSnapshot};
+use sc_core::ipc::{
+    AnalyzeRequest, FileEntry, IpcError, JobEvent, JobId, RecoveryStatus, Replan, SessionSnapshot,
+};
 use sc_core::plan::{DecideSettings, check_bpm_range};
 use sc_engine::player::Player;
 use sc_engine::{
@@ -18,6 +20,12 @@ use sc_engine::{
 use sc_io::cache::Cache;
 use sc_io::edits::EditStore;
 use sc_io::txn::default_backup_root;
+
+fn no_backup_folder() -> RecoveryStatus {
+    RecoveryStatus::Skipped {
+        reason: "there is no backup folder (no home folder found)".into(),
+    }
+}
 
 /// State shared by every command.
 #[derive(Clone)]
@@ -39,6 +47,8 @@ pub(crate) struct Inner {
     pub(crate) player: Mutex<Option<Player>>,
     /// Where SoundCheck keeps its backups; nothing in it is ever added as a row.
     backup_root: Option<PathBuf>,
+    /// What the crash recovery run at start found.
+    recovery: Mutex<RecoveryStatus>,
     workers: usize,
 }
 
@@ -76,6 +86,10 @@ impl Shell {
                 analysis: Mutex::new(AnalysisSettings::default()),
                 view: Mutex::new(None),
                 player: Mutex::new(None),
+                recovery: Mutex::new(match &backup_root {
+                    Some(_) => RecoveryStatus::Running,
+                    None => no_backup_folder(),
+                }),
                 backup_root,
                 workers,
             }),
@@ -95,26 +109,48 @@ impl Shell {
     }
 
     /// Recovers, on a background thread so the window opens at once, the file changes a crash
-    /// interrupted (see `sc_engine::recover_at_start`, which logs what it did); a failure is
-    /// logged and never stops the app.
-    pub fn recover_in_background(&self) {
+    /// interrupted (see `sc_engine::recover_at_start`, which logs what it did); the result is
+    /// kept for [`Shell::recovery_status`]. A failure never stops the app. Returns the thread,
+    /// or `None` without a backup folder.
+    pub(crate) fn recover_in_background(&self) -> Option<std::thread::JoinHandle<()>> {
         let Some(root) = self.inner.backup_root.clone() else {
             tracing::warn!("no backup folder; recovery skipped");
-            return;
+            return None;
         };
+        let inner = Arc::clone(&self.inner);
         let spawned = std::thread::Builder::new()
             .name("sc-recover".into())
             .spawn(move || {
-                let report = recover_at_start(&root);
-                tracing::info!(
-                    recovered = report.recovered.len(),
-                    pending = report.pending.len(),
-                    "startup recovery finished"
-                );
+                let status = recover_at_start(&root);
+                tracing::info!(status = ?status, "startup recovery finished");
+                *inner
+                    .recovery
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = status;
             });
-        if let Err(e) = spawned {
-            tracing::warn!(error = %e, "recovery thread not started");
+        match spawned {
+            Ok(handle) => Some(handle),
+            Err(e) => {
+                tracing::warn!(error = %e, "recovery thread not started");
+                *self.recovery() = RecoveryStatus::Failed {
+                    message: format!("the recovery thread did not start: {e}"),
+                };
+                None
+            }
         }
+    }
+
+    /// What the start-up recovery found (`Running` until it ends).
+    #[must_use]
+    pub fn recovery_status(&self) -> RecoveryStatus {
+        self.recovery().clone()
+    }
+
+    fn recovery(&self) -> std::sync::MutexGuard<'_, RecoveryStatus> {
+        self.inner
+            .recovery
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     pub(crate) fn session(&self) -> std::sync::MutexGuard<'_, Session> {

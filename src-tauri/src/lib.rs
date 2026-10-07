@@ -6,12 +6,13 @@
 #![allow(clippy::needless_pass_by_value)]
 
 mod grid_view;
+mod logging;
 mod shell;
 
 use sc_core::analysis::GridEdit;
 use sc_core::ipc::{
-    AnalyzeRequest, FileEntry, IpcError, IpcErrorKind, JobEvent, JobId, Replan, RowUpdate,
-    SessionSnapshot, TrackEvent, TrackOpened,
+    AnalyzeRequest, FileEntry, IpcError, IpcErrorKind, JobEvent, JobId, RecoveryStatus, Replan,
+    RowUpdate, SessionSnapshot, TrackEvent, TrackOpened,
 };
 use sc_core::plan::DecideSettings;
 use sc_core::{Lufs, SampleIndex};
@@ -24,6 +25,12 @@ use crate::shell::Shell;
 #[tauri::command]
 fn app_version() -> String {
     sc_core::VERSION.to_string()
+}
+
+/// What the crash recovery run at start found (`running` until it ends).
+#[tauri::command]
+async fn recovery_status(shell: State<'_, Shell>) -> Result<RecoveryStatus, IpcError> {
+    Ok(shell.recovery_status())
 }
 
 /// Runs `f` on a blocking thread, so the command never holds up the async runtime.
@@ -223,8 +230,10 @@ async fn player_set_click(shell: State<'_, Shell>, on: bool) -> Result<(), IpcEr
 /// If the Tauri runtime fails to start, which is unrecoverable.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    logging::init();
     let shell = Shell::for_app();
-    shell.recover_in_background();
+    // Detached: the result is kept in the shell and logged.
+    drop(shell.recover_in_background());
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -232,6 +241,7 @@ pub fn run() {
         .manage(shell)
         .invoke_handler(tauri::generate_handler![
             app_version,
+            recovery_status,
             expand_paths,
             analyze,
             cancel_job,

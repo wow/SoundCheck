@@ -130,8 +130,35 @@ pub enum Error {
     FileChanged {
         /// The file concerned.
         path: PathBuf,
-        /// What changed and what to do.
+        /// What changed (no advice: callers word that from `cause`).
         detail: String,
+        /// Why it changed, as far as SoundCheck knows.
+        cause: ChangeCause,
+    },
+    /// The same file was given twice in one request; it is processed once, for its first
+    /// mention.
+    #[error("{} is listed twice (first as {}); it is processed once", path.display(), first.display())]
+    ListedTwice {
+        /// The later mention, as given.
+        path: PathBuf,
+        /// The first mention, as given.
+        first: PathBuf,
+    },
+    /// Two files of one request would be written under the same name in the output folder; only
+    /// the first is written.
+    #[error(
+        "{} would be written as {}, like {}; only the first is written",
+        path.display(),
+        output.display(),
+        other.display()
+    )]
+    SameOutputName {
+        /// The later file, as given.
+        path: PathBuf,
+        /// The earlier file with the same output name, as given.
+        other: PathBuf,
+        /// The output path both would take.
+        output: PathBuf,
     },
     /// No finished change of this file is recorded that could be undone.
     #[error("nothing to undo for {}: no change of it is recorded", path.display())]
@@ -145,6 +172,18 @@ pub enum Error {
         /// The existing file.
         path: PathBuf,
     },
+}
+
+/// Why a file was found changed underneath SoundCheck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ChangeCause {
+    /// Something else wrote to it while SoundCheck was processing it.
+    DuringProcessing,
+    /// Another SoundCheck change of the same file ran first, while this one waited for it.
+    OtherChangeFirst,
+    /// It was edited after SoundCheck processed it, so undoing would lose that edit.
+    SinceProcessed,
 }
 
 /// Why a file cannot be replaced in place. Each reason is something replacing the file would
@@ -231,6 +270,8 @@ impl Error {
             Self::FileChanged { .. } => IpcErrorKind::FileChanged,
             Self::NothingToUndo { .. } => IpcErrorKind::NothingToUndo,
             Self::AlreadyExists { .. } => IpcErrorKind::AlreadyExists,
+            Self::ListedTwice { .. } => IpcErrorKind::ListedTwice,
+            Self::SameOutputName { .. } => IpcErrorKind::SameOutputName,
         }
     }
 }

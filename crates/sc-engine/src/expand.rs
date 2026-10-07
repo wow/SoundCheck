@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use sc_core::ipc::FileInfo;
 use sc_core::plan::Codec;
 use sc_io::probe;
-use sc_io::txn::is_under_backup_root;
+use sc_io::txn::{is_in_resolved_backup_root, resolve_backup_root};
 use unicode_normalization::UnicodeNormalization;
 
 /// File extensions SoundCheck opens, lower case.
@@ -29,6 +29,9 @@ pub const AUDIO_EXTENSIONS: [&str; 14] = [
 pub fn collect_audio_files(paths: &[PathBuf], backup_root: Option<&Path>) -> Vec<PathBuf> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
+    // Resolved once: every folder of the walk is compared with it.
+    let backup_root = backup_root.and_then(|root| resolve_backup_root(root).ok());
+    let backup_root = backup_root.as_deref();
     for path in paths {
         if in_backups(path, backup_root) {
             continue;
@@ -42,9 +45,11 @@ pub fn collect_audio_files(paths: &[PathBuf], backup_root: Option<&Path>) -> Vec
     out
 }
 
-/// Whether `path` lies in the backup root (false when either path cannot be resolved).
+/// Whether `path` (a link followed) lies in the resolved backup root (false when it does not
+/// resolve).
 fn in_backups(path: &Path, backup_root: Option<&Path>) -> bool {
-    let inside = backup_root.is_some_and(|root| is_under_backup_root(path, root).unwrap_or(false));
+    let inside =
+        backup_root.is_some_and(|root| is_in_resolved_backup_root(path, root).unwrap_or(false));
     if inside {
         tracing::debug!(path = %path.display(), "skipped: in the backup folder");
     }

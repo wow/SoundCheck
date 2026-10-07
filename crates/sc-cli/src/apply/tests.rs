@@ -3,16 +3,13 @@
 use super::*;
 
 #[test]
-fn tags_split_at_the_first_equals_sign() {
-    let t = parse_tag("TXXX:COMMENT=a=b").expect("parsed");
-    assert_eq!(
-        (t.label.as_str(), t.value.as_str()),
-        ("TXXX:COMMENT", "a=b")
-    );
-    let t = parse_tag("TBPM=").expect("an empty value is a value");
+fn tags_split_at_the_first_equals_sign_and_names_are_upper_cased() {
+    let t = parse_tag("comment=a=b").expect("parsed");
+    assert_eq!((t.name.as_str(), t.value.as_str()), ("COMMENT", "a=b"));
+    let t = parse_tag("BPM=").expect("parsed; the value is checked before the run");
     assert_eq!(t.value, "");
-    assert!(parse_tag("TBPM").is_err());
-    assert!(parse_tag("=128").is_err());
+    assert!(parse_tag("BPM").is_err_and(|e| e.contains("NAME=VALUE")));
+    assert!(parse_tag("=128").is_err_and(|e| e.contains("no name")));
 }
 
 #[test]

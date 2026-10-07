@@ -17,9 +17,10 @@
 //!
 //! A transaction whose target folder cannot be reached (an unmounted volume) or is not the
 //! one it ran in (the volume identity, or the folder's inode and birth time, differ: an empty
-//! mount folder left behind, another stick with the same name), whose cleanup
-//! fails, or whose lock is held stays pending, untouched, and is listed in
-//! [`RecoveryReport::pending`]; a later recovery tries again. One transaction's failure never
+//! mount folder left behind, another stick with the same name), whose cleanup fails, whose
+//! lock is held, or whose file another running change holds (its per-file lock: recovery never
+//! finishes one change on top of a newer one's output) stays pending, untouched, and is listed
+//! in [`RecoveryReport::pending`]; a later recovery tries again. One transaction's failure never
 //! stops the others. Each recovered transaction gets a `recovered` line, so running recovery
 //! again finds nothing to do. A transaction the user gave up on ([`super::forget`], state
 //! `forgotten`) has ended and is skipped.
@@ -30,7 +31,7 @@ use sc_core::{Error, Result};
 
 use super::finish::metadata_step;
 use super::fsx::{exists, hash_file, hex, remove_if_exists};
-use super::journal::{Entry, Journal, Line, Outcome, State, TxnKind, TxnLock};
+use super::journal::{Entry, Journal, Line, Outcome, State, TargetLock, TxnKind, TxnLock};
 use super::meta::{folder_id, snapshot};
 use super::volume::volume_identity;
 use super::{sidecar, undo};
@@ -118,9 +119,16 @@ pub fn recover(backup_root: &Path) -> Result<RecoveryReport> {
             path: first.path.clone(),
             reason,
         };
-        let Some(lock) = TxnLock::try_acquire(&journal, &first.txn)? else {
-            report.pending.push(leave("running".into()));
-            continue;
+        let lock = match TxnLock::try_acquire(&journal, &first.txn) {
+            Ok(Some(lock)) => lock,
+            Ok(None) => {
+                report.pending.push(leave("running".into()));
+                continue;
+            }
+            Err(e) => {
+                report.pending.push(leave(e.to_string()));
+                continue;
+            }
         };
         // Read again under the lock: it may have ended meanwhile.
         let entry = match journal.entry(&first.txn) {
@@ -135,6 +143,21 @@ pub fn recover(backup_root: &Path) -> Result<RecoveryReport> {
             report.pending.push(leave(reason));
             continue;
         }
+        // A new change of the same file is running: finishing this one now could land on top
+        // of that one's output.
+        let target_lock = match TargetLock::try_acquire(&journal, &entry.path) {
+            Ok(Some(l)) => l,
+            Ok(None) => {
+                report
+                    .pending
+                    .push(leave("busy: another change of this file is running".into()));
+                continue;
+            }
+            Err(e) => {
+                report.pending.push(leave(e.to_string()));
+                continue;
+            }
+        };
         match recover_one(&journal, &entry) {
             Ok(Some(r)) => {
                 tracing::info!(txn = %r.txn, path = %r.path.display(), reached = r.reached.as_str(), outcome = ?r.outcome, "recovered");
@@ -146,6 +169,7 @@ pub fn recover(backup_root: &Path) -> Result<RecoveryReport> {
                 report.pending.push(leave(e.to_string()));
             }
         }
+        drop(target_lock);
         drop(lock);
     }
     journal.sweep_target_locks();

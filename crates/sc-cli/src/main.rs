@@ -9,6 +9,7 @@ mod labels;
 mod plan;
 mod refusal;
 mod report;
+mod vocab;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -178,7 +179,8 @@ enum Command {
     Undo(apply::UndoArgs),
     /// List the recorded changes, newest first, or give up on a pending one (--forget).
     Journal(journal::JournalArgs),
-    /// Finish or roll back changes a crash interrupted and list those left pending.
+    /// Finish or roll back changes a crash interrupted and list those left pending (exit code 3
+    /// when any is).
     Recover(journal::RecoverArgs),
     /// Inspect or empty the analysis cache.
     Cache {
@@ -306,7 +308,12 @@ fn main() -> anyhow::Result<()> {
         Command::Apply(args) => exit_with_failures(apply::run_apply(args)),
         Command::Undo(args) => exit_with_failures(apply::run_undo(&args)),
         Command::Journal(args) => exit_with_failures(journal::run_journal(&args)),
-        Command::Recover(args) => journal::run_recover(&args),
+        Command::Recover(args) => {
+            if !journal::run_recover(&args)? {
+                std::process::exit(journal::EXIT_PENDING);
+            }
+            Ok(())
+        }
         Command::Cache { action } => cache_command(action),
     }
 }

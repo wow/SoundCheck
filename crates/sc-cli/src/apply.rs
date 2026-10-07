@@ -7,14 +7,18 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use sc_core::ipc::IpcError;
-use sc_core::{Error, RenderRequest, TagEdit};
-use sc_engine::{ApplyOptions, CancelToken, Place, apply_file, undo_file};
+use sc_core::Error;
+use sc_core::ipc::{IpcError, RecoveryStatus};
+use sc_engine::txn::check_tags;
+use sc_engine::{
+    ApplyOptions, ApplyRequest, CancelToken, Place, Tag, apply_file, check_inputs, undo_file,
+};
 use sc_io::txn::sidecar::{BlockCounts, RenderSummary};
-use sc_io::txn::{SidecarAfterUndo, State, TxnKind, TxnReport, UndoReport, hex};
+use sc_io::txn::{SidecarAfterUndo, TxnKind, TxnReport, UndoReport, hex};
 use serde::Serialize;
 
 use crate::refusal::{self, Action, Refusal};
+use crate::vocab;
 
 /// Version of the JSON documents of `apply`, `undo`, `journal` and `recover`.
 pub const TXN_SCHEMA: u32 = 1;
@@ -70,10 +74,12 @@ pub struct ApplyArgs {
     /// Write no `<file>.soundcheck.json` next to the file.
     #[arg(long)]
     no_sidecar: bool,
-    /// A tag item to add or replace: an ID3 frame (`TBPM=128`, `TXXX:BPM=128.00`) in WAV and
-    /// AIFF, a Vorbis comment field (`BPM=128.00`) in FLAC. Repeatable.
-    #[arg(long = "tag", value_name = "LABEL=VALUE", value_parser = parse_tag)]
-    tags: Vec<TagEdit>,
+    /// A tag item to add or replace, by a container-neutral name: `BPM=128.00` (ID3 `TBPM` 128 and
+    /// `TXXX:BPM` 128.00 in WAV/AIFF, `BPM` in FLAC), `INITIALKEY=8A` (`TKEY` / `INITIALKEY`),
+    /// any other `NAME=VALUE` (`TXXX:NAME` / `NAME`). ID3 frame ids and labels with `:` are
+    /// refused. Repeatable; tags go into an existing tag only, none is created.
+    #[arg(long = "tag", value_name = "NAME=VALUE", value_parser = parse_tag)]
+    tags: Vec<Tag>,
     /// Print JSON (one document per file) instead of text.
     #[arg(long)]
     json: bool,
@@ -111,16 +117,10 @@ fn parse_bits(text: &str) -> Result<u8, String> {
     }
 }
 
-fn parse_tag(text: &str) -> Result<TagEdit, String> {
-    let (label, value) = text
-        .split_once('=')
-        .ok_or_else(|| format!("{text:?} is not LABEL=VALUE"))?;
-    if label.is_empty() {
-        return Err(format!("{text:?} has no label"));
-    }
-    Ok(TagEdit {
-        label: label.to_owned(),
-        value: value.to_owned(),
+fn parse_tag(text: &str) -> Result<Tag, String> {
+    Tag::parse(text).map_err(|e| match e {
+        Error::InvalidArgument(m) => m,
+        other => other.to_string(),
     })
 }
 
@@ -143,7 +143,7 @@ struct RequestDoc<'a> {
     gain_db: f64,
     trim_frames: u64,
     bits: Option<u8>,
-    tags: &'a [TagEdit],
+    tags: &'a [Tag],
 }
 
 /// What the render did.
@@ -181,7 +181,7 @@ struct AppliedDoc<'a> {
     file: String,
     ok: bool,
     txn: &'a str,
-    kind: TxnKind,
+    kind: &'static str,
     output: String,
     backup: Option<String>,
     sidecar: Option<String>,
@@ -208,6 +208,7 @@ struct UndoneDoc<'a> {
     backup: String,
     restored_blake3: String,
     sidecar: &'static str,
+    earlier_changes: usize,
     total_ms: f64,
 }
 
@@ -233,13 +234,13 @@ fn tag_counts(r: &TxnReport) -> (u32, u32) {
 
 /// The one line printed for a file `apply` changed or copied.
 #[must_use]
-pub fn applied_line(file: &Path, req: &RenderRequest, r: &TxnReport) -> String {
+pub fn applied_line(file: &Path, req: &ApplyRequest, r: &TxnReport) -> String {
     use std::fmt::Write as _;
     let render = &r.render;
     let summary = RenderSummary::of(render);
     let mut s = format!(
         "{}: gain {:+.2} dB, {}-bit",
-        refusal::name(file),
+        file.display(),
         req.gain_db,
         render.bits_out
     );
@@ -302,7 +303,7 @@ pub fn applied_line(file: &Path, req: &RenderRequest, r: &TxnReport) -> String {
 
 fn applied_doc<'a>(
     file: &Path,
-    req: &'a RenderRequest,
+    req: &'a ApplyRequest,
     r: &'a TxnReport,
     total: Duration,
 ) -> AppliedDoc<'a> {
@@ -313,7 +314,7 @@ fn applied_doc<'a>(
         file: file.display().to_string(),
         ok: true,
         txn: &r.txn,
-        kind: r.kind,
+        kind: vocab::kind(r.kind),
         output: r.output.display().to_string(),
         backup: r.backup.as_ref().map(|p| p.display().to_string()),
         sidecar: r.sidecar.as_ref().map(|p| p.display().to_string()),
@@ -321,7 +322,7 @@ fn applied_doc<'a>(
             gain_db: req.gain_db,
             trim_frames: req.trim_frames,
             bits: req.bits,
-            tags: &req.tag_edits,
+            tags: &req.tags,
         },
         render: RenderDoc {
             frames_in: summary.frames_in,
@@ -347,7 +348,7 @@ fn applied_doc<'a>(
             .timings
             .iter()
             .map(|(state, d)| StepDoc {
-                step: State::as_str(*state),
+                step: vocab::state(*state),
                 ms: ms(*d),
             })
             .collect(),
@@ -376,18 +377,33 @@ fn print_failed(file: &Path, err: Error, action: Action, json: bool) -> anyhow::
 
 /// Runs recovery before a command that writes, saying on stderr what it found.
 pub fn recover_first(root: &Path) {
-    let report = sc_engine::recover_at_start(root);
-    if !report.recovered.is_empty() {
-        eprintln!(
-            "sc-cli: finished or rolled back {} interrupted (see sc-cli journal)",
-            plural(report.recovered.len() as u64, "change", "changes")
-        );
+    match sc_engine::recover_at_start(root) {
+        RecoveryStatus::Finished { recovered, pending } => {
+            if !recovered.is_empty() {
+                eprintln!(
+                    "sc-cli: finished or rolled back {} interrupted (see sc-cli journal)",
+                    plural(recovered.len() as u64, "change", "changes")
+                );
+            }
+            if !pending.is_empty() {
+                eprintln!(
+                    "sc-cli: {} still pending (see sc-cli recover)",
+                    plural(pending.len() as u64, "change is", "changes are")
+                );
+            }
+        }
+        RecoveryStatus::Failed { message } => {
+            eprintln!("sc-cli: recovery could not run: {message}");
+        }
+        RecoveryStatus::Running | RecoveryStatus::Skipped { .. } => {}
     }
-    if !report.pending.is_empty() {
-        eprintln!(
-            "sc-cli: {} still pending (see sc-cli recover)",
-            plural(report.pending.len() as u64, "change is", "changes are")
-        );
+}
+
+/// Stops the run before any file when the tags are not valid (exit code 2).
+fn check_tags_or_exit(tags: &[Tag]) {
+    if let Err(err) = check_tags(tags) {
+        eprintln!("sc-cli: {err}");
+        std::process::exit(crate::EXIT_FAILED);
     }
 }
 
@@ -396,19 +412,22 @@ pub fn recover_first(root: &Path) {
 /// # Errors
 /// When the backup root cannot be named or the output cannot be written.
 pub fn run_apply(args: ApplyArgs) -> anyhow::Result<usize> {
+    check_tags_or_exit(&args.tags);
     let root = args.backup.resolve()?;
     recover_first(&root);
-    let req = RenderRequest {
+    let req = ApplyRequest {
         gain_db: args.gain_db,
         trim_frames: args.trim_samples,
         bits: args.bits,
         loudness: None,
-        tag_edits: args.tags,
+        tags: args.tags,
     };
     let (place, action) = match args.out {
         Some(dir) => (Place::Folder(std::path::absolute(dir)?), Action::Copy),
         None => (Place::InPlace, Action::Change),
     };
+    // Files listed twice and copies that would share a name are refused before any write.
+    let refused = check_inputs(&args.files, &place);
     let opts = ApplyOptions {
         place,
         backup_root: root,
@@ -417,9 +436,13 @@ pub fn run_apply(args: ApplyArgs) -> anyhow::Result<usize> {
     };
     let cancel = CancelToken::new();
     let mut failed = 0;
-    for file in &args.files {
+    for (file, refusal) in args.files.iter().zip(refused) {
         let started = Instant::now();
-        match apply_file(file, &req, &opts, &cancel) {
+        let result = match refusal {
+            Some(err) => Err(err),
+            None => apply_file(file, &req, &opts, &cancel),
+        };
+        match result {
             Ok(report) => {
                 let mut out = std::io::stdout().lock();
                 if args.json {
@@ -447,11 +470,38 @@ pub fn undone_line(file: &Path, r: &UndoReport) -> String {
         SidecarAfterUndo::Restored(_) => "; sidecar describes the previous change again",
         SidecarAfterUndo::Absent => "",
     };
+    let earlier = match r.earlier_changes {
+        0 => String::new(),
+        n => format!(
+            "; {} (undo again to go further back)",
+            plural(n as u64, "earlier change remains", "earlier changes remain")
+        ),
+    };
     format!(
-        "{}: original restored from {}; verified{sidecar}",
-        refusal::name(file),
+        "{}: previous version restored from {}; verified{sidecar}{earlier}",
+        file.display(),
         r.backup.display()
     )
+}
+
+fn undone_doc<'a>(file: &Path, r: &'a UndoReport, total: Duration) -> UndoneDoc<'a> {
+    UndoneDoc {
+        schema: TXN_SCHEMA,
+        file: file.display().to_string(),
+        ok: true,
+        txn: &r.txn,
+        undone: &r.undone,
+        path: r.path.display().to_string(),
+        backup: r.backup.display().to_string(),
+        restored_blake3: hex(&r.restored_blake3),
+        sidecar: match r.sidecar {
+            SidecarAfterUndo::Removed => "removed",
+            SidecarAfterUndo::Restored(_) => "restored",
+            SidecarAfterUndo::Absent => "absent",
+        },
+        earlier_changes: r.earlier_changes,
+        total_ms: ms(total),
+    }
 }
 
 /// `sc-cli undo`: returns how many files failed.
@@ -461,29 +511,19 @@ pub fn undone_line(file: &Path, r: &UndoReport) -> String {
 pub fn run_undo(args: &UndoArgs) -> anyhow::Result<usize> {
     let root = args.backup.resolve()?;
     recover_first(&root);
+    let refused = check_inputs(&args.files, &Place::InPlace);
     let mut failed = 0;
-    for file in &args.files {
+    for (file, refusal) in args.files.iter().zip(refused) {
         let started = Instant::now();
-        match undo_file(file, &root) {
+        let result = match refusal {
+            Some(err) => Err(err),
+            None => undo_file(file, &root),
+        };
+        match result {
             Ok(report) => {
                 let mut out = std::io::stdout().lock();
                 if args.json {
-                    let doc = UndoneDoc {
-                        schema: TXN_SCHEMA,
-                        file: file.display().to_string(),
-                        ok: true,
-                        txn: &report.txn,
-                        undone: &report.undone,
-                        path: report.path.display().to_string(),
-                        backup: report.backup.display().to_string(),
-                        restored_blake3: hex(&report.restored_blake3),
-                        sidecar: match report.sidecar {
-                            SidecarAfterUndo::Removed => "removed",
-                            SidecarAfterUndo::Restored(_) => "restored",
-                            SidecarAfterUndo::Absent => "absent",
-                        },
-                        total_ms: ms(started.elapsed()),
-                    };
+                    let doc = undone_doc(file, &report, started.elapsed());
                     serde_json::to_writer_pretty(&mut out, &doc)?;
                     writeln!(out)?;
                 } else {

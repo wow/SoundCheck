@@ -18,6 +18,7 @@ fn crashed_change(lib: &Library, txn: &str, path: &Path) -> PathBuf {
         "txn": txn,
         "state": "planned",
         "at": "2026-10-07T10:00:00Z",
+        // The journal's own spelling, not the CLI's JSON vocabulary.
         "kind": "in_place",
         "path": path,
         "source": path,
@@ -70,7 +71,7 @@ fn changes_are_listed_newest_first() {
     let entries = doc["entries"].as_array().expect("entries");
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0]["kind"], "undo");
-    assert_eq!(entries[1]["kind"], "in_place");
+    assert_eq!(entries[1]["kind"], "inPlace");
     assert_eq!(entries[1]["state"], "done");
     assert_eq!(entries[1]["undone"], true);
     assert!(
@@ -91,20 +92,21 @@ fn changes_are_listed_newest_first() {
 fn recover_rolls_back_an_interrupted_change() {
     let lib = Library::new();
     let wav = lib.file("Track.wav", &wav_bytes(false));
-    let temp = crashed_change(&lib, "t1", &wav);
+    let temp = crashed_change(&lib, "6ac5b4f4-1-0", &wav);
     std::fs::write(&temp, b"half a render").expect("temp");
 
     let run = lib.run(&["journal", "--incomplete"]);
     assert!(
-        run.stdout.contains("  t1  in place  pending at planned  "),
+        run.stdout
+            .contains("  6ac5b4f4-1-0  in place  pending at planned  "),
         "{}",
         run.text()
     );
     let run = lib.run(&["recover", "--json"]);
     assert!(run.ok, "{}", run.text());
     let doc = &run.docs()[0];
-    assert_eq!(doc["recovered"][0]["txn"], "t1");
-    assert_eq!(doc["recovered"][0]["outcome"], "rolled_back");
+    assert_eq!(doc["recovered"][0]["txn"], "6ac5b4f4-1-0");
+    assert_eq!(doc["recovered"][0]["outcome"], "rolledBack");
     assert_eq!(doc["pending"], serde_json::json!([]));
     assert!(!temp.exists(), "the temp file is removed");
     assert_eq!(std::fs::read(&wav).expect("untouched"), wav_bytes(false));
@@ -118,7 +120,7 @@ fn recover_rolls_back_an_interrupted_change() {
     let run = lib.run(&["journal"]);
     assert!(
         run.stdout
-            .contains("  t1  in place  recovered: rolled back  "),
+            .contains("  6ac5b4f4-1-0  in place  recovered: rolled back  "),
         "{}",
         run.text()
     );
@@ -128,7 +130,7 @@ fn recover_rolls_back_an_interrupted_change() {
 fn apply_recovers_first() {
     let lib = Library::new();
     let wav = lib.file("Track.wav", &wav_bytes(false));
-    let temp = crashed_change(&lib, "t1", &wav);
+    let temp = crashed_change(&lib, "6ac5b4f4-1-0", &wav);
     std::fs::write(&temp, b"half a render").expect("temp");
     let run = lib.run(&["apply", arg(&wav), "--gain-db", "-1"]);
     assert!(run.ok, "{}", run.text());
@@ -145,30 +147,31 @@ fn apply_recovers_first() {
 fn a_change_left_pending_can_be_forgotten() {
     let lib = Library::new();
     let gone = lib.base.join("Volumes/Gone/Track.wav");
-    crashed_change(&lib, "t9", &gone);
+    crashed_change(&lib, "6ac5b4f4-9-0", &gone);
 
     let run = lib.run(&["recover"]);
-    assert!(run.ok, "{}", run.text());
+    assert_eq!(run.code, Some(3), "pending: {}", run.text());
     assert!(run.stdout.contains("left pending"), "{}", run.text());
     assert!(run.stdout.contains("is not reachable"), "{}", run.text());
     assert!(
         run.stdout
-            .contains("to give up on it: sc-cli journal --forget t9"),
+            .contains("to give up on it: sc-cli journal --forget 6ac5b4f4-9-0"),
         "{}",
         run.text()
     );
 
-    let run = lib.run(&["journal", "--forget", "t9"]);
+    let run = lib.run(&["journal", "--forget", "6ac5b4f4-9-0"]);
     assert!(run.ok, "{}", run.text());
     assert!(
         run.stdout.starts_with(&format!(
-            "forgot t9 ({}, in place, stopped at planned); recovery skips it from now on\n  nothing was deleted\n",
+            "forgot 6ac5b4f4-9-0 ({}, in place, stopped at planned); recovery skips it from now on\n  nothing was deleted\n",
             gone.display()
         )),
         "{}",
         run.text()
     );
     let run = lib.run(&["recover"]);
+    assert!(run.ok, "nothing pending any more: {}", run.text());
     assert!(
         run.stdout.starts_with("nothing to recover"),
         "{}",
@@ -177,20 +180,36 @@ fn a_change_left_pending_can_be_forgotten() {
     let run = lib.run(&["journal"]);
     assert!(
         run.stdout
-            .contains("  t9  in place  forgotten at planned  "),
+            .contains("  6ac5b4f4-9-0  in place  forgotten at planned  "),
         "{}",
         run.text()
     );
 
-    let run = lib.run(&["journal", "--forget", "t9", "--json"]);
+    let run = lib.run(&["journal", "--forget", "6ac5b4f4-9-0", "--json"]);
     assert_eq!(run.code, Some(2), "{}", run.text());
     assert!(run.stderr.contains("already forgotten"), "{}", run.text());
     assert_eq!(run.docs()[0]["error"]["kind"], "invalidArgument");
-    let run = lib.run(&["journal", "--forget", "nope"]);
+    let run = lib.run(&["journal", "--forget", "6ac5b4f4-9-1"]);
     assert_eq!(run.code, Some(2), "{}", run.text());
     assert!(
-        run.stderr.contains("no change nope is recorded"),
+        run.stderr.contains("no change 6ac5b4f4-9-1 is recorded"),
         "{}",
         run.text()
     );
+}
+
+#[test]
+fn an_id_that_is_a_path_is_refused_without_touching_any_file() {
+    let lib = Library::new();
+    crashed_change(&lib, "6ac5b4f4-9-0", &lib.base.join("gone/Track.wav"));
+    // Where `<backups>/locks/../../victim.lock` would land.
+    let victim = lib.base.join("victim.lock");
+    std::fs::write(&victim, b"not SoundCheck's").expect("victim");
+    for id in ["../../victim", "6ac5b4f4-9-0/../../../victim"] {
+        let run = lib.run(&["journal", "--forget", id]);
+        assert_eq!(run.code, Some(2), "{}", run.text());
+        assert!(run.stderr.contains("is not a change id"), "{}", run.text());
+    }
+    assert_eq!(std::fs::read(&victim).expect("kept"), b"not SoundCheck's");
+    assert!(!lib.backups.join("locks").exists(), "no lock was taken");
 }

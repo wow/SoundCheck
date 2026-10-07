@@ -227,6 +227,7 @@ fn transaction_errors_map_to_their_class_with_what_to_do() {
             crate::Error::FileChanged {
                 path: "a".into(),
                 detail: "d".into(),
+                cause: crate::ChangeCause::DuringProcessing,
             },
             "\"fileChanged\"",
         ),
@@ -238,8 +239,40 @@ fn transaction_errors_map_to_their_class_with_what_to_do() {
             crate::Error::AlreadyExists { path: "a".into() },
             "\"alreadyExists\"",
         ),
+        (
+            crate::Error::ListedTwice {
+                path: "./a".into(),
+                first: "a".into(),
+            },
+            "\"listedTwice\"",
+        ),
+        (
+            crate::Error::SameOutputName {
+                path: "x/a".into(),
+                other: "y/a".into(),
+                output: "out/a".into(),
+            },
+            "\"sameOutputName\"",
+        ),
     ];
     for (err, json) in kinds {
         assert_eq!(serde_json::to_string(&err.kind()).unwrap(), json);
     }
+}
+
+#[test]
+fn recovery_status_is_tagged_by_state() {
+    let status = RecoveryStatus::Finished {
+        recovered: vec![RecoveredChange {
+            txn: "6ac5b4f4-1-0".into(),
+            path: "/m/a.wav".into(),
+            outcome: RecoveryOutcome::RolledBack,
+        }],
+        pending: vec![],
+    };
+    let json = serde_json::to_value(&status).unwrap();
+    assert_eq!(json["state"], "finished");
+    assert_eq!(json["recovered"][0]["outcome"], "rolledBack");
+    let running = serde_json::to_value(RecoveryStatus::Running).unwrap();
+    assert_eq!(running, serde_json::json!({ "state": "running" }));
 }

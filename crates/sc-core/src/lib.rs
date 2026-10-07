@@ -26,7 +26,7 @@ pub use analysis::{
     Meter, OnsetList, Reason, TagHints, Verdict,
 };
 pub use audio::{AudioBuffer, AudioSpec};
-pub use error::{Error, InPlaceRefusal, Result};
+pub use error::{ChangeCause, Error, InPlaceRefusal, Result};
 pub use render::{BextLoudness, RenderRequest, TagEdit};
 pub use units::{Bpm, DbFs, DbTp, Lu, Lufs, SampleIndex, Seconds};
 

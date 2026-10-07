@@ -9,6 +9,7 @@ use sc_io::txn::{self, Entry, Outcome, RecoveryReport, State, TxnKind};
 use serde::Serialize;
 
 use crate::apply::{BackupArgs, TXN_SCHEMA};
+use crate::vocab;
 
 /// `sc-cli journal`.
 #[derive(clap::Args)]
@@ -37,16 +38,16 @@ pub struct RecoverArgs {
     json: bool,
 }
 
-/// One change as `journal --json` prints it (kinds, states and outcomes as in the journal).
+/// One change as `journal --json` prints it (kinds, states and outcomes in [`vocab`]'s words).
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EntryDoc<'a> {
     txn: &'a str,
     started_at: &'a str,
-    kind: TxnKind,
-    state: State,
-    reached: State,
-    outcome: Option<Outcome>,
+    kind: &'static str,
+    state: &'static str,
+    reached: &'static str,
+    outcome: Option<&'static str>,
     undone: bool,
     path: String,
     source: String,
@@ -138,10 +139,10 @@ pub fn run_journal(args: &JournalArgs) -> anyhow::Result<usize> {
                 .map(|e| EntryDoc {
                     txn: &e.txn,
                     started_at: &e.started_at,
-                    kind: e.kind,
-                    state: e.state,
-                    reached: e.reached,
-                    outcome: e.outcome,
+                    kind: vocab::kind(e.kind),
+                    state: vocab::state(e.state),
+                    reached: vocab::state(e.reached),
+                    outcome: e.outcome.map(vocab::outcome),
                     undone: e.undone,
                     path: e.path.display().to_string(),
                     source: e.source.display().to_string(),
@@ -174,9 +175,9 @@ struct ForgottenDoc {
     schema: u32,
     ok: bool,
     txn: String,
-    kind: TxnKind,
+    kind: &'static str,
     path: String,
-    reached: State,
+    reached: &'static str,
     backup: Option<String>,
     kept: Vec<String>,
 }
@@ -214,9 +215,9 @@ fn forget(root: &Path, id: &str, json: bool) -> anyhow::Result<usize> {
             schema: TXN_SCHEMA,
             ok: true,
             txn: f.txn,
-            kind: f.kind,
+            kind: vocab::kind(f.kind),
             path: f.path.display().to_string(),
-            reached: f.reached,
+            reached: vocab::state(f.reached),
             backup: f.backup.map(|b| b.display().to_string()),
             kept: f.kept.iter().map(|p| p.display().to_string()).collect(),
         };
@@ -246,10 +247,10 @@ fn forget(root: &Path, id: &str, json: bool) -> anyhow::Result<usize> {
 #[serde(rename_all = "camelCase")]
 struct RecoveredDoc<'a> {
     txn: &'a str,
-    kind: TxnKind,
+    kind: &'static str,
     path: String,
-    reached: State,
-    outcome: Outcome,
+    reached: &'static str,
+    outcome: &'static str,
     notes: &'a [String],
 }
 
@@ -318,11 +319,14 @@ fn write_recovery(
     Ok(())
 }
 
-/// `sc-cli recover`.
+/// Exit code of `recover` when changes stay pending.
+pub const EXIT_PENDING: i32 = 3;
+
+/// `sc-cli recover`: returns whether every interrupted change was ended (none left pending).
 ///
 /// # Errors
 /// When the backup root cannot be named, the journal cannot be read or the output written.
-pub fn run_recover(args: &RecoverArgs) -> anyhow::Result<()> {
+pub fn run_recover(args: &RecoverArgs) -> anyhow::Result<bool> {
     let root = args.backup.resolve()?;
     let report = txn::recover(&root)?;
     let mut out = std::io::stdout().lock();
@@ -335,10 +339,10 @@ pub fn run_recover(args: &RecoverArgs) -> anyhow::Result<()> {
                 .iter()
                 .map(|r| RecoveredDoc {
                     txn: &r.txn,
-                    kind: r.kind,
+                    kind: vocab::kind(r.kind),
                     path: r.path.display().to_string(),
-                    reached: r.reached,
-                    outcome: r.outcome,
+                    reached: vocab::state(r.reached),
+                    outcome: vocab::outcome(r.outcome),
                     notes: &r.notes,
                 })
                 .collect(),
@@ -357,5 +361,5 @@ pub fn run_recover(args: &RecoverArgs) -> anyhow::Result<()> {
     } else {
         write_recovery(&mut out, &root, &report)?;
     }
-    Ok(())
+    Ok(report.pending.is_empty())
 }

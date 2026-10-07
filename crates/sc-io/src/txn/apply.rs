@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use sc_core::{Error, RenderRequest, Result};
+use sc_core::{ChangeCause, Error, RenderRequest, Result};
 
 use super::crash;
 use super::finish::finish;
@@ -211,8 +211,9 @@ fn plan<'a>(
         return Err(Error::FileChanged {
             path: c.src.path,
             detail: "while SoundCheck was waiting to process it (another change of it ran \
-                     first); it was left as it is. Look at it and try again"
+                     first); it was left as it is"
                 .into(),
+            cause: ChangeCause::OtherChangeFirst,
         });
     }
     let id = new_txn_id();
@@ -400,7 +401,8 @@ fn check_unchanged(path: &Path, before: &FileMeta, read_len: u64) -> Result<()> 
     if FileId::read(path)? != before.id || read_len != before.len {
         return Err(Error::FileChanged {
             path: path.to_path_buf(),
-            detail: "while SoundCheck was processing it; it was left as it is. Try again".into(),
+            detail: "while SoundCheck was processing it; it was left as it is".into(),
+            cause: ChangeCause::DuringProcessing,
         });
     }
     Ok(())

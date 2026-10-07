@@ -3,4 +3,4 @@
 /**
  * Error classes as the UI sees them.
  */
-export type IpcErrorKind = "unsupportedFormat" | "unsupportedChannels" | "corrupt" | "io" | "cancelled" | "notDjSafe" | "drmProtected" | "wouldClip" | "modelUnavailable" | "invalidArgument" | "internal" | "rekordboxUsbExport" | "inPlaceRefused" | "noSpace" | "verifyFailed" | "fileChanged" | "nothingToUndo" | "alreadyExists";
+export type IpcErrorKind = "unsupportedFormat" | "unsupportedChannels" | "corrupt" | "io" | "cancelled" | "notDjSafe" | "drmProtected" | "wouldClip" | "modelUnavailable" | "invalidArgument" | "internal" | "rekordboxUsbExport" | "inPlaceRefused" | "noSpace" | "verifyFailed" | "fileChanged" | "nothingToUndo" | "alreadyExists" | "listedTwice" | "sameOutputName";
