@@ -396,6 +396,20 @@ pub enum IpcErrorKind {
     InvalidArgument,
     /// Anything the engine did not classify.
     Internal,
+    /// See [`crate::Error::RekordboxUsbExport`].
+    RekordboxUsbExport,
+    /// See [`crate::Error::InPlaceRefused`].
+    InPlaceRefused,
+    /// See [`crate::Error::NoSpace`].
+    NoSpace,
+    /// See [`crate::Error::VerifyFailed`].
+    VerifyFailed,
+    /// See [`crate::Error::FileChanged`].
+    FileChanged,
+    /// See [`crate::Error::NothingToUndo`].
+    NothingToUndo,
+    /// See [`crate::Error::AlreadyExists`].
+    AlreadyExists,
 }
 
 /// An error crossing IPC: a class the UI can branch on plus a human-readable message.

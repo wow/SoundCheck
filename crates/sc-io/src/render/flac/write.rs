@@ -57,12 +57,12 @@ fn write_zeros<W: Write>(w: &mut W, mut n: u64, output: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Writes the output into `file` and verifies it.
+/// Writes the output into `file`; the returned [`Expected`] is what [`verify`] checks.
 ///
 /// # Errors
 /// Reading and writing errors, a source that does not decode as declared, an encoder guard,
-/// [`Error::Cancelled`], and [`Error::Corrupt`] naming the output when verification fails.
-pub(super) fn write_and_verify(src: &mut File, file: File, job: &Job<'_>) -> Result<Done> {
+/// [`Error::Cancelled`].
+pub(super) fn write(src: &mut File, file: File, job: &Job<'_>) -> Result<(Done, Expected)> {
     let output = job.output;
     let out_err = |e| io_error(output, e);
     let mut w = BufWriter::with_capacity(WRITE_BUFFER_BYTES, file);
@@ -146,13 +146,13 @@ pub(super) fn write_and_verify(src: &mut File, file: File, job: &Job<'_>) -> Res
         frames_bytes: encoded.frames_bytes,
         pcm_hash: encoded.pcm_hash,
     };
-    verify(output, &want, job.cancel)?;
-    Ok(Done {
+    let done = Done {
         pcm_hash: encoded.pcm_hash,
         trailing_bytes: trailing.end - trailing.start,
         output_bytes,
         ..audio.done
-    })
+    };
+    Ok((done, want))
 }
 
 /// What the audio stage did besides the frames.
