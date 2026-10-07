@@ -60,6 +60,7 @@ mod tag;
 
 pub(crate) use audio::check_cancel;
 pub use flac::apply_flac;
+pub(crate) use flac::{FlacCheck, render_flac_unverified};
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};

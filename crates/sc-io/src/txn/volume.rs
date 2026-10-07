@@ -1,0 +1,176 @@
+//! Which volume a path lies on: its root, a name for the backup tree, free space, and whether
+//! it is a rekordbox USB export.
+//!
+//! The rule that names a volume (it names the folder its backups go under, so it must not
+//! change from one run to the next):
+//!
+//! - **macOS**: the mount point comes from `statfs(2)` (`f_mntonname`). A volume mounted at
+//!   `/Volumes/<name>` is called `<name>`. The startup disk (mounted at `/`, with its data
+//!   volume at `/System/Volumes/Data` reached through the system's firmlinks, so a path such as
+//!   `/Users/me/Music/a.wav` lies on it) is called by the name of the `/Volumes` entry that is a
+//!   symbolic link to `/` (the disk's name in the Finder, "Macintosh HD" by default), or
+//!   "Startup Disk" when there is none. Any other mount point is called by its last component.
+//!   Paths on the startup disk are taken relative to `/`, others relative to their mount point.
+//! - **Linux**: the mount point is the highest ancestor on the same device (`st_dev`); `/` is
+//!   called "Root", any other mount point by its last component.
+//!
+//! [`VolumeProvider`] is the seam tests use to simulate a rekordbox USB export or a full disk.
+
+use std::os::unix::fs::MetadataExt;
+use std::path::{Component, Path, PathBuf};
+
+use sc_core::Result;
+
+use super::fsx::io_err;
+
+/// The folder rekordbox creates at the root of a USB export.
+pub const REKORDBOX_EXPORT_FOLDER: &str = "PIONEER";
+
+/// Name given to the startup disk when no `/Volumes` entry links to `/`.
+pub const STARTUP_DISK_NAME: &str = "Startup Disk";
+
+/// A volume as the transaction sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Volume {
+    /// The folder paths on this volume are taken relative to (its mount point; `/` for the
+    /// startup disk on macOS).
+    pub root: PathBuf,
+    /// The name its backups are stored under (see the module documentation for the rule).
+    pub name: String,
+    /// Identifies the volume: two paths with the same id share free space (`st_dev`).
+    pub id: u64,
+    /// Bytes this user may still write.
+    pub free_bytes: u64,
+}
+
+impl Volume {
+    /// Whether the volume is a rekordbox USB export: a `PIONEER` folder at its root.
+    #[must_use]
+    pub fn is_rekordbox_export(&self) -> bool {
+        self.root.join(REKORDBOX_EXPORT_FOLDER).is_dir()
+    }
+
+    /// `path` relative to the volume's root (`None` when it does not lie under it).
+    #[must_use]
+    pub fn relative<'p>(&self, path: &'p Path) -> Option<&'p Path> {
+        path.strip_prefix(&self.root).ok()
+    }
+}
+
+/// Where volume facts come from. [`SystemVolumes`] asks the operating system; tests provide
+/// their own to simulate volumes.
+pub trait VolumeProvider: Send + Sync {
+    /// The volume holding `path`, an existing absolute path.
+    ///
+    /// # Errors
+    /// [`sc_core::Error::Io`] naming `path` when the system cannot say.
+    fn volume_of(&self, path: &Path) -> Result<Volume>;
+}
+
+/// The operating system's view of volumes.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemVolumes;
+
+impl VolumeProvider for SystemVolumes {
+    fn volume_of(&self, path: &Path) -> Result<Volume> {
+        let meta = std::fs::metadata(path).map_err(|e| io_err(path, e))?;
+        let (mount, free_bytes) = mount_and_free(path)?;
+        let root = root_for(&mount, path);
+        Ok(Volume {
+            name: volume_name(&mount, startup_disk_name),
+            root,
+            id: meta.dev(),
+            free_bytes,
+        })
+    }
+}
+
+/// The macOS mount point of the startup disk's data volume.
+const DATA_VOLUME: &str = "/System/Volumes/Data";
+
+/// The folder paths are taken relative to: `/` for a path on the startup disk's data volume
+/// reached through a firmlink (not under [`DATA_VOLUME`] itself), else the mount point.
+pub(crate) fn root_for(mount: &Path, path: &Path) -> PathBuf {
+    if mount == Path::new(DATA_VOLUME) && !path.starts_with(mount) {
+        PathBuf::from("/")
+    } else {
+        mount.to_path_buf()
+    }
+}
+
+/// The name of the volume mounted at `mount` (the rule in the module documentation);
+/// `startup` gives the startup disk's name when the system has one.
+pub(crate) fn volume_name(mount: &Path, startup: impl Fn() -> Option<String>) -> String {
+    let parts: Vec<Component<'_>> = mount.components().collect();
+    if let [Component::RootDir, Component::Normal(v), Component::Normal(name)] = parts.as_slice()
+        && *v == "Volumes"
+    {
+        return clean(&name.to_string_lossy());
+    }
+    if mount == Path::new("/") || mount == Path::new(DATA_VOLUME) {
+        if cfg!(target_os = "macos") {
+            return startup().map_or_else(|| STARTUP_DISK_NAME.to_owned(), |n| clean(&n));
+        }
+        return "Root".to_owned();
+    }
+    mount
+        .file_name()
+        .map_or_else(|| "Volume".to_owned(), |n| clean(&n.to_string_lossy()))
+}
+
+/// A volume name usable as one folder name.
+fn clean(name: &str) -> String {
+    let name: String = name.chars().map(|c| if c == '/' { ':' } else { c }).collect();
+    match name.as_str() {
+        "" | "." | ".." => "Volume".to_owned(),
+        _ => name,
+    }
+}
+
+/// The name of the `/Volumes` entry that is a symbolic link to `/` (the first in byte order
+/// when there are several).
+fn startup_disk_name() -> Option<String> {
+    let mut names: Vec<String> = std::fs::read_dir("/Volumes")
+        .ok()?
+        .filter_map(std::result::Result::ok)
+        .filter(|e| std::fs::read_link(e.path()).is_ok_and(|t| t == Path::new("/")))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names.into_iter().next()
+}
+
+/// Mount point and bytes free for this user (`statfs(2)`: `f_mntonname`, `f_bavail` x
+/// `f_bsize`).
+#[cfg(target_os = "macos")]
+fn mount_and_free(path: &Path) -> Result<(PathBuf, u64)> {
+    use std::os::unix::ffi::OsStringExt;
+    let s = rustix::fs::statfs(path).map_err(|e| io_err(path, e.into()))?;
+    let bytes: Vec<u8> = s
+        .f_mntonname
+        .iter()
+        .take_while(|c| **c != 0)
+        .map(|c| c.cast_unsigned())
+        .collect();
+    let mount = PathBuf::from(std::ffi::OsString::from_vec(bytes));
+    Ok((mount, s.f_bavail.saturating_mul(u64::from(s.f_bsize))))
+}
+
+/// Mount point (the highest ancestor on the same device) and bytes free for this user
+/// (`statvfs(2)`: `f_bavail` x `f_frsize`).
+#[cfg(not(target_os = "macos"))]
+fn mount_and_free(path: &Path) -> Result<(PathBuf, u64)> {
+    let s = rustix::fs::statvfs(path).map_err(|e| io_err(path, e.into()))?;
+    let dev = std::fs::metadata(path).map_err(|e| io_err(path, e))?.dev();
+    let mut mount = path.to_path_buf();
+    while let Some(parent) = mount.parent() {
+        match std::fs::metadata(parent) {
+            Ok(m) if m.dev() == dev => mount = parent.to_path_buf(),
+            _ => break,
+        }
+    }
+    Ok((mount, s.f_bavail.saturating_mul(s.f_frsize)))
+}
+
+#[cfg(test)]
+mod tests;

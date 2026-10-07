@@ -1465,6 +1465,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "exacl"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8de9e551ced9d700a31dacb8b168129640240fcd7a279a3fa4d59608b84ebcae"
+dependencies = [
+ "bitflags 2.13.2",
+ "log",
+ "scopeguard",
+ "uuid",
+]
+
+[[package]]
 name = "extended"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4103,12 +4115,14 @@ dependencies = [
  "blake3",
  "criterion",
  "directories",
+ "exacl",
  "flac-codec",
  "hound",
  "libm",
  "lofty",
  "md-5",
  "proptest",
+ "rustix",
  "sc-core",
  "sc-dsp",
  "serde",
@@ -4118,6 +4132,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "unicode-normalization",
+ "xattr",
 ]
 
 [[package]]
@@ -6523,6 +6538,16 @@ dependencies = [
  "libc",
  "once_cell",
  "pkg-config",
+]
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix",
 ]
 
 [[package]]

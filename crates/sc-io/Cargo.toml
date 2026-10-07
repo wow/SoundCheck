@@ -5,9 +5,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+# examples/txn_apply.rs is a [[bin]] (below), so Cargo builds it before the crash matrix.
+autoexamples = false
 
 [lints]
 workspace = true
+
+[features]
+default = []
+# Test-only fault injection for the write transaction's crash matrix: the transaction aborts the
+# process right after the step named by the environment variable SC_TEST_CRASH_AFTER_STEP.
+# Never enable it in a shipped build.
+crash-test = []
 
 [dependencies]
 sc-core = { workspace = true }
@@ -22,6 +31,11 @@ unicode-normalization = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+xattr = { workspace = true }
+rustix = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+exacl = { workspace = true }
 
 [dev-dependencies]
 sc-core = { workspace = true, features = ["testsig"] }
@@ -48,3 +62,17 @@ harness = false
 [[bench]]
 name = "flac"
 harness = false
+
+# The crash matrix's subject (tests/crash.rs). A bin target rather than an example: Cargo builds
+# bins before integration tests and passes their path in CARGO_BIN_EXE_<name>, so the test never
+# runs a stale build. Only built with the test-only `crash-test` feature.
+[[bin]]
+name = "txn_apply"
+path = "examples/txn_apply.rs"
+required-features = ["crash-test"]
+test = false
+doc = false
+
+[[test]]
+name = "crash"
+required-features = ["crash-test"]

@@ -95,6 +95,41 @@ pub fn apply_flac(
     req: &RenderRequest,
     cancel: &AtomicBool,
 ) -> Result<RenderReport> {
+    let (report, check) = render_flac_unverified(input, output, req, cancel)?;
+    let guard = OutputGuard::new(output);
+    check.run(output, cancel)?;
+    guard.keep();
+    Ok(report)
+}
+
+/// The verification [`apply_flac`] runs on its output, for a caller that verifies later (after
+/// syncing the file): the metadata as planned, the STREAMINFO as written, and the frames
+/// decoded by an independent decoder to the encoded samples.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FlacCheck(write::Expected);
+
+impl FlacCheck {
+    /// Checks the file at `output`.
+    ///
+    /// # Errors
+    /// [`Error::Corrupt`] naming `output` for any difference; [`Error::Io`];
+    /// [`Error::Cancelled`].
+    pub(crate) fn run(&self, output: &Path, cancel: &AtomicBool) -> Result<()> {
+        write::verify(output, &self.0, cancel)
+    }
+}
+
+/// [`apply_flac`] without the final verification, which the returned check performs. The
+/// output is kept when this returns `Ok`; the caller removes it if the check fails.
+///
+/// # Errors
+/// As for [`apply_flac`], verification failures excepted.
+pub(crate) fn render_flac_unverified(
+    input: &Path,
+    output: &Path,
+    req: &RenderRequest,
+    cancel: &AtomicBool,
+) -> Result<(RenderReport, FlacCheck)> {
     check_request(req)?;
     let edits = vorbis::edits_from(&req.tag_edits)?;
     let mut src = File::open(input).map_err(|e| io_error(input, e))?;
@@ -132,7 +167,7 @@ pub fn apply_flac(
         cancel,
     };
     let guard = OutputGuard::new(output);
-    let done = write::write_and_verify(&mut src, file, &job)?;
+    let (done, expected) = write::write(&mut src, file, &job)?;
     guard.keep();
     tracing::info!(
         path = %input.display(),
@@ -143,14 +178,14 @@ pub fn apply_flac(
         frames = target.frames_out,
         bytes = done.output_bytes,
         tags_added = matches!(plan.tags, TagOutcome::Edited(_)),
-        "rendered and verified"
+        "rendered"
     );
     let (vorbis_edit, tags_not_added) = match &plan.tags {
         TagOutcome::Edited(summary) => (Some(*summary), None),
         TagOutcome::NotAdded(reason) => (None, Some(reason.clone())),
         TagOutcome::NotRequested => (None, None),
     };
-    Ok(RenderReport {
+    let report = RenderReport {
         tags_added: vorbis_edit.is_some(),
         tags_not_added,
         tag_edit: None,
@@ -169,7 +204,8 @@ pub fn apply_flac(
         leading_bytes: layout.marker_offset,
         trailing_bytes: done.trailing_bytes,
         output_bytes: done.output_bytes,
-    })
+    };
+    Ok((report, FlacCheck(expected)))
 }
 
 /// The output's shape (the seed is set later), or why the source cannot be rendered DJ-safe.

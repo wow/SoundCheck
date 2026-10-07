@@ -10,6 +10,9 @@
 //! (frames re-encoded through [`flac`], every other metadata block carried, the result verified
 //! by a full decode), and [`id3`] edits SoundCheck's frames into an `ID3v2` tag while keeping
 //! every other frame's bytes.
+//! [`txn`] wraps the renders in write transactions: preflight checks, a temp file synced and
+//! verified, a backup, an atomic rename, the original's metadata restored, a sidecar, a journal
+//! that crash recovery and undo read.
 #![forbid(unsafe_code)]
 
 pub mod cache;
@@ -21,6 +24,7 @@ pub mod iff;
 pub mod probe;
 pub mod render;
 pub mod tags;
+pub mod txn;
 
 pub use cache::Cache;
 pub use decode::{Decoder, read_all};
