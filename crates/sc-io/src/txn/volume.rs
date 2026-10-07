@@ -102,7 +102,11 @@ pub(crate) fn root_for(mount: &Path, path: &Path) -> PathBuf {
 /// `startup` gives the startup disk's name when the system has one.
 pub(crate) fn volume_name(mount: &Path, startup: impl Fn() -> Option<String>) -> String {
     let parts: Vec<Component<'_>> = mount.components().collect();
-    if let [Component::RootDir, Component::Normal(v), Component::Normal(name)] = parts.as_slice()
+    if let [
+        Component::RootDir,
+        Component::Normal(v),
+        Component::Normal(name),
+    ] = parts.as_slice()
         && *v == "Volumes"
     {
         return clean(&name.to_string_lossy());
@@ -120,7 +124,10 @@ pub(crate) fn volume_name(mount: &Path, startup: impl Fn() -> Option<String>) ->
 
 /// A volume name usable as one folder name.
 fn clean(name: &str) -> String {
-    let name: String = name.chars().map(|c| if c == '/' { ':' } else { c }).collect();
+    let name: String = name
+        .chars()
+        .map(|c| if c == '/' { ':' } else { c })
+        .collect();
     match name.as_str() {
         "" | "." | ".." => "Volume".to_owned(),
         _ => name,

@@ -102,7 +102,10 @@ fn a_completed_undo_marks_what_it_undid() {
 fn the_journal_appends_reads_and_skips_cut_lines() {
     let dir = tempfile::tempdir().expect("temp dir");
     let journal = Journal::open(dir.path()).expect("opened");
-    assert!(journal.entries().expect("empty").is_empty());
+    assert!(
+        journal.entries().expect("read").is_empty(),
+        "no journal yet"
+    );
     journal
         .append(&planned("a", TxnKind::InPlace, "/m/x.wav"))
         .expect("appended");

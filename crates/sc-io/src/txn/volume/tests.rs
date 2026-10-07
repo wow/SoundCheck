@@ -74,7 +74,7 @@ fn the_system_reports_a_volume_with_free_space() {
     let path = dir.path().canonicalize().expect("resolves");
     let v = SystemVolumes.volume_of(&path).expect("volume");
     assert!(v.free_bytes > 0);
-    assert!(!v.name.is_empty());
+    assert!(!v.name.is_empty(), "a name");
     assert!(path.starts_with(&v.root), "{path:?} under {:?}", v.root);
     let file_meta = std::fs::metadata(&path).expect("metadata");
     assert_eq!(v.id, file_meta.dev());

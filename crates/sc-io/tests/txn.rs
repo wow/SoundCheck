@@ -11,7 +11,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
-use common::{FakeVolumes, Library, aiff, blake3_of, files_under, flac, temps_under, wav};
+use common::{
+    FakeVolumes, Library, aiff, assert_no_temps, blake3_of, files_under, flac, temps_under, wav,
+};
 use sc_core::{Error, InPlaceRefusal, RenderRequest, TagEdit};
 use sc_io::txn::{
     self, SidecarAfterUndo, State, Transaction, TxnKind, TxnOptions, hex, journal_entries,
@@ -28,7 +30,7 @@ const TAG_XATTR: &str = "user.soundcheck.test";
 /// A binary property list holding the Finder tag "Red\n6".
 const TAG_VALUE: &[u8] = b"bplist00\xa1\x01URed\n6\x08\x0a\x00\x00\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x10";
 
-const NOT_CANCELLED: AtomicBool = AtomicBool::new(false);
+static NOT_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 fn gain(gain_db: f64) -> RenderRequest {
     RenderRequest {
@@ -44,7 +46,7 @@ fn opts(lib: &Library) -> TxnOptions {
 /// 2001-09-09 01:46:40 UTC and a later instant, as file times.
 fn old_times() -> (SystemTime, SystemTime) {
     let created = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
-    (created, created + Duration::from_secs(86_400))
+    (created, created + Duration::from_hours(24))
 }
 
 /// Gives the file at `path` a Finder tag, mode 0640, an old modification and creation date.
@@ -69,18 +71,25 @@ fn decorate(path: &Path) {
 
 fn assert_decorated(path: &Path) {
     let value = xattr::get(path, TAG_XATTR).expect("xattr read");
-    assert_eq!(value.as_deref(), Some(TAG_VALUE), "Finder tag of {path:?}");
+    assert_eq!(
+        value.as_deref(),
+        Some(TAG_VALUE),
+        "Finder tag of {}",
+        path.display()
+    );
     let meta = std::fs::metadata(path).expect("metadata");
     assert_eq!(
         meta.permissions().mode() & 0o7777,
         0o640,
-        "mode of {path:?}"
+        "mode of {}",
+        path.display()
     );
     let (created, modified) = old_times();
     assert_eq!(
         meta.modified().expect("mtime"),
         modified,
-        "mtime of {path:?}"
+        "mtime of {}",
+        path.display()
     );
     if cfg!(target_os = "macos") {
         assert_eq!(
@@ -100,7 +109,10 @@ fn in_place_round_trip(name: &str, bytes: &[u8]) {
     let original = blake3_of(&path);
     let req = RenderRequest {
         tag_edits: vec![TagEdit {
-            label: if name.ends_with(".flac") {
+            label: if Path::new(name)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("flac"))
+            {
                 "SOUNDCHECK".into()
             } else {
                 "TXXX:SOUNDCHECK".into()
@@ -125,7 +137,8 @@ fn in_place_round_trip(name: &str, bytes: &[u8]) {
     assert_eq!(blake3_of(&backup), original, "the backup is the original");
     assert!(
         backup.ends_with(Path::new("music").join(name)),
-        "{backup:?}"
+        "{}",
+        backup.display()
     );
     assert_decorated(&path);
     assert_decorated(&backup);
@@ -141,7 +154,7 @@ fn in_place_round_trip(name: &str, bytes: &[u8]) {
     assert_eq!(doc["request"]["gain_db"], -3.0);
     assert_eq!(doc["backup"], backup.to_str().expect("UTF-8"));
     assert_eq!(doc["render"]["frames_out"], 6000);
-    assert!(temps_under(lib.dir.path()).is_empty());
+    assert_no_temps(lib.dir.path());
 
     let entries = journal_entries(&lib.backups).expect("journal");
     assert_eq!(entries.len(), 1);
@@ -163,7 +176,7 @@ fn in_place_round_trip(name: &str, bytes: &[u8]) {
     assert!(!sidecar.exists());
     assert_decorated(&path);
     assert!(backup.exists(), "the backup is kept");
-    assert!(temps_under(lib.dir.path()).is_empty());
+    assert_no_temps(lib.dir.path());
     match txn::undo(&path, &lib.backups) {
         Err(Error::NothingToUndo { .. }) => {}
         other => panic!("second undo: {other:?}"),
@@ -209,7 +222,7 @@ fn copy_to_a_folder_leaves_the_source_and_never_overwrites() {
         Err(Error::AlreadyExists { path: p }) => assert_eq!(p, report.output),
         other => panic!("second copy: {other:?}"),
     }
-    assert!(temps_under(lib.dir.path()).is_empty());
+    assert_no_temps(lib.dir.path());
 }
 
 /// Asserts that changing `path` in place with `tx` fails as `is` says, and that the file is
@@ -218,7 +231,7 @@ fn assert_refused(lib: &Library, tx: &Transaction<'_>, path: &Path, is: impl Fn(
     let before = std::fs::read(path).ok();
     let music_before = files_under(&lib.music);
     match tx.apply_in_place(path, &gain(-2.0), &opts(lib), &NOT_CANCELLED) {
-        Ok(_) => panic!("{path:?} was not refused"),
+        Ok(_) => panic!("{} was not refused", path.display()),
         Err(e) => assert!(is(&e), "unexpected error: {e}"),
     }
     assert_eq!(std::fs::read(path).ok(), before, "the file changed");
@@ -366,12 +379,15 @@ fn cancelling_during_the_render_leaves_the_original_and_no_temp() {
     });
     assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
     assert_eq!(blake3_of(&path), original);
-    assert!(temps_under(lib.dir.path()).is_empty());
+    assert_no_temps(lib.dir.path());
     let entries = journal_entries(&lib.backups).expect("journal");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].state, State::Failed);
     assert_eq!(entries[0].reached, State::Planned);
-    assert!(txn::recover(&lib.backups).expect("recover").is_empty());
+    assert!(
+        txn::recover(&lib.backups).expect("recover").is_empty(),
+        "nothing to recover"
+    );
 }
 
 #[test]

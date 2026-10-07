@@ -66,7 +66,9 @@ pub(crate) fn sync_path(path: &Path) -> Result<()> {
 /// Syncs the folder `dir` so a rename in it is durable; errors are only logged (some volumes
 /// refuse to sync a folder, and the rename itself has already happened).
 pub(crate) fn sync_dir(dir: &Path) {
-    let synced = File::open(dir).map_err(|e| io_err(dir, e)).and_then(|d| sync_file(&d, dir));
+    let synced = File::open(dir)
+        .map_err(|e| io_err(dir, e))
+        .and_then(|d| sync_file(&d, dir));
     if let Err(e) = synced {
         tracing::debug!(path = %dir.display(), error = %e, "folder sync failed (ignored)");
     }
@@ -221,7 +223,10 @@ pub(crate) fn temp_name(name: &OsStr, id: &str) -> OsString {
 
 /// `path` with ` (n)` before its extension: `a/b.wav` -> `a/b (2).wav`.
 pub(crate) fn numbered(path: &Path, n: u32) -> PathBuf {
-    let stem = path.file_stem().map(OsStr::to_string_lossy).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .map(OsStr::to_string_lossy)
+        .unwrap_or_default();
     let name = match path.extension() {
         Some(ext) => format!("{stem} ({n}).{}", ext.to_string_lossy()),
         None => format!("{stem} ({n})"),

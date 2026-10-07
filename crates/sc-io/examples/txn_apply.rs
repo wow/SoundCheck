@@ -24,12 +24,7 @@ fn main() -> ExitCode {
         ..RenderRequest::default()
     };
     let opts = TxnOptions::new(PathBuf::from(root));
-    match apply_in_place(
-        &PathBuf::from(file),
-        &req,
-        &opts,
-        &AtomicBool::new(false),
-    ) {
+    match apply_in_place(&PathBuf::from(file), &req, &opts, &AtomicBool::new(false)) {
         Ok(report) => {
             println!("{}", hex(&report.output_blake3));
             ExitCode::SUCCESS

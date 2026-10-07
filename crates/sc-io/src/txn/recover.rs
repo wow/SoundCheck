@@ -168,7 +168,10 @@ fn roll_back(e: &Entry) -> Result<Vec<String>> {
 fn complete(journal: &Journal, e: &Entry) -> Result<Vec<String>> {
     let meta_source = match e.kind {
         TxnKind::InPlace => e.backup.as_deref().ok_or_else(|| {
-            Error::Internal(format!("transaction {} was renamed without a backup", e.txn))
+            Error::Internal(format!(
+                "transaction {} was renamed without a backup",
+                e.txn
+            ))
         })?,
         TxnKind::ToFolder | TxnKind::Undo => e.source.as_path(),
     };

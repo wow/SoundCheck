@@ -153,11 +153,7 @@ pub(crate) fn check_not_rekordbox(path: &Path, volume: &Volume) -> Result<()> {
 /// # Errors
 /// [`Error::UnsupportedFormat`] for anything but WAV, RF64, AIFF, AIFF-C and FLAC; the header
 /// readers' errors.
-pub(crate) fn source(
-    path: PathBuf,
-    name: OsString,
-    req: &RenderRequest,
-) -> Result<Source> {
+pub(crate) fn source(path: PathBuf, name: OsString, req: &RenderRequest) -> Result<Source> {
     let mut file = File::open(&path).map_err(|e| io_err(&path, e))?;
     let mut magic = [0_u8; 12];
     let got = read_up_to(&mut file, &mut magic).map_err(|e| io_err(&path, e))?;

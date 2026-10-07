@@ -186,3 +186,60 @@ fn errors_map_to_their_class() {
         "\"needsReview\""
     );
 }
+
+#[test]
+fn transaction_errors_map_to_their_class_with_what_to_do() {
+    let ipc: IpcError = crate::Error::InPlaceRefused {
+        path: "a.wav".into(),
+        reason: crate::InPlaceRefusal::HardLinked { links: 2 },
+    }
+    .into();
+    assert_eq!(ipc.kind, IpcErrorKind::InPlaceRefused);
+    assert_eq!(
+        ipc.message,
+        "a.wav cannot be changed in place: it has 2 hard links, which replacing it would break. \
+         Write a copy to a folder"
+    );
+    let ipc: IpcError = crate::Error::NoSpace {
+        volume: "/Volumes/USB".into(),
+        needed_bytes: 100,
+        free_bytes: 10,
+    }
+    .into();
+    assert_eq!(ipc.kind, IpcErrorKind::NoSpace);
+    assert_eq!(serde_json::to_string(&ipc.kind).unwrap(), "\"noSpace\"");
+    let kinds = [
+        (
+            crate::Error::RekordboxUsbExport {
+                path: "a".into(),
+                volume: "/Volumes/U".into(),
+            },
+            "\"rekordboxUsbExport\"",
+        ),
+        (
+            crate::Error::VerifyFailed {
+                path: "a".into(),
+                detail: "d".into(),
+            },
+            "\"verifyFailed\"",
+        ),
+        (
+            crate::Error::FileChanged {
+                path: "a".into(),
+                detail: "d".into(),
+            },
+            "\"fileChanged\"",
+        ),
+        (
+            crate::Error::NothingToUndo { path: "a".into() },
+            "\"nothingToUndo\"",
+        ),
+        (
+            crate::Error::AlreadyExists { path: "a".into() },
+            "\"alreadyExists\"",
+        ),
+    ];
+    for (err, json) in kinds {
+        assert_eq!(serde_json::to_string(&err.kind()).unwrap(), json);
+    }
+}

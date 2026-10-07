@@ -13,7 +13,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use common::{Library, blake3_of, files_under, flac, temps_under, wav};
+use common::{Library, assert_no_temps, blake3_of, files_under, flac, wav};
 use sc_core::Error;
 use sc_io::txn::{
     self, BACKUP_ROOT_ENV, CRASH_ENV, Outcome, SIDECAR_SUFFIX, State, hex, journal_entries,
@@ -104,10 +104,7 @@ fn crash_case(example: &Path, name: &str, bytes: &[u8], step: State) {
         assert!(backups.is_empty(), "no backup left: {backups:?}");
         assert!(!sidecar_path(&path).exists());
     }
-    assert!(
-        temps_under(lib.dir.path()).is_empty(),
-        "{name} after {step:?}"
-    );
+    assert_no_temps(lib.dir.path());
     let locks = files_under(&lib.backups.join("locks"));
     assert!(locks.is_empty(), "lock files left: {locks:?}");
     assert!(
@@ -124,7 +121,7 @@ fn crash_case(example: &Path, name: &str, bytes: &[u8], step: State) {
         Err(e) => panic!("undo after {step:?}: {e}"),
     }
     assert_eq!(blake3_of(&path), original, "undo leaves the original");
-    assert!(temps_under(lib.dir.path()).is_empty());
+    assert_no_temps(lib.dir.path());
     let sidecars = files_under(&lib.music)
         .into_iter()
         .filter(|p| p.to_string_lossy().ends_with(SIDECAR_SUFFIX))

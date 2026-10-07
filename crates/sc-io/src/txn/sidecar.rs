@@ -149,10 +149,9 @@ pub fn sidecar_path(file: &Path) -> PathBuf {
 /// # Errors
 /// [`Error::Internal`] when the entry has no record of its render.
 pub(crate) fn render_text(entry: &Entry, notes: &[String]) -> Result<String> {
-    let record = entry
-        .record
-        .as_ref()
-        .ok_or_else(|| Error::Internal(format!("transaction {} has no render record", entry.txn)))?;
+    let record = entry.record.as_ref().ok_or_else(|| {
+        Error::Internal(format!("transaction {} has no render record", entry.txn))
+    })?;
     let original = entry.original_blake3.as_deref().map(|h| FileHash {
         blake3: h,
         bytes: entry.original_bytes.unwrap_or(0),
@@ -197,10 +196,7 @@ pub(crate) fn write(entry: &Entry, notes: &[String]) -> Result<PathBuf> {
     let text = render_text(entry, notes)?;
     let path = sidecar_path(&entry.path);
     let dir = path.parent().unwrap_or(Path::new("."));
-    let temp = dir.join(temp_name(
-        path.file_name().unwrap_or_default(),
-        &entry.txn,
-    ));
+    let temp = dir.join(temp_name(path.file_name().unwrap_or_default(), &entry.txn));
     remove_if_exists(&temp)?;
     let written = (|| {
         let mut f = OpenOptions::new()

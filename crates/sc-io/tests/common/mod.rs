@@ -142,6 +142,11 @@ pub fn temps_under(dir: &Path) -> Vec<PathBuf> {
     found
 }
 
+/// Asserts that no file under `dir` holds the temp marker.
+pub fn assert_no_temps(dir: &Path) {
+    assert_eq!(temps_under(dir), Vec::<PathBuf>::new(), "temp files left");
+}
+
 /// Every regular file under `dir` (recursively).
 pub fn files_under(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
