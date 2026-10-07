@@ -10,7 +10,7 @@ use super::*;
 use crate::flac::test_build;
 
 /// A 16-bit stereo 44.1 kHz WAV of `frames` frames.
-fn wav(frames: usize) -> Vec<u8> {
+pub(crate) fn wav(frames: usize) -> Vec<u8> {
     let data: Vec<u8> = test_build::samples(frames, 2, 16, 7)
         .iter()
         .flat_map(|s| i16::try_from(*s).expect("16-bit").to_le_bytes())
@@ -31,7 +31,7 @@ fn wav(frames: usize) -> Vec<u8> {
 }
 
 /// A 16-bit stereo 44.1 kHz FLAC of `frames` frames.
-fn flac(frames: usize) -> Vec<u8> {
+pub(crate) fn flac(frames: usize) -> Vec<u8> {
     let data = test_build::samples(frames, 2, 16, 9);
     let (frames, info) = test_build::encode(&data, 44_100, 2, 16);
     test_build::file(&[], &info, &[], &frames, &[])

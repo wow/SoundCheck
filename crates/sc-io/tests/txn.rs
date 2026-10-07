@@ -230,6 +230,7 @@ fn copy_to_a_folder_leaves_the_source_and_never_overwrites() {
 fn assert_refused(lib: &Library, tx: &Transaction<'_>, path: &Path, is: impl Fn(&Error) -> bool) {
     let before = std::fs::read(path).ok();
     let music_before = files_under(&lib.music);
+    let had_backup_root = lib.backups.exists();
     match tx.apply_in_place(path, &gain(-2.0), &opts(lib), &NOT_CANCELLED) {
         Ok(_) => panic!("{} was not refused", path.display()),
         Err(e) => assert!(is(&e), "unexpected error: {e}"),
@@ -241,6 +242,9 @@ fn assert_refused(lib: &Library, tx: &Transaction<'_>, path: &Path, is: impl Fn(
         .filter(|p| p.extension().is_some_and(|e| e != "jsonl" && e != "lock"))
         .collect();
     assert!(backups.is_empty(), "backups written: {backups:?}");
+    if !had_backup_root {
+        assert!(!lib.backups.exists(), "a refusal created the backup root");
+    }
 }
 
 fn refused_as(want: InPlaceRefusal) -> impl Fn(&Error) -> bool {
@@ -320,11 +324,13 @@ fn rekordbox_exports_and_full_volumes_are_refused() {
     assert_refused(&lib, &tx, &path, |e| {
         matches!(e, Error::RekordboxUsbExport { .. })
     });
-    let out = lib.dir.path().join("out");
+    let out = lib.dir.path().join("out").join("nested");
     match tx.apply_to_folder(&path, &out, &gain(-2.0), &opts(&lib), &NOT_CANCELLED) {
         Err(Error::RekordboxUsbExport { .. }) => {}
         other => panic!("copy onto a USB export: {other:?}"),
     }
+    assert!(!lib.dir.path().join("out").exists(), "no folder created");
+    assert!(!lib.backups.exists(), "no backup root created");
 
     let elsewhere = tempfile::tempdir().expect("temp dir");
     let full = FakeVolumes {
@@ -453,4 +459,62 @@ fn undo_walks_back_through_two_changes_and_refuses_an_edited_file() {
     txn::undo(&path, &lib.backups).expect("undo 1");
     assert_eq!(blake3_of(&path), original);
     assert!(!sidecar_path(&path).exists());
+}
+
+/// macOS: a 70,000-byte resource fork (reads of it are cut to the buffer unless sized first).
+#[cfg(target_os = "macos")]
+#[test]
+fn a_large_resource_fork_survives_in_the_output_the_backup_and_the_undo() {
+    let lib = Library::new();
+    let path = lib.add("fork.wav", &wav(3000, 31));
+    let fork: Vec<u8> = (0..70_000_u32).map(|i| (i % 253) as u8).collect();
+    std::fs::write(path.join("..namedfork/rsrc"), &fork).expect("resource fork written");
+    let original = blake3_of(&path);
+    let report =
+        txn::apply_in_place(&path, &gain(-2.0), &opts(&lib), &NOT_CANCELLED).expect("applied");
+    assert!(report.notes.is_empty(), "{:?}", report.notes);
+    let read_fork = |p: &Path| std::fs::read(p.join("..namedfork/rsrc")).expect("fork");
+    assert_eq!(read_fork(&path).len(), fork.len());
+    assert_eq!(read_fork(&path), fork, "output");
+    let backup = report.backup.expect("backup");
+    assert_eq!(read_fork(&backup), fork, "backup");
+    txn::undo(&path, &lib.backups).expect("undone");
+    assert_eq!(blake3_of(&path), original);
+    assert_eq!(read_fork(&path), fork, "after undo");
+}
+
+/// macOS (case-insensitive, normalisation-insensitive volumes): one file reached under two
+/// spellings is one file in the journal.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_file_is_known_by_its_name_on_disk_whatever_spelling_reaches_it() {
+    let lib = Library::new();
+    let path = lib.add("track.wav", &wav(3000, 32));
+    let original = blake3_of(&path);
+    let report = txn::apply_in_place(
+        &lib.music.join("Track.wav"),
+        &gain(-2.0),
+        &opts(&lib),
+        &NOT_CANCELLED,
+    )
+    .expect("applied");
+    assert_eq!(report.output, path, "the name as stored");
+    txn::undo(&lib.music.join("TRACK.WAV"), &lib.backups).expect("undone");
+    assert_eq!(blake3_of(&path), original);
+
+    let nfc = "Caf\u{e9}.wav";
+    let nfd = "Cafe\u{301}.wav";
+    let stored = lib.add(nfd, &wav(3000, 33));
+    let original = blake3_of(&stored);
+    let report = txn::apply_in_place(
+        &lib.music.join(nfc),
+        &gain(-2.0),
+        &opts(&lib),
+        &NOT_CANCELLED,
+    )
+    .expect("applied");
+    assert_eq!(report.output, stored);
+    assert!(sidecar_path(&stored).exists());
+    txn::undo(&lib.music.join(nfc), &lib.backups).expect("undone through the other form");
+    assert_eq!(blake3_of(&stored), original);
 }

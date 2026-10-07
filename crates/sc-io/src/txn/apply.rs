@@ -404,3 +404,6 @@ fn fail(plan: &Plan<'_>, error: Error) -> Error {
     }
     error
 }
+
+#[cfg(test)]
+mod tests;

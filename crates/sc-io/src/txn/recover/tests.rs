@@ -157,3 +157,71 @@ fn no_backup_root_means_nothing_to_recover() {
         "recovery creates nothing"
     );
 }
+
+#[test]
+fn a_transaction_on_an_unmounted_volume_stays_pending() {
+    let s = scene();
+    let music = s.target.parent().expect("folder").to_path_buf();
+    // The volume is gone: its folder does not exist.
+    std::fs::remove_dir_all(&music).expect("unmounted");
+    let r = recover(&s.root).expect("read");
+    assert!(r.recovered.is_empty(), "{r:?}");
+    assert_eq!(r.pending.len(), 1);
+    assert!(r.pending[0].reason.contains("not reachable"), "{r:?}");
+    assert!(s.backup.exists(), "nothing touched");
+    let e = s.journal.entry("t").expect("read").expect("entry");
+    assert_eq!(e.state, State::BackedUp, "no rolled-back record");
+    std::fs::create_dir_all(&music).expect("mounted again");
+    std::fs::write(&s.target, ORIGINAL).expect("original");
+    assert_eq!(recover(&s.root).expect("now").recovered.len(), 1);
+}
+
+#[test]
+fn a_cleanup_that_fails_stays_pending_and_is_retried() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = scene();
+    std::fs::write(&s.target, ORIGINAL).expect("original");
+    std::fs::write(&s.temp, OUTPUT).expect("temp");
+    let music = s.target.parent().expect("folder").to_path_buf();
+    let mode = |m| std::fs::set_permissions(&music, std::fs::Permissions::from_mode(m));
+    mode(0o555).expect("read-only folder");
+    let r = recover(&s.root).expect("read");
+    mode(0o755).expect("writable again");
+    assert!(r.recovered.is_empty(), "{r:?}");
+    assert_eq!(r.pending.len(), 1);
+    let e = s.journal.entry("t").expect("read").expect("entry");
+    assert!(!e.state.is_final());
+    assert!(
+        e.notes.iter().any(|n| n.contains("cleanup failed")),
+        "{:?}",
+        e.notes
+    );
+    let r = recover(&s.root).expect("retry");
+    assert_eq!(r.recovered.len(), 1);
+    assert!(!s.temp.exists() && !s.backup.exists());
+}
+
+#[test]
+fn one_failing_transaction_does_not_stop_the_others() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = scene();
+    std::fs::write(&s.target, ORIGINAL).expect("original");
+    std::fs::write(&s.temp, OUTPUT).expect("temp");
+    // A second transaction in another folder, interrupted after planning.
+    let other_dir = s.root.parent().expect("base").join("other");
+    std::fs::create_dir(&other_dir).expect("folder");
+    let mut planned = Line::new("u", State::Planned);
+    planned.kind = Some(TxnKind::ToFolder);
+    planned.path = Some(other_dir.join("b.wav"));
+    planned.source = Some(s.target.clone());
+    planned.temp = Some(other_dir.join(".b.wav.soundcheck-tmp-u"));
+    s.journal.append(&planned).expect("planned");
+    let music = s.target.parent().expect("folder").to_path_buf();
+    std::fs::set_permissions(&music, std::fs::Permissions::from_mode(0o555)).expect("ro");
+    let r = recover(&s.root).expect("read");
+    std::fs::set_permissions(&music, std::fs::Permissions::from_mode(0o755)).expect("rw");
+    assert_eq!(r.pending.len(), 1, "{r:?}");
+    assert_eq!(r.pending[0].txn, "t");
+    assert_eq!(r.recovered.len(), 1);
+    assert_eq!(r.recovered[0].txn, "u");
+}

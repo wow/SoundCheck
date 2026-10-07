@@ -47,7 +47,7 @@ pub(crate) mod crash;
 mod finish;
 mod fsx;
 pub mod journal;
-mod meta;
+pub(crate) mod meta;
 mod preflight;
 mod recover;
 pub mod sidecar;
@@ -286,4 +286,4 @@ pub fn journal_entries(backup_root: &Path) -> Result<Vec<Entry>> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

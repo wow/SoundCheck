@@ -137,3 +137,28 @@ fn a_held_lock_cannot_be_taken_and_is_removed_when_dropped() {
     let again = TxnLock::try_acquire(&journal, "t").expect("io");
     assert!(again.is_some());
 }
+
+#[test]
+fn a_torn_last_line_does_not_swallow_the_next_record() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let journal = Journal::open(dir.path()).expect("opened");
+    journal
+        .append(&planned("a", TxnKind::InPlace, "/m/x.wav"))
+        .expect("appended");
+    let path = dir.path().join(JOURNAL_FILE);
+    let mut text = std::fs::read_to_string(&path).expect("journal");
+    text.push_str("{\"txn\":\"a\",\"state\":\"temp_wr");
+    std::fs::write(&path, &text).expect("torn");
+    journal
+        .append(&Line::new("a", State::TempWritten))
+        .expect("appended after the torn line");
+    journal
+        .append(&planned("b", TxnKind::ToFolder, "/o/y.wav"))
+        .expect("appended");
+    let entries = journal.entries().expect("read");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].state, State::TempWritten);
+    assert_eq!(entries[1].txn, "b");
+    let text = std::fs::read_to_string(&path).expect("journal");
+    assert!(text.lines().all(|l| l.starts_with('{')), "{text}");
+}
