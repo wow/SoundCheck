@@ -1,13 +1,16 @@
-//! Checks made before a transaction writes anything.
+//! Checks made before a transaction creates anything.
 //!
-//! In place (and for an undo), in this order: the path is a regular file and not a symbolic
-//! link; it is not on a rekordbox USB export; it is not Finder-locked; it has no other hard
-//! link; it has no access control list; it and its folder are writable (`access(2)`, and the
-//! folder not locked). Writing a copy to a folder only reads the source, so of these only the
-//! rekordbox check applies, to the destination folder. Then the container decides the render
-//! (WAV, RF64, AIFF, AIFF-C: the IFF render; FLAC: the FLAC render; anything else is refused)
-//! and its header gives an upper bound of the output's size, and every volume written to must
-//! keep [`SPACE_MARGIN_BYTES`] free after the write.
+//! Paths are first resolved to the names the file system holds ([`real_path`]). Refused for
+//! any transaction: a source or target in the backup root ([`is_under_backup_root`]). In place
+//! (and for an undo), in this order: the path is a regular file and not a symbolic link; it is
+//! not on a rekordbox USB export; it is not Finder-locked; it belongs to this user; it has no
+//! other hard link; it has no access control list; it and its folder are writable
+//! (`access(2)`, and the folder not locked). Writing a copy to a folder only reads the source,
+//! so of these only the rekordbox check applies, to the destination folder (or its nearest
+//! existing parent when it does not exist yet). Then the container decides the render (WAV,
+//! RF64, AIFF, AIFF-C: the IFF render; FLAC: the FLAC render; anything else is refused) and
+//! its header gives an upper bound of the output's size, and every volume written to must keep
+//! [`SPACE_MARGIN_BYTES`] free after the write.
 
 use std::ffi::OsString;
 use std::fs::File;

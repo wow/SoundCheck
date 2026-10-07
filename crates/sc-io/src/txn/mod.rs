@@ -5,42 +5,58 @@
 //! [`Transaction::apply_in_place`] runs these steps; each state change is one synced line in
 //! `journal.jsonl` in the backup root (see [`journal`]):
 //!
-//! 1. **Preflight** (nothing written yet): refuses a file on a rekordbox USB export (a
-//!    `PIONEER` folder at its volume's root, [`sc_core::Error::RekordboxUsbExport`]), a
-//!    symbolic link, a Finder-locked file, a file with other hard links, a file with an access
-//!    control list (detected through `exacl` on macOS and the POSIX ACL attribute on Linux:
-//!    a renamed file would silently lose it), a read-only file or folder
+//! 1. **Preflight** (nothing created yet, not even the backup root or a destination folder):
+//!    the path is resolved to the name the file system holds (so `Track.wav` and `track.wav`,
+//!    or precomposed and decomposed accents, are one file in the journal). Refused: a path in
+//!    the backup root ([`sc_core::Error::InvalidArgument`]; library scanners must skip it, see
+//!    [`is_under_backup_root`]); a file on a rekordbox USB export (a `PIONEER` folder at its
+//!    volume's root, [`sc_core::Error::RekordboxUsbExport`]); a symbolic link, a
+//!    Finder-locked file, a file of another user, a file with other hard links, a file with an
+//!    access control list (detected through `exacl` on macOS and the POSIX ACL attribute on
+//!    Linux: a renamed file would silently lose it), a read-only file or folder
 //!    ([`sc_core::Error::InPlaceRefused`]); a container other than WAV, RF64, AIFF, AIFF-C or
 //!    FLAC ([`sc_core::Error::UnsupportedFormat`]); and a volume that would keep less than
 //!    64 MiB free: the file's volume must hold an upper bound of the output, the backup's
-//!    volume a copy of the original ([`sc_core::Error::NoSpace`]). The original's metadata
-//!    (extended attributes, dates, mode) is read now. State `planned`.
+//!    volume a copy of the original ([`sc_core::Error::NoSpace`]). Then the target is locked
+//!    for the whole transaction (a second transaction on it waits), the in-place checks run
+//!    again, and the original's metadata (extended attributes at full size, dates, mode,
+//!    owner, group) and identity (device, inode, length, modification and change time) are
+//!    read. State `planned`.
 //! 2. **Temp file**: `.<name>.soundcheck-tmp-<id>` in the same folder, created new by the
 //!    render ([`crate::render::apply_iff`], or the FLAC render with its verification deferred),
-//!    then synced (`F_FULLFSYNC`, plain `fsync` where a volume refuses it). `temp_written`.
-//! 3. **Verify**: the synced file is read back (WAV/AIFF: header and audio hash; FLAC: the full
-//!    independent decode) and hashed whole (BLAKE3). `verified`.
-//! 4. **Backup**: the original is copied, streamed, to
-//!    `<backup root>/<yyyy-mm-dd>/<volume name>/<path relative to the volume>` (UTC date; the
-//!    volume rule is in [`volume`]), first under a temp name, synced, given the original's
-//!    metadata, then renamed to the first free name (`a.wav`, `a (2).wav`, ...): a backup is
-//!    never overwritten. Its BLAKE3 is the original's. `backed_up`.
-//! 5. **Rename**: if the original's length and modification time are unchanged, the temp file
-//!    is renamed over it (atomic within a folder) and the folder synced (errors ignored).
-//!    `renamed`. This is the only step that changes the path, and nothing before it does.
-//! 6. **Metadata**: every extended attribute, the creation date, the modification time
-//!    (with [`TxnOptions::keep_mtime`]) and the mode of the original. `metadata_done`.
+//!    then synced (`F_FULLFSYNC`; plain `fsync` only where a volume does not support it).
+//!    `temp_written`.
+//! 3. **Verify**: the synced file is read back (WAV/AIFF: header, audio hash, and every carried
+//!    chunk and the trailing bytes against the source; FLAC: the full independent decode) and
+//!    hashed whole (BLAKE3). `verified`.
+//! 4. **Backup**: with the original's identity unchanged, it is copied by the system (an APFS
+//!    clone or `copyfile(3)`: data, extended attributes, the whole resource fork) to
+//!    `<backup root>/<yyyy-mm-dd>/<volume name>/<path relative to the volume>` (the local date;
+//!    the volume rule is in [`volume`]), first under a temp name, synced, hashed by reading it
+//!    back, given the original's dates and mode; its final name (the first free one of
+//!    `a.wav`, `a (2).wav`, ...: a backup is never overwritten) is journaled before the rename
+//!    to it. Its BLAKE3 is the original's. `backed_up`.
+//! 5. **Rename**: if the original's identity is still unchanged, the temp file is renamed over
+//!    it (atomic within a folder) and the folder synced (errors ignored). `renamed`. This is
+//!    the only step that changes the path, and nothing before it does.
+//! 6. **Metadata**: every extended attribute (read back to check), the group, the creation
+//!    date, the modification time (with [`TxnOptions::keep_mtime`]) and the mode of the
+//!    original. `metadata_done`.
 //! 7. **Sidecar** `<file>.soundcheck.json` next to the file (see [`sidecar`]), written
 //!    atomically. `done`.
 //!
-//! A failure or a cancel before the rename removes the temp file and the backup and journals
-//! `failed`; the original is untouched. After the rename nothing is undone: what could not be
+//! A failure or a cancel before the rename removes the temp file (and the backup, once the file
+//! is checked to hold the original) and journals `failed`; the original is untouched. When
+//! cleanup fails, or a failed rename may have happened, nothing is guessed: the transaction
+//! stays pending for [`recover`]. After the rename nothing is undone: what could not be
 //! restored is reported in [`TxnReport::notes`]. [`Transaction::apply_to_folder`] does the
-//! same into another folder without a backup and never replaces an existing file.
-//! [`recover`] finishes or rolls back transactions a crash interrupted (call it at start and
-//! before every batch); [`Transaction::undo`] puts the newest backup of a file back through the
-//! same steps. With the `crash-test` feature (tests only) the process aborts after the step
-//! named by `SC_TEST_CRASH_AFTER_STEP` (see [`CRASH_ENV`]).
+//! same into another folder without a backup and never replaces an existing file (on exFAT and
+//! FAT volumes, which have no exclusive rename, through an empty placeholder created
+//! exclusively). [`recover`] finishes or rolls back transactions a crash interrupted and leaves
+//! unreachable ones (an unmounted volume) pending (call it at start and before every batch);
+//! [`Transaction::undo`] puts the newest backup of a file back through the same steps. With
+//! the `crash-test` feature (tests only) the process aborts at the crash point named by
+//! `SC_TEST_CRASH_AFTER_STEP` (see [`CRASH_ENV`]).
 
 mod apply;
 pub(crate) mod crash;

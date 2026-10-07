@@ -58,12 +58,14 @@ RENDER (streamed)
              verified by a symphonia decode of the written frames against the encoder's BLAKE3 (the STREAMINFO MD5 is the encoder's, over the same bytes);
              a source with frames past its declared total is refused; about 3.5 s for a 6-minute 44.1 kHz 24-bit stereo FLAC on an M1, verify included)
   mp3:      global_gain patch in place (no decode/encode) -> tagcopy append in padding
-  transaction (`sc_io::txn`): preflight (rekordbox USB export, symlink, Finder lock, hard link, ACL, read-only, free space + 64 MiB, container)
+  transaction (`sc_io::txn`): preflight before creating anything (on-disk name via F_GETPATH; backup root, rekordbox USB export, symlink, Finder lock,
+             other owner, hard link, ACL, read-only, free space + 64 MiB, container) -> per-target lock, file identity (dev, inode, size, mtime, ctime)
              -> render into `.<name>.soundcheck-tmp-<id>` (created new, same folder) -> sync (F_FULLFSYNC, plain fsync fallback) -> verify the synced file
-             (WAV/AIFF: header + audio BLAKE3; FLAC: the full independent decode) -> streamed backup to `<backup root>/<yyyy-mm-dd>/<volume>/<relative path>`
-             (never overwritten, synced, original's metadata, BLAKE3) -> atomic rename + folder sync -> xattrs, creation date, mtime, mode restored -> sidecar
+             (WAV/AIFF: header, audio BLAKE3, carried chunks vs source; FLAC: the full independent decode) -> system-copy backup to
+             `<backup root>/<local yyyy-mm-dd>/<volume>/<relative path>` (never overwritten, synced, read-back BLAKE3, name journaled first)
+             -> identity re-checked -> atomic rename + folder sync -> xattrs (full size, read back), group, creation date, mtime, mode -> sidecar
              `<file>.soundcheck.json` (atomic); one synced `journal.jsonl` line per state in the backup root, a lock file per running transaction;
-             `recover` rolls back before the rename and completes after it; `undo` restores the newest backup through the same steps;
+             `recover` rolls back before the rename and completes after it, leaving unreachable or failing entries pending; `undo` restores the newest backup through the same steps;
              copy-to-folder mode: same steps, no backup, never replaces a file. Crash matrix behind the test-only `crash-test` feature
   batch artefacts: soundcheck-rekordbox.xml, grid-report.csv; per-file grid-check
 ```

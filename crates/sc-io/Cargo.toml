@@ -77,3 +77,7 @@ doc = false
 [[test]]
 name = "crash"
 required-features = ["crash-test"]
+
+[[test]]
+name = "disk_images"
+required-features = ["crash-test"]
