@@ -9,6 +9,7 @@
 //! previous change when the file had been changed more than once. The backup is kept.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 use sc_core::{Error, Result};
 
@@ -17,10 +18,11 @@ use super::crash;
 use super::finish::metadata_step;
 use super::fsx::{hash_file, hex, io_err, new_txn_id, sync_dir, system_copy_hashed, temp_name};
 use super::journal::{Entry, Journal, Line, State, TargetLock, TxnKind, TxnLock};
-use super::meta::{FileId, snapshot};
+use super::meta::{FileId, folder_id, snapshot};
 use super::preflight::{check_in_place, check_outside_backups, check_space, resolve};
 use super::recover::settle_failure;
 use super::sidecar;
+use super::volume::volume_identity;
 
 /// What happened to the sidecar.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +66,7 @@ pub(super) fn undo(tx: &Transaction<'_>, path: &Path, backup_root: &Path) -> Res
     check_outside_backups(&full, backup_root)?;
     let volume = check_in_place(&full, &dir, tx.volumes)?;
     let journal = Journal::open(backup_root)?;
-    let _target_lock = TargetLock::acquire(&journal, &full)?;
+    let _target_lock = TargetLock::acquire(&journal, &full, &AtomicBool::new(false))?;
     let target = journal
         .entries()?
         .into_iter()
@@ -105,6 +107,8 @@ pub(super) fn undo(tx: &Transaction<'_>, path: &Path, backup_root: &Path) -> Res
     line.original_bytes = target.original_bytes;
     line.keep_mtime = Some(true);
     line.sidecar = Some(target.sidecar);
+    line.volume = volume_identity(&dir, true);
+    line.folder = folder_id(&dir);
     journal.append(&line)?;
     crash::after(State::Planned);
 

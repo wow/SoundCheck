@@ -162,3 +162,25 @@ fn a_torn_last_line_does_not_swallow_the_next_record() {
     let text = std::fs::read_to_string(&path).expect("journal");
     assert!(text.lines().all(|l| l.starts_with('{')), "{text}");
 }
+
+#[test]
+fn waiting_for_a_target_lock_stops_on_cancel() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let dir = tempfile::tempdir().expect("temp dir");
+    let journal = Journal::open(dir.path()).expect("opened");
+    let target = Path::new("/m/x.wav");
+    let never = AtomicBool::new(false);
+    let held = TargetLock::acquire(&journal, target, &never).expect("free");
+    let cancel = AtomicBool::new(false);
+    let started = std::time::Instant::now();
+    let waited = std::thread::scope(|s| {
+        let waiter = s.spawn(|| TargetLock::acquire(&journal, target, &cancel));
+        std::thread::sleep(LOCK_POLL * 2);
+        cancel.store(true, Ordering::Relaxed);
+        waiter.join().expect("joined")
+    });
+    assert!(matches!(waited, Err(Error::Cancelled)), "{waited:?}");
+    assert!(started.elapsed() < LOCK_POLL * 10);
+    drop(held);
+    assert!(TargetLock::acquire(&journal, target, &never).is_ok());
+}

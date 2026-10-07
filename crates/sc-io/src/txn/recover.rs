@@ -15,7 +15,9 @@
 //!   holds the original's; from the source for a copy or an undo) and the sidecar written (or,
 //!   for an undo, settled). Outcome [`Outcome::Completed`].
 //!
-//! A transaction whose target folder cannot be reached (an unmounted volume), whose cleanup
+//! A transaction whose target folder cannot be reached (an unmounted volume) or is not the
+//! one it ran in (the volume identity, or the folder's inode and birth time, differ: an empty
+//! mount folder left behind, another stick with the same name), whose cleanup
 //! fails, or whose lock is held stays pending, untouched, and is listed in
 //! [`RecoveryReport::pending`]; a later recovery tries again. One transaction's failure never
 //! stops the others. Each recovered transaction gets a `recovered` line, so running recovery
@@ -28,7 +30,8 @@ use sc_core::{Error, Result};
 use super::finish::metadata_step;
 use super::fsx::{exists, hash_file, hex, remove_if_exists};
 use super::journal::{Entry, Journal, Line, Outcome, State, TxnKind, TxnLock};
-use super::meta::snapshot;
+use super::meta::{folder_id, snapshot};
+use super::volume::volume_identity;
 use super::{sidecar, undo};
 
 /// A transaction recovery ended.
@@ -149,17 +152,37 @@ pub fn recover(backup_root: &Path) -> Result<RecoveryReport> {
 }
 
 /// Why `e` cannot be recovered now: its target folder (or its source's, or its backup's)
-/// is not there, as when its volume is not mounted.
+/// is not there, as when its volume is not mounted; or the target folder is not the one the
+/// transaction ran in: another volume's (a different stick with the same name), or an empty
+/// mount point left on the startup disk (its volume identity or its inode and birth time
+/// differ from the journaled ones).
 fn unreachable(e: &Entry) -> Option<String> {
     let mut folders = vec![e.path.parent(), e.source.parent()];
     if let Some(b) = e.backup.as_deref().or(e.backup_target.as_deref()) {
         folders.push(b.parent().and_then(Path::parent));
     }
-    folders
-        .into_iter()
-        .flatten()
-        .find(|d| !d.is_dir())
-        .map(|d| format!("{} is not reachable (volume not mounted?)", d.display()))
+    if let Some(d) = folders.into_iter().flatten().find(|d| !d.is_dir()) {
+        return Some(format!(
+            "{} is not reachable (volume not mounted?)",
+            d.display()
+        ));
+    }
+    let dir = e.path.parent()?;
+    let other = || {
+        Some(format!(
+            "{} is not the folder the change was made in (another or no volume mounted there?)",
+            dir.display()
+        ))
+    };
+    if e.volume.is_some() && volume_identity(dir, false) != e.volume {
+        return other();
+    }
+    if let Some((ino, birth)) = e.folder
+        && folder_id(dir).is_none_or(|(i, b)| i != ino || (birth.is_some() && b != birth))
+    {
+        return other();
+    }
+    None
 }
 
 /// Whether the file at `path` hashes to `want` (hex).
@@ -267,11 +290,15 @@ fn roll_back(e: &Entry) -> Result<Vec<String>> {
         && backups.iter().any(|b| exists(b))
         && holds(&e.path, e.original_blake3.as_deref());
     for backup in backups.into_iter().filter(|b| exists(b)) {
-        if is_placeholder(backup, Some(1)) || original_in_place {
+        // Only a placeholder, or a copy of the original while the original is in place, is
+        // this transaction's to delete; anything else at that name is kept.
+        let ours = is_placeholder(backup, Some(1))
+            || (original_in_place && holds(backup, e.original_blake3.as_deref()));
+        if ours {
             remove_if_exists(backup)?;
         } else {
             notes.push(format!(
-                "backup kept at {}: the file no longer matches it",
+                "kept {}: it is not a copy of the original this change recorded",
                 backup.display()
             ));
         }

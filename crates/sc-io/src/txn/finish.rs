@@ -98,6 +98,8 @@ pub(super) fn entry_of(plan: &Plan<'_>, req: &RenderRequest, p: &Prepared) -> En
         backup_temp: plan.backup.as_ref().map(|(_, t)| t.clone()),
         backup: p.backup.clone(),
         backup_target: None,
+        volume: None,
+        folder: None,
         keep_mtime: plan.opts.keep_mtime,
         sidecar: plan.opts.sidecar,
         undoes: None,

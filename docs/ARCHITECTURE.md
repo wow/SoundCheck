@@ -59,7 +59,8 @@ RENDER (streamed)
              a source with frames past its declared total is refused; about 3.5 s for a 6-minute 44.1 kHz 24-bit stereo FLAC on an M1, verify included)
   mp3:      global_gain patch in place (no decode/encode) -> tagcopy append in padding
   transaction (`sc_io::txn`): preflight before creating anything (on-disk name via F_GETPATH; backup root, rekordbox USB export, symlink, Finder lock,
-             other owner, hard link, ACL, read-only, free space + 64 MiB, container) -> per-target lock, file identity (dev, inode, size, mtime, ctime)
+             other owner, hard link, ACL, read-only, free space + 64 MiB, container), file identity (dev, inode, size, mtime, ctime) -> per-target lock
+             (polled, cancellable; refused if the file changed while waiting), volume UUID + folder inode/birth journaled for recovery
              -> render into `.<name>.soundcheck-tmp-<id>` (created new, same folder) -> sync (F_FULLFSYNC, plain fsync fallback) -> verify the synced file
              (WAV/AIFF: header, audio BLAKE3, carried chunks vs source; FLAC: the full independent decode) -> system-copy backup to
              `<backup root>/<local yyyy-mm-dd>/<volume>/<relative path>` (never overwritten, synced, read-back BLAKE3, name journaled first)

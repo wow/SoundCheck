@@ -22,15 +22,15 @@ use super::fsx::{
     sync_path, system_copy_hashed, temp_name, utc_timestamp,
 };
 use super::journal::{Journal, Line, State, TargetLock, TxnKind, TxnLock};
-use super::meta::{FileId, FileMeta, restore, snapshot};
+use super::meta::{FileId, FileMeta, folder_id, restore, snapshot};
 use super::preflight::{
     Container, Source, check_in_place, check_not_rekordbox, check_outside_backups, check_space,
-    nearest_existing, resolve, source,
+    name_in_dir, nearest_existing, resolve, source,
 };
 use super::recover::settle_failure;
 use super::sidecar::{Record, RenderSummary};
 use super::verify::{Check, verify};
-use super::volume::Volume;
+use super::volume::{Volume, volume_identity};
 use super::{Transaction, TxnOptions, TxnReport};
 use crate::render::{self, RenderReport, check_cancel};
 
@@ -45,6 +45,8 @@ struct Checked {
     target_dir: PathBuf,
     /// The target folder does not exist yet.
     create_dir: bool,
+    /// The source's identity when it was checked, before waiting for the target lock.
+    source_id: FileId,
     volume: Volume,
 }
 
@@ -87,7 +89,11 @@ pub(super) fn apply(
     if checked.create_dir {
         std::fs::create_dir_all(&checked.target_dir).map_err(|e| io_err(&checked.target_dir, e))?;
     }
-    let _target_lock = TargetLock::acquire(&journal, &checked.target)?;
+    #[cfg(test)]
+    if let Some(hook) = tx.hooks.after_check {
+        hook();
+    }
+    let _target_lock = TargetLock::acquire(&journal, &checked.target, cancel)?;
     let plan = plan(tx, checked, journal, opts)?;
     let lock = TxnLock::try_acquire(&plan.journal, &plan.id)?
         .ok_or_else(|| Error::Internal(format!("transaction {} is locked", plan.id)))?;
@@ -144,16 +150,28 @@ fn check(
             (TxnKind::ToFolder, target_dir, create, volume)
         }
     };
-    let target = target_dir.join(&name);
+    // A copy is named after the path the user gave, spelled as its folder spells it (with
+    // hard links, the resolved name may be another link's).
+    let out_name = match (kind, path.parent(), path.file_name()) {
+        (TxnKind::ToFolder, Some(given_dir), Some(given)) => {
+            let given_dir = if given_dir.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                given_dir
+            };
+            name_in_dir(given_dir, given, FileId::read(&full)?.ino)
+        }
+        _ => name.clone(),
+    };
+    let target = target_dir.join(&out_name);
     if kind == TxnKind::ToFolder {
         check_outside_backups(&target, &opts.backup_root)?;
         if exists(&target) {
             return Err(Error::AlreadyExists { path: target });
         }
     }
-    let src_len = std::fs::metadata(&full)
-        .map_err(|e| io_err(&full, e))?
-        .len();
+    let source_id = FileId::read(&full)?;
+    let src_len = source_id.len;
     let src = source(full, name, req)?;
     if kind == TxnKind::InPlace {
         let (root, _) = nearest_existing(&opts.backup_root)?;
@@ -168,6 +186,7 @@ fn check(
         target,
         target_dir,
         create_dir,
+        source_id,
         volume,
     })
 }
@@ -186,6 +205,16 @@ fn plan<'a>(
         return Err(Error::AlreadyExists { path: c.target });
     }
     let meta = snapshot(&c.src.path)?;
+    // Another transaction may have changed the file while this one waited for the lock: it
+    // must not render that one's output again.
+    if meta.id != c.source_id {
+        return Err(Error::FileChanged {
+            path: c.src.path,
+            detail: "while SoundCheck was waiting to process it (another change of it ran \
+                     first); it was left as it is. Look at it and try again"
+                .into(),
+        });
+    }
     let id = new_txn_id();
     let backup = (c.kind == TxnKind::InPlace).then(|| {
         let dest = backup_dest(journal.root(), &c.volume, &c.src.path);
@@ -229,6 +258,8 @@ fn planned_line(plan: &Plan<'_>) -> Line {
     line.backup_temp = plan.backup.as_ref().map(|(_, t)| t.clone());
     line.keep_mtime = Some(plan.opts.keep_mtime);
     line.sidecar = Some(plan.opts.sidecar);
+    line.volume = volume_identity(&plan.target_dir, true);
+    line.folder = folder_id(&plan.target_dir);
     line
 }
 

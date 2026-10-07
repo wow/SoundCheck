@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -135,6 +136,12 @@ pub(crate) struct Line {
     /// The backup's final name, journaled before the backup is renamed to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup_target: Option<PathBuf>,
+    /// The target volume's lasting identity ([`super::volume::volume_identity`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<String>,
+    /// The target folder's inode and birth time (seconds), to know it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<(u64, Option<i64>)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_mtime: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -173,6 +180,8 @@ impl Line {
             backup_temp: None,
             backup: None,
             backup_target: None,
+            volume: None,
+            folder: None,
             keep_mtime: None,
             sidecar: None,
             undoes: None,
@@ -213,6 +222,10 @@ pub struct Entry {
     pub backup: Option<PathBuf>,
     /// The name the backup was being renamed to (it may exist without `backed_up`).
     pub backup_target: Option<PathBuf>,
+    /// The target volume's lasting identity, when it was known.
+    pub volume: Option<String>,
+    /// The target folder's inode and birth time (seconds), when they were known.
+    pub folder: Option<(u64, Option<i64>)>,
     /// Whether the modification time is restored.
     pub keep_mtime: bool,
     /// Whether a sidecar is written.
@@ -260,6 +273,8 @@ impl Entry {
             backup_temp: line.backup_temp,
             backup: line.backup,
             backup_target: line.backup_target,
+            volume: line.volume,
+            folder: line.folder,
             keep_mtime: line.keep_mtime.unwrap_or(true),
             sidecar: line.sidecar.unwrap_or(true),
             undoes: line.undoes,
@@ -418,6 +433,9 @@ impl Journal {
     }
 }
 
+/// How often a waiter tries the target lock again (and looks at its cancel flag).
+pub(crate) const LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// The exclusive lock on one target path, held for a whole transaction so two transactions
 /// on the same file run one after the other. The lock file (`locks/target-<BLAKE3 of the
 /// path>.lock`) is removed when the lock is dropped; a waiter that wakes up on a removed file
@@ -428,11 +446,12 @@ pub(crate) struct TargetLock {
 }
 
 impl TargetLock {
-    /// Waits for and takes the lock on `target`.
+    /// Waits for and takes the lock on `target`, trying every [`LOCK_POLL`] and giving up when
+    /// `cancel` is set.
     ///
     /// # Errors
-    /// [`Error::Io`] naming the lock file.
-    pub fn acquire(journal: &Journal, target: &Path) -> Result<Self> {
+    /// [`Error::Cancelled`]; [`Error::Io`] naming the lock file.
+    pub fn acquire(journal: &Journal, target: &Path, cancel: &AtomicBool) -> Result<Self> {
         use std::os::unix::fs::MetadataExt;
         let key = blake3::hash(target.as_os_str().as_encoded_bytes());
         let path = journal
@@ -446,7 +465,18 @@ impl TargetLock {
                 .truncate(false)
                 .open(&path)
                 .map_err(|e| io_err(&path, e))?;
-            file.lock().map_err(|e| io_err(&path, e))?;
+            loop {
+                match file.try_lock() {
+                    Ok(()) => break,
+                    Err(std::fs::TryLockError::WouldBlock) => {
+                        if cancel.load(Ordering::Relaxed) {
+                            return Err(Error::Cancelled);
+                        }
+                        std::thread::sleep(LOCK_POLL);
+                    }
+                    Err(std::fs::TryLockError::Error(e)) => return Err(io_err(&path, e)),
+                }
+            }
             // Still the file at `path`, not one its last holder removed meanwhile?
             let held = file.metadata().map_err(|e| io_err(&path, e))?;
             let linked = std::fs::metadata(&path)

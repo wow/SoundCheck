@@ -17,11 +17,15 @@
 //!    ([`sc_core::Error::InPlaceRefused`]); a container other than WAV, RF64, AIFF, AIFF-C or
 //!    FLAC ([`sc_core::Error::UnsupportedFormat`]); and a volume that would keep less than
 //!    64 MiB free: the file's volume must hold an upper bound of the output, the backup's
-//!    volume a copy of the original ([`sc_core::Error::NoSpace`]). Then the target is locked
-//!    for the whole transaction (a second transaction on it waits), the in-place checks run
-//!    again, and the original's metadata (extended attributes at full size, dates, mode,
+//!    volume a copy of the original ([`sc_core::Error::NoSpace`]). The file's identity is read.
+//!    Then the target is locked for the whole transaction (a second transaction on it waits,
+//!    polling every 100 ms and honouring the cancel flag), the in-place checks run again, a
+//!    file changed meanwhile (another transaction ran first) is refused
+//!    ([`sc_core::Error::FileChanged`]: it is never rendered twice), and the original's metadata (extended attributes at full size, dates, mode,
 //!    owner, group) and identity (device, inode, length, modification and change time) are
-//!    read. State `planned`.
+//!    read. The `planned` line also records the target volume's lasting identity (see
+//!    [`volume::volume_identity`]) and the target folder's inode and birth time. State
+//!    `planned`.
 //! 2. **Temp file**: `.<name>.soundcheck-tmp-<id>` in the same folder, created new by the
 //!    render ([`crate::render::apply_iff`], or the FLAC render with its verification deferred),
 //!    then synced (`F_FULLFSYNC`; plain `fsync` only where a volume does not support it).
@@ -176,6 +180,8 @@ pub struct Transaction<'v> {
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Hooks {
+    /// Runs after the checks, before waiting for the target lock.
+    pub after_check: Option<fn()>,
     /// Runs with the temp file and the source right after the temp file is synced.
     pub after_temp_written: Option<fn(&Path, &Path)>,
     /// Runs with the temp file and the target right before the rename.

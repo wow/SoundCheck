@@ -181,30 +181,50 @@ fn a_damaged_carried_chunk_fails_verification() {
     assert_eq!(backups(&s.backups), 0);
 }
 
+/// Both transactions pass their checks before either takes the target lock.
+static BOTH_CHECKED: std::sync::Barrier = std::sync::Barrier::new(2);
+
+fn wait_for_the_other() {
+    BOTH_CHECKED.wait();
+}
+
 #[test]
-fn two_transactions_on_one_file_run_one_after_the_other() {
+fn a_second_transaction_never_renders_the_first_ones_output() {
     let s = scene();
+    let hooks = Hooks {
+        after_check: Some(wait_for_the_other),
+        ..Hooks::default()
+    };
     let results: Vec<_> = std::thread::scope(|scope| {
-        let a = scope.spawn(|| run(&s, Hooks::default()));
-        let b = scope.spawn(|| run(&s, Hooks::default()));
+        let a = scope.spawn(|| run(&s, hooks));
+        let b = scope.spawn(|| run(&s, hooks));
         vec![a.join().expect("a"), b.join().expect("b")]
     });
-    let done = results.iter().filter(|r| r.is_ok()).count();
+    let ok: Vec<_> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
+    assert_eq!(ok.len(), 1, "{results:?}");
     assert!(
         results
             .iter()
-            .all(|r| r.is_ok() || matches!(r, Err(Error::FileChanged { .. }))),
+            .any(|r| matches!(r, Err(Error::FileChanged { .. }))),
         "{results:?}"
     );
-    assert_eq!(backups(&s.backups), done);
-    for _ in 0..done {
-        crate::txn::undo(&s.path, &s.backups).expect("undo");
-    }
+    let now = std::fs::read(&s.path).expect("file");
+    assert_eq!(
+        *blake3::hash(&now).as_bytes(),
+        ok[0].output_blake3,
+        "one gain applied"
+    );
+    assert_eq!(backups(&s.backups), 1);
+    crate::txn::undo(&s.path, &s.backups).expect("undo");
     assert_eq!(
         std::fs::read(&s.path).expect("file"),
         s.bytes,
         "back to the original"
     );
+    assert!(matches!(
+        crate::txn::undo(&s.path, &s.backups),
+        Err(Error::NothingToUndo { .. })
+    ));
 }
 
 #[test]

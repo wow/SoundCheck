@@ -82,6 +82,19 @@ pub(crate) struct FileMeta {
     pub xattrs: Vec<(OsString, Vec<u8>)>,
 }
 
+/// The inode and birth time (seconds since 1970, where the system reports it) of the folder
+/// `dir`: with the volume's identity, what tells the same folder from another one at the same
+/// path (a mount point left empty after its volume went away).
+pub(crate) fn folder_id(dir: &Path) -> Option<(u64, Option<i64>)> {
+    let meta = std::fs::metadata(dir).ok()?;
+    let birth = meta
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|d| i64::try_from(d.as_secs()).ok());
+    Some((meta.ino(), birth))
+}
+
 /// Whether a file owned by `file_uid` must not be replaced by a process running as `euid`:
 /// the replacement would belong to `euid` (only the superuser may give a file away).
 pub(crate) fn owned_by_other(file_uid: u32, euid: u32) -> bool {

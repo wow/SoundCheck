@@ -166,3 +166,128 @@ fn transactions_work_on_exfat_and_fat32() {
     on_volume("ExFAT", true);
     on_volume("MS-DOS FAT32", false);
 }
+
+fn hdiutil(args: &[&std::ffi::OsStr]) -> bool {
+    Command::new("hdiutil")
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Detaches whatever is mounted at the path when dropped.
+struct Detach<'a>(&'a Path);
+
+impl Drop for Detach<'_> {
+    fn drop(&mut self) {
+        let _ = hdiutil(&["detach".as_ref(), "-force".as_ref(), self.0.as_os_str()]);
+    }
+}
+
+fn make_image(image: &Path) {
+    assert!(hdiutil(&[
+        "create".as_ref(),
+        "-size".as_ref(),
+        "200m".as_ref(),
+        "-fs".as_ref(),
+        "ExFAT".as_ref(),
+        "-volname".as_ref(),
+        "T".as_ref(),
+        image.as_os_str()
+    ]));
+}
+
+fn attach(image: &Path, mount: &Path) {
+    assert!(hdiutil(&[
+        "attach".as_ref(),
+        "-nobrowse".as_ref(),
+        "-mountpoint".as_ref(),
+        mount.as_os_str(),
+        image.as_os_str()
+    ]));
+}
+
+fn detach(mount: &Path) {
+    assert!(hdiutil(&["detach".as_ref(), mount.as_os_str()]));
+}
+
+/// Changes `file` in place with the backups on the startup disk, crashing at `point`.
+fn crash_in_place(file: &Path, backups: &Path, point: &str) {
+    let status = Command::new(env!("CARGO_BIN_EXE_txn_apply"))
+        .arg("apply")
+        .args([file, backups])
+        .env(CRASH_ENV, point)
+        .env_remove(BACKUP_ROOT_ENV)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("txn_apply runs");
+    assert_eq!(status.signal(), Some(6), "{point}: {status}");
+}
+
+#[test]
+fn an_empty_mount_folder_or_another_volume_keeps_recovery_pending() {
+    if !enabled() {
+        eprintln!("skipped: set SC_DISK_IMAGES=1 on macOS to run");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (image_a, image_b) = (dir.path().join("a.dmg"), dir.path().join("b.dmg"));
+    make_image(&image_a);
+    make_image(&image_b);
+    // Mounted at a folder of its own (not under /Volumes), which stays when it is detached.
+    let mount = dir.path().join("mnt");
+    std::fs::create_dir(&mount).expect("mount folder");
+    let _cleanup = Detach(&mount);
+    let lib = Library::new();
+    let file = mount.join("b.wav");
+    attach(&image_a, &mount);
+    std::fs::write(&file, wav(3000, 51)).expect("fixture");
+    let original = blake3_of(&file);
+    detach(&mount);
+    // Another stick with the same name and a file at the same path.
+    attach(&image_b, &mount);
+    std::fs::write(&file, wav(3000, 52)).expect("other file");
+    let other = blake3_of(&file);
+    detach(&mount);
+
+    for (point, outcome) in [
+        ("backed_up", Outcome::RolledBack),
+        ("renamed", Outcome::Completed),
+    ] {
+        attach(&image_a, &mount);
+        crash_in_place(&file, &lib.backups, point);
+        detach(&mount);
+        assert!(mount.is_dir(), "the empty mount folder stays");
+        let r = txn::recover(&lib.backups).expect("recovery");
+        assert!(r.recovered.is_empty(), "{point}, unmounted: {r:?}");
+        assert_eq!(r.pending.len(), 1, "{point}: {r:?}");
+
+        attach(&image_b, &mount);
+        let r = txn::recover(&lib.backups).expect("recovery");
+        assert!(r.recovered.is_empty(), "{point}, other stick: {r:?}");
+        assert_eq!(
+            blake3_of(&file),
+            other,
+            "{point}: the other stick's file is untouched"
+        );
+        assert!(
+            !sidecar_path(&file).exists(),
+            "{point}: no sidecar on the other stick"
+        );
+        detach(&mount);
+
+        attach(&image_a, &mount);
+        let r = txn::recover(&lib.backups).expect("recovery");
+        assert_eq!(r.recovered.len(), 1, "{point}: {r:?}");
+        assert_eq!(r.recovered[0].outcome, outcome, "{point}");
+        assert_no_temps(&mount);
+        if outcome == Outcome::Completed {
+            assert!(sidecar_path(&file).exists());
+            txn::undo(&file, &lib.backups).expect("undo");
+        }
+        assert_eq!(blake3_of(&file), original, "{point}");
+        detach(&mount);
+    }
+}

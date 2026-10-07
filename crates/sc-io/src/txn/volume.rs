@@ -147,6 +147,80 @@ fn startup_disk_name() -> Option<String> {
     names.into_iter().next()
 }
 
+/// A lasting identity of the volume holding the existing `path`, the same at every mount and
+/// different for another volume mounted at the same place (a second USB stick with the same
+/// name): on macOS `startup` for the startup disk (it cannot change while the system runs, and
+/// its device number may change between boots), else the volume UUID `diskutil info` reports
+/// for the mount point (APFS and HFS+ UUIDs, the exFAT and FAT serial numbers); on Linux the
+/// `statfs(2)` file system id (derived from the file system UUID on ext4 and btrfs). `None`
+/// when the system cannot say.
+///
+/// `diskutil` takes about 0.2 s, so with `cached` an answer is reused for [`IDENTITY_TTL`] for
+/// the same mount point, device, size and root folder; recovery asks afresh.
+pub fn volume_identity(path: &Path, cached: bool) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::sync::Mutex;
+        use std::time::Instant;
+        type Key = (PathBuf, u64, u64, u64, Option<std::time::SystemTime>);
+        static CACHE: Mutex<Vec<(Key, Instant, String)>> = Mutex::new(Vec::new());
+        let s = rustix::fs::statfs(path).ok()?;
+        let (mount, _) = mount_and_free(path).ok()?;
+        if mount == Path::new("/") || mount == Path::new(DATA_VOLUME) {
+            return Some("startup".to_owned());
+        }
+        let root = std::fs::metadata(&mount).ok()?;
+        let key: Key = (
+            mount.clone(),
+            root.dev(),
+            s.f_blocks,
+            root.ino(),
+            root.created().ok(),
+        );
+        let mut cache = CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache.retain(|(_, at, _)| at.elapsed() < IDENTITY_TTL);
+        if cached && let Some((_, _, id)) = cache.iter().find(|(k, _, _)| *k == key) {
+            return Some(id.clone());
+        }
+        drop(cache);
+        let out = std::process::Command::new("/usr/sbin/diskutil")
+            .args(["info", "-plist"])
+            .arg(&mount)
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let id = plist_string(&String::from_utf8_lossy(&out.stdout), "VolumeUUID")?;
+        let mut cache = CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache.push((key, Instant::now(), id.clone()));
+        Some(id)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = cached;
+        let s = rustix::fs::statfs(path).ok()?;
+        Some(format!("fsid:{:?}", s.f_fsid))
+    }
+}
+
+/// How long [`volume_identity`] reuses an answer.
+pub const IDENTITY_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The `<string>` value following `<key>key</key>` in a property list.
+pub(crate) fn plist_string(plist: &str, key: &str) -> Option<String> {
+    let after = &plist[plist.find(&format!("<key>{key}</key>"))?..];
+    let start = after.find("<string>")? + "<string>".len();
+    let end = after[start..].find("</string>")? + start;
+    let value = after[start..end].trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
 /// Mount point and bytes free for this user (`statfs(2)`: `f_mntonname`, `f_bavail` x
 /// `f_bsize`).
 #[cfg(target_os = "macos")]

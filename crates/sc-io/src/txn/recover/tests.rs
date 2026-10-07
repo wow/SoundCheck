@@ -225,3 +225,25 @@ fn one_failing_transaction_does_not_stop_the_others() {
     assert_eq!(r.recovered.len(), 1);
     assert_eq!(r.recovered[0].txn, "u");
 }
+
+#[test]
+fn a_file_at_the_backup_name_that_is_not_the_original_is_kept() {
+    let s = scene();
+    std::fs::write(&s.target, ORIGINAL).expect("original");
+    std::fs::write(&s.temp, OUTPUT).expect("temp");
+    // The journal names a backup that was never made by this change; another file sits there.
+    let mut line = Line::new("t", State::BackedUp);
+    let stranger = s.backup.with_file_name("a (2).wav");
+    line.backup_target = Some(stranger.clone());
+    s.journal.append(&line).expect("named");
+    std::fs::write(&stranger, b"someone else's file").expect("stranger");
+    let r = recover(&s.root).expect("recovered").recovered;
+    assert_eq!(r[0].outcome, Outcome::RolledBack);
+    assert!(stranger.exists(), "kept");
+    assert!(
+        r[0].notes.iter().any(|n| n.contains("a (2).wav")),
+        "{:?}",
+        r[0].notes
+    );
+    assert!(!s.backup.exists(), "this change's own backup is removed");
+}

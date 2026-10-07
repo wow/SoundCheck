@@ -68,6 +68,12 @@ fn refuse(path: &Path, reason: InPlaceRefusal) -> Error {
 /// # Errors
 /// [`Error::Io`] naming `path`.
 pub(crate) fn real_path(path: &Path) -> Result<PathBuf> {
+    // Opening a FIFO or a device would block or have effects: only regular files and folders
+    // are opened (the type is read through any link first).
+    let meta = std::fs::metadata(path).map_err(|e| io_err(path, e))?;
+    if !meta.is_file() && !meta.is_dir() {
+        return Err(not_a_file(path));
+    }
     #[cfg(target_os = "macos")]
     {
         use std::os::unix::ffi::OsStringExt;
@@ -79,6 +85,33 @@ pub(crate) fn real_path(path: &Path) -> Result<PathBuf> {
     {
         path.canonicalize().map_err(|e| io_err(path, e))
     }
+}
+
+fn not_a_file(path: &Path) -> Error {
+    Error::InvalidArgument(format!(
+        "{} is not a regular file or folder",
+        path.display()
+    ))
+}
+
+/// The name under which the user reached the file `file` (identity `ino`) in the folder `dir`:
+/// the folder entry with that inode whose name equals `given` ignoring case and Unicode
+/// normalisation, else `given` itself. Used to name a copy: for a file with several hard
+/// links, `F_GETPATH` may answer with another link's name, so the user's name is kept, spelled
+/// as the folder spells it.
+pub(crate) fn name_in_dir(dir: &Path, given: &std::ffi::OsStr, ino: u64) -> OsString {
+    use unicode_normalization::UnicodeNormalization;
+    let fold = |s: &str| s.nfc().collect::<String>().to_lowercase();
+    let want = fold(&given.to_string_lossy());
+    let found = std::fs::read_dir(dir).ok().and_then(|list| {
+        list.flatten().find_map(|e| {
+            let name = e.file_name();
+            let same = fold(&name.to_string_lossy()) == want
+                && std::fs::symlink_metadata(e.path()).is_ok_and(|m| m.ino() == ino);
+            same.then_some(name)
+        })
+    });
+    found.unwrap_or_else(|| given.to_os_string())
 }
 
 /// The nearest existing folder at or above `path` (resolved), and the part below it.

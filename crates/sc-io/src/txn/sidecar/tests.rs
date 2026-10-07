@@ -17,6 +17,8 @@ fn entry(path: &Path) -> Entry {
         backup_temp: None,
         backup: Some(PathBuf::from("/backups/2026-10-07/Disk/a.wav")),
         backup_target: None,
+        volume: None,
+        folder: None,
         keep_mtime: true,
         sidecar: true,
         undoes: None,

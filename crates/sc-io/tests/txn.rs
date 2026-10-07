@@ -518,3 +518,60 @@ fn a_file_is_known_by_its_name_on_disk_whatever_spelling_reaches_it() {
     txn::undo(&lib.music.join(nfc), &lib.backups).expect("undone through the other form");
     assert_eq!(blake3_of(&stored), original);
 }
+
+#[test]
+fn a_fifo_is_refused_without_being_opened() {
+    let lib = Library::new();
+    let fifo = lib.music.join("x.wav");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success());
+    let started = std::time::Instant::now();
+    let refused = txn::apply_in_place(&fifo, &gain(-2.0), &opts(&lib), &NOT_CANCELLED);
+    assert!(
+        matches!(refused, Err(Error::InvalidArgument(_))),
+        "{refused:?}"
+    );
+    let out = lib.dir.path().join("out");
+    let refused = txn::apply_to_folder(&fifo, &out, &gain(-2.0), &opts(&lib), &NOT_CANCELLED);
+    assert!(
+        matches!(refused, Err(Error::InvalidArgument(_))),
+        "{refused:?}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert!(!lib.backups.exists() && !out.exists());
+}
+
+#[test]
+fn a_copy_is_named_after_the_link_the_user_gave() {
+    let lib = Library::new();
+    let path = lib.add("track.wav", &wav(3000, 34));
+    std::fs::hard_link(&path, lib.music.join("other.wav")).expect("hard link");
+    let out = lib.dir.path().join("out");
+    let r = txn::apply_to_folder(
+        &lib.music.join("other.wav"),
+        &out,
+        &gain(-2.0),
+        &opts(&lib),
+        &NOT_CANCELLED,
+    )
+    .expect("copied");
+    assert_eq!(r.output.file_name().expect("name"), "other.wav");
+    if cfg!(target_os = "macos") {
+        let r = txn::apply_to_folder(
+            &lib.music.join("TRACK.WAV"),
+            &out,
+            &gain(-2.0),
+            &opts(&lib),
+            &NOT_CANCELLED,
+        )
+        .expect("copied");
+        assert_eq!(
+            r.output.file_name().expect("name"),
+            "track.wav",
+            "spelled as on disk"
+        );
+    }
+}
