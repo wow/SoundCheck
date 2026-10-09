@@ -1,8 +1,9 @@
 //! The checks every writer output must pass: the block sequence against the fixture's
 //! expectations (carried blocks byte-identical with their pad byte value, patched blocks equal
 //! to the bytes `expect.rs` computes, replaced blocks present at their place, dropped blocks
-//! absent, nothing else), the edited tag (`check_tag`), DJ-safe headers, and the audio
-//! (`check_audio.rs`).
+//! absent, nothing else), the edited tag (`check_tag`), DJ-safe headers (no stray bytes inside
+//! the container: bytes after the source's last chunk go after the output's container end),
+//! and the audio (`check_audio.rs`).
 
 use super::apply::{Applied, ApplyArgs, TagEdit};
 use super::cases::{Expect, Fixture};
@@ -41,6 +42,16 @@ pub fn check_output(
         }
     };
     run().map_err(|e| format!("{} {args:?}: {e}", fx.name))
+}
+
+/// Whether output block `got` keeps the pad byte of input block `want`: the same value, or 0
+/// where the source left out the pad byte of an odd chunk (the writer restores it).
+fn pad_kept(want: &Block, got: &Block) -> bool {
+    got.pad == want.pad
+        || (want.kind == Kind::Chunk
+            && want.pad.is_none()
+            && want.bytes.len() % 2 == 1
+            && got.pad == Some(0))
 }
 
 fn first_difference(a: &[u8], b: &[u8]) -> String {
@@ -87,14 +98,14 @@ pub fn check_blocks(
         let rewritten = edited == Some(i);
         match expect {
             Expect::Carried if !rewritten => {
-                if got.bytes != want.bytes || got.pad != want.pad {
+                if got.bytes != want.bytes || !pad_kept(want, got) {
                     let diff = first_difference(&got.bytes, &want.bytes);
                     return Err(format!("{:?} {:?} not carried: {diff}", want.kind, want.id));
                 }
             }
             Expect::Patched { fields } => {
                 let bytes = patched(&want.id, &want.bytes, fx, args)?;
-                if got.bytes != bytes || got.pad != want.pad {
+                if got.bytes != bytes || !pad_kept(want, got) {
                     let diff = first_difference(&got.bytes, &bytes);
                     return Err(format!("{:?} patch of {fields:?} wrong: {diff}", want.id));
                 }
@@ -259,7 +270,7 @@ pub fn check_tag(
 
 /// DJ-safe header checks: WAV outputs are RIFF/WAVE with a 16-byte `fmt ` of format 0x0001;
 /// AIFF outputs are FORM/AIFF with an 18-byte `COMM`; `SSND` offset and block size 0; rate,
-/// channels, depth and frame count as expected.
+/// channels, depth and frame count as expected; the container ends with its last chunk.
 ///
 /// # Errors
 /// The first header field that is wrong.
@@ -271,6 +282,24 @@ pub fn check_iff_header(fx: &Fixture, out: &Parsed, args: &ApplyArgs) -> Result<
         out.find(Kind::Chunk, id)
             .ok_or_else(|| format!("no {id:?} chunk"))
     };
+    if out.stray_in_container != 0 {
+        return Err(format!(
+            "{} stray bytes inside the container after the last chunk",
+            out.stray_in_container
+        ));
+    }
+    let last_end = out
+        .blocks
+        .iter()
+        .filter(|b| b.kind == Kind::Chunk)
+        .map(|b| b.offset + 8 + b.bytes.len() + usize::from(b.pad.is_some()))
+        .max();
+    if last_end != out.container_end {
+        return Err(format!(
+            "the container ends at {:?}, its last chunk (pad byte included) at {last_end:?}",
+            out.container_end
+        ));
+    }
     match fx.container {
         Container::Wave | Container::Rf64 => {
             if out.container != Container::Wave {

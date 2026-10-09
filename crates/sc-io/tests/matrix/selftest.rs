@@ -326,6 +326,87 @@ fn block_checks_reject_a_changed_chunk_a_changed_pad_byte_and_foreign_headers() 
     }
 }
 
+/// Bytes after the last chunk go after the output's container end, whole, and an odd last
+/// chunk gets its pad byte back: an output whose container size still counts the stray bytes,
+/// one that drops them, and one that leaves the pad out are rejected.
+#[test]
+fn trailing_checks_reject_stray_bytes_inside_the_container_and_a_missing_pad() {
+    for name in [
+        "aiff16-id3v24-2-stray-in-form",
+        "aiff16-comt-comm-id3v23-2-after-form",
+        "aiff16-name-copyright-id3v23-1-stray-in-form",
+    ] {
+        let inside = Options {
+            trailing_inside: true,
+            ..Options::default()
+        };
+        let why = (
+            "trailing bytes counted by the container",
+            "inside the container",
+        );
+        rejects(name, &IDENTITY, &[], inside, why);
+        let fx = fixture(name);
+        let (good, applied) =
+            oracle::write(&fx, &IDENTITY, &[], &Options::default()).expect("write");
+        let stray = parse(&fx.bytes)
+            .expect("parse")
+            .blocks
+            .last()
+            .expect("trailing")
+            .bytes
+            .len();
+        let dropped = &good[..good.len() - stray];
+        let result = check_output(&fx, dropped, &IDENTITY, &[], applied);
+        assert!(result.is_err_and(|e| e.contains("missing")), "{name}");
+    }
+    let fx = fixture("aiff16-name-anno-id3v24-odd-unpadded");
+    let (good, applied) = oracle::write(&fx, &IDENTITY, &[], &Options::default()).expect("write");
+    check_output(&fx, &good, &IDENTITY, &[], applied).expect("reference output");
+    let mut unpadded = good[..good.len() - 1].to_vec();
+    let size = u32::from_be_bytes(unpadded[4..8].try_into().expect("FORM header")) - 1;
+    unpadded[4..8].copy_from_slice(&size.to_be_bytes());
+    let result = check_output(&fx, &unpadded, &IDENTITY, &[], applied);
+    assert!(result.is_err_and(|e| e.contains("lacks its pad byte")));
+}
+
+/// The output's container must end with its last chunk, pad byte included: a size that leaves
+/// out the last pad byte or the last chunk (both of which the reader accepts in a source) is
+/// rejected.
+#[test]
+fn container_checks_reject_a_size_without_the_last_pad_or_chunk() {
+    let cut = |bytes: &mut [u8], by: u32, big: bool| {
+        let field: [u8; 4] = bytes[4..8].try_into().expect("container header");
+        let size = if big {
+            u32::from_be_bytes(field)
+        } else {
+            u32::from_le_bytes(field)
+        } - by;
+        let new = if big {
+            size.to_be_bytes()
+        } else {
+            size.to_le_bytes()
+        };
+        bytes[4..8].copy_from_slice(&new);
+    };
+    let fx = fixture("aiff16-id3v23-pad-after-form");
+    let (good, applied) = oracle::write(&fx, &IDENTITY, &[], &Options::default()).expect("write");
+    check_output(&fx, &good, &IDENTITY, &[], applied).expect("reference output");
+    let mut pad_outside = good.clone();
+    cut(&mut pad_outside, 1, true);
+    let result = check_output(&fx, &pad_outside, &IDENTITY, &[], applied);
+    assert!(result.is_err_and(|e| e.contains("container ends at")));
+    let fx = fixture("wav16-id3-past-stale-riff-size");
+    let (good, applied) = oracle::write(&fx, &IDENTITY, &[], &Options::default()).expect("write");
+    check_output(&fx, &good, &IDENTITY, &[], applied).expect("reference output");
+    let parsed = parse(&good).expect("parse");
+    let id3 = parsed.find(Kind::Chunk, "id3 ").expect("id3");
+    let stale = u32::try_from(good.len() - id3.offset).expect("small");
+    let mut past = good.clone();
+    cut(&mut past, stale, false);
+    let result = check_output(&fx, &past, &IDENTITY, &[], applied);
+    assert!(result.is_err_and(|e| e.contains("container ends at")));
+}
+
 #[test]
 fn flac_checks_reject_a_wrong_md5_a_stray_seek_point_and_a_changed_block() {
     let fx = fixture("flac16-all-blocks");

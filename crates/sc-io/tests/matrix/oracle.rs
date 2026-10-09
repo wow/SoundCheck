@@ -29,6 +29,8 @@ pub struct Options {
     pub unpatched: Option<&'static str>,
     /// Grow the tag even when its padding could hold the new frames.
     pub grow_tag: bool,
+    /// Count the bytes after the last chunk in the container size.
+    pub trailing_inside: bool,
 }
 
 /// The ideal output samples: exact shifts where the reference is exact, TPDF dither (seeded,
@@ -144,7 +146,8 @@ fn write_iff(
         };
         chunks.push(chunk);
     }
-    Ok(match input.container {
+    let extra = u32::try_from(trailing.len()).expect("small");
+    let mut bytes = match input.container {
         Container::Wave | Container::Rf64 => {
             let layout = RiffLayout {
                 trailing,
@@ -157,7 +160,17 @@ fn write_iff(
             bytes.extend(trailing);
             bytes
         }
-    })
+    };
+    if opts.trailing_inside {
+        let size: [u8; 4] = bytes[4..8].try_into().expect("a container header");
+        let new = if input.container == Container::Wave || input.container == Container::Rf64 {
+            (u32::from_le_bytes(size) + extra).to_le_bytes()
+        } else {
+            (u32::from_be_bytes(size) + extra).to_be_bytes()
+        };
+        bytes[4..8].copy_from_slice(&new);
+    }
+    Ok(bytes)
 }
 
 /// SoundCheck's frame for `edit` in a tag of `version`.

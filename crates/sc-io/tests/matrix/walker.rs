@@ -74,8 +74,8 @@ fn iff_fixtures() -> Vec<Fixture> {
 #[test]
 fn walker_lists_the_same_chunks_as_the_independent_parser() {
     let fixtures = iff_fixtures();
-    assert_eq!(fixtures.len(), 20, "WAV/RF64/AIFF/AIFF-C fixtures");
-    let mut pads_missing = Vec::new();
+    assert_eq!(fixtures.len(), 35, "WAV/RF64/AIFF/AIFF-C fixtures");
+    let (mut pads_missing, mut beyond) = (Vec::new(), Vec::new());
     for fx in &fixtures {
         let t = header(fx).table;
         let want = match fx.container {
@@ -86,22 +86,31 @@ fn walker_lists_the_same_chunks_as_the_independent_parser() {
             Container::Flac => unreachable!("filtered"),
         };
         assert_eq!(t.container, want, "{}", fx.name);
-        assert_eq!(
-            walker_listing(fx, &t),
-            parser_listing(&parsed(fx)),
-            "{}",
-            fx.name
-        );
+        let p = parsed(fx);
+        assert_eq!(walker_listing(fx, &t), parser_listing(&p), "{}", fx.name);
         assert!(!t.truncated, "{}", fx.name);
         assert_eq!(t.file_len, fx.bytes.len() as u64, "{}", fx.name);
+        let container_end = p.container_end.expect("an IFF container") as u64;
+        assert_eq!(t.container_end(), container_end, "{}", fx.name);
+        // Stray bytes the container size counts lie between the last chunk and its end.
+        let last_end = t.chunks.last().map_or(12, sc_io::iff::Chunk::end);
         assert_eq!(
-            t.container_end(),
-            t.chunks.last().map_or(12, sc_io::iff::Chunk::end),
+            last_end.max(container_end),
+            last_end + p.stray_in_container as u64,
             "{}",
             fx.name
         );
         for c in &t.chunks {
-            assert!(!c.beyond_container, "{}: {}", fx.name, c.id_text());
+            assert_eq!(
+                c.beyond_container,
+                c.end() > container_end,
+                "{}: {}",
+                fx.name,
+                c.id_text()
+            );
+            if c.beyond_container {
+                beyond.push((fx.name, c.id_text()));
+            }
             let rf64_size = t.container == IffContainer::Rf64 && &c.id == b"data";
             let field = if rf64_size {
                 u32::MAX
@@ -114,10 +123,23 @@ fn walker_lists_the_same_chunks_as_the_independent_parser() {
             }
         }
     }
-    // The only odd chunk written without its pad byte.
+    // The odd chunks written without their pad byte.
     assert_eq!(
         pads_missing,
-        [("wav24-mono-odd-data-no-pad-id3v1", "data".to_string())]
+        [
+            ("wav24-mono-odd-data-no-pad-id3v1", "data".to_string()),
+            ("aiff16-name-anno-id3v24-odd-unpadded", "ID3 ".to_string()),
+            ("wav16-odd-last-chunk-unpadded", "xodd".to_string()),
+        ]
+    );
+    // The chunks (with their pad byte) not wholly inside the declared container.
+    assert_eq!(
+        beyond,
+        [
+            ("aiff16-id3v23-pad-after-form", "ID3 ".to_string()),
+            ("aiff16-id3v24-pad-and-1-after-form", "ID3 ".to_string()),
+            ("wav16-id3-past-stale-riff-size", "id3 ".to_string()),
+        ]
     );
 }
 
@@ -150,6 +172,69 @@ fn walker_handles_the_documented_quirks() {
 
     let pad = header(get("wav24-bwf-ixml-cue-smpl-id3v24")).table;
     assert_eq!(pad.find(b"xodd").expect("xodd").pad, Some(0x20));
+
+    // Bytes after the last chunk, inside or after the FORM, are trailing: (stray bytes, bytes
+    // the FORM size counts) per fixture.
+    for (name, stray, inside) in [
+        ("aiff16-id3v24-2-stray-in-form", 2, 2),
+        ("aiff16-comt-comm-id3v23-2-after-form", 2, 0),
+        ("aiff16-name-copyright-id3v23-1-stray-in-form", 1, 1),
+    ] {
+        let fx = get(name);
+        let t = header(fx).table;
+        let len = fx.bytes.len() as u64;
+        assert_eq!(t.trailing, Some(len - stray..len), "{name}");
+        assert!(
+            bytes_of(fx, &(len - stray..len)).iter().all(|b| *b == 0),
+            "{name}"
+        );
+        assert_eq!(t.container_end(), len - stray + inside, "{name}");
+        let id3 = t.chunks.last().expect("chunks");
+        assert_eq!(
+            (&id3.id, id3.pad, id3.end()),
+            (b"ID3 ", None, len - stray),
+            "{name}"
+        );
+    }
+    let unpadded = get("aiff16-name-anno-id3v24-odd-unpadded");
+    let t = header(unpadded).table;
+    let id3 = t.chunks.last().expect("chunks");
+    assert!(
+        id3.payload_len() % 2 == 1 && id3.pad_missing,
+        "odd ID3 chunk without its pad"
+    );
+    assert_eq!(t.container_end(), unpadded.bytes.len() as u64);
+    assert_eq!(t.trailing, None);
+
+    // A zero byte right after an odd chunk that ends at the container end is its pad byte;
+    // what follows it is trailing.
+    for (name, after) in [
+        ("aiff16-id3v23-pad-after-form", 0),
+        ("aiff16-id3v24-pad-and-1-after-form", 1),
+    ] {
+        let fx = get(name);
+        let t = header(fx).table;
+        let len = fx.bytes.len() as u64;
+        let id3 = t.chunks.last().expect("chunks");
+        assert_eq!(id3.pad, Some(0), "{name}");
+        assert_eq!(t.container_end(), id3.payload.end, "{name}");
+        assert_eq!(id3.end(), len - after, "{name}");
+        assert_eq!(
+            t.trailing,
+            (after > 0).then_some(len - after..len),
+            "{name}"
+        );
+    }
+    let stray = get("wav16-list-2-stray-in-riff");
+    let t = header(stray).table;
+    let len = stray.bytes.len() as u64;
+    assert_eq!(
+        (t.trailing.clone(), t.container_end()),
+        (Some(len - 2..len), len)
+    );
+    let stale = header(get("wav16-id3-past-stale-riff-size")).table;
+    let id3 = stale.find(b"id3 ").expect("id3");
+    assert_eq!(stale.container_end(), id3.header_offset);
 }
 
 fn chunk<'p>(p: &'p Parsed, id: &str, fx: &Fixture) -> &'p Block {

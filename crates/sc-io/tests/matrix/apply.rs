@@ -206,17 +206,10 @@ pub fn apply(input: &Path, out: &Path, args: &ApplyArgs) -> Result<Applied, Refu
     apply_with_tags(input, out, args, &[])
 }
 
-/// Writes `input` with `args` applied and the tag items `edits` added or replaced.
-///
-/// # Errors
-/// The writer's refusal; no output file exists then.
-pub fn apply_with_tags(
-    input: &Path,
-    out: &Path,
-    args: &ApplyArgs,
-    edits: &[TagEdit],
-) -> Result<Applied, Refusal> {
-    let request = sc_core::RenderRequest {
+/// The `sc-io` render request for `args` and `edits`.
+#[must_use]
+pub fn render_request(args: &ApplyArgs, edits: &[TagEdit]) -> sc_core::RenderRequest {
+    sc_core::RenderRequest {
         gain_db: args.gain_db,
         trim_frames: args.trim_samples,
         bits: args.bits,
@@ -234,7 +227,20 @@ pub fn apply_with_tags(
                 value: e.value.clone(),
             })
             .collect(),
-    };
+    }
+}
+
+/// Writes `input` with `args` applied and the tag items `edits` added or replaced.
+///
+/// # Errors
+/// The writer's refusal; no output file exists then.
+pub fn apply_with_tags(
+    input: &Path,
+    out: &Path,
+    args: &ApplyArgs,
+    edits: &[TagEdit],
+) -> Result<Applied, Refusal> {
+    let request = render_request(args, edits);
     let cancel = AtomicBool::new(false);
     let rendered = if input.extension().is_some_and(|e| e == "flac") {
         sc_io::render::apply_flac(input, out, &request, &cancel)

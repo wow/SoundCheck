@@ -2,7 +2,9 @@
 //! "ID3 tag version 2.4.0 - Main Structure"): tag header, extended header, frames with their
 //! flags, zero padding. Frame contents are decoded only as far as labels and text values need:
 //! a v2.4 data-length indicator is skipped and v2.4 frame-level unsynchronisation is undone
-//! before reading a description or value; the listed bytes are always the stored bytes.
+//! before reading a description or value; the listed bytes are always the stored bytes. An
+//! `ID3v2`.2 tag (three-character frame ids, id3.org "ID3 tag version 2") is only checked for its
+//! header and size and lists no items: it is never edited, so its chunk is compared whole.
 
 use super::parse::{Block, Kind, slice, to_usize};
 
@@ -11,7 +13,7 @@ use super::parse::{Block, Kind, slice, to_usize};
 pub struct Id3Tag {
     /// Index in `Parsed::blocks` of the chunk holding the tag.
     pub chunk: usize,
-    /// Major version: 3 or 4.
+    /// Major version: 2, 3 or 4.
     pub version: u8,
     /// Revision byte.
     pub revision: u8,
@@ -52,7 +54,7 @@ pub fn parse_id3(p: &[u8], base: usize, chunk: usize) -> Result<(Id3Tag, Vec<Blo
     let head = slice(p, 3, 3)?;
     let (version, revision, flags) = (head[0], head[1], head[2]);
     let size = syncsafe(slice(p, 6, 4)?)?;
-    if version != 3 && version != 4 {
+    if !(2..=4).contains(&version) {
         return Err(format!("ID3v2.{version} is not handled"));
     }
     if version == 3 && flags & 0x80 != 0 {
@@ -61,6 +63,17 @@ pub fn parse_id3(p: &[u8], base: usize, chunk: usize) -> Result<(Id3Tag, Vec<Blo
     let end = 10 + size;
     if end > p.len() {
         return Err("ID3 tag larger than its chunk".into());
+    }
+    if version == 2 {
+        let tag = Id3Tag {
+            chunk,
+            version,
+            revision,
+            flags,
+            size,
+            padding: 0,
+        };
+        return Ok((tag, Vec::new()));
     }
     let mut items = Vec::new();
     let mut pos = 10;

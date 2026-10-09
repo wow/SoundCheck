@@ -197,8 +197,9 @@ pub fn refusal(fx: &Fixture, args: &ApplyArgs) -> Option<Refusal> {
 }
 
 /// Why requested tag edits are not written, if they are not: a WAV/AIFF file with more than
-/// one ID3 chunk (readers disagree on which one counts, so both are carried), a tag with
-/// tag-level unsynchronisation, or an extended header with a CRC (both carried unchanged).
+/// one ID3 chunk (readers disagree on which one counts, so both are carried), an `ID3v2`.2 tag,
+/// a tag with tag-level unsynchronisation, or an extended header with a CRC (all carried
+/// unchanged).
 #[must_use]
 pub fn tags_not_added(input: &Parsed) -> Option<&'static str> {
     if input.container == Container::Flac {
@@ -207,6 +208,9 @@ pub fn tags_not_added(input: &Parsed) -> Option<&'static str> {
     let first = input.tags.first()?;
     if input.tags.len() > 1 {
         return Some("two ID3 tags");
+    }
+    if first.version == 2 {
+        return Some("ID3v2.2 tag");
     }
     if first.flags & 0x80 != 0 {
         return Some("tag-level unsynchronisation");

@@ -22,7 +22,8 @@
 //! (`matrix/selftest.rs`). The writer tests (`matrix/writers.rs`) run the `sc-io` writers
 //! (IFF render, ID3 edit) through the same runner and record each output's SHA-256 in the
 //! manifest's `outputs` section, the FLAC render included; `flac -t` checks the FLAC outputs
-//! with `SC_FLAC_TOOLS=1`.
+//! with `SC_FLAC_TOOLS=1`. `matrix/real.rs` runs the same output checks on a folder of real
+//! files through the write transaction when `SC_REAL_FIXTURES=<folder>` is set.
 
 // A crate root resolves `mod x;` next to itself, so the modules are pointed at `matrix/`.
 #[path = "matrix/aiff.rs"]
@@ -35,6 +36,8 @@ mod cases;
 mod cases_flac;
 #[path = "matrix/cases_iff.rs"]
 mod cases_iff;
+#[path = "matrix/cases_real.rs"]
+mod cases_real;
 #[path = "matrix/check.rs"]
 mod check;
 #[path = "matrix/check_audio.rs"]
@@ -61,6 +64,8 @@ mod parse;
 mod parse_id3;
 #[path = "matrix/pcm.rs"]
 mod pcm;
+#[path = "matrix/real.rs"]
+mod real;
 #[path = "matrix/riff.rs"]
 mod riff;
 #[path = "matrix/selftest.rs"]
