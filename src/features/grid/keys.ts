@@ -101,11 +101,13 @@ export function gridKey(e: KeyLike): GridKey | null {
 }
 
 /**
- * The letter a key stands for: the one typed, or, on a layout that types no Latin letter on it,
- * the one at its place (`KeyB`); else the key itself, lower-cased.
+ * The letter a key stands for: the one typed, or, when it types a letter of another script
+ * (Cyrillic, Greek), the one at its place (`KeyB`); else the key itself, lower-cased.
  */
 function letterOf(e: KeyLike): string {
   if (/^[a-z]$/i.test(e.key)) return e.key.toLowerCase();
   const place = /^Key([A-Z])$/.exec(e.code)?.[1];
-  return place && /^\p{L}$/u.test(e.key) ? place.toLowerCase() : e.key.toLowerCase();
+  // Only a letter of another script: Turkish ı or German ä are letters typed, not keys' places.
+  const otherScript = /^\p{L}$/u.test(e.key) && !/\p{Script=Latin}/u.test(e.key);
+  return place && otherScript ? place.toLowerCase() : e.key.toLowerCase();
 }

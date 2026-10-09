@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Volume1, Volume2, VolumeX } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { VOLUME_MAX_DB, VOLUME_MIN_DB, volumeAt, volumePos, volumeText } from '@/lib/volume';
@@ -193,15 +193,24 @@ function VolumePopover() {
   const db = useMonitor((s) => s.db);
   const muted = useMonitor((s) => s.muted);
   const box = useRef<HTMLDivElement>(null);
+  /**
+   * Closes the popover; focus that was inside it goes back to the speaker button rather than
+   * to the page. A press elsewhere still moves focus where it lands (a text field takes it).
+   */
+  const close = useCallback(() => {
+    const active = document.activeElement;
+    const inside = active === document.body || (active !== null && !!box.current?.contains(active));
+    setOpen(false);
+    if (inside) box.current?.querySelector<HTMLButtonElement>('button')?.focus();
+  }, []);
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (box.current && e.target instanceof Node && !box.current.contains(e.target))
-        setOpen(false);
+      if (box.current && e.target instanceof Node && !box.current.contains(e.target)) close();
     };
     document.addEventListener('pointerdown', onDown);
     return () => document.removeEventListener('pointerdown', onDown);
-  }, [open]);
+  }, [open, close]);
   return (
     <div ref={box} className="relative">
       <Btn
@@ -223,7 +232,7 @@ function VolumePopover() {
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
               e.stopPropagation();
-              setOpen(false);
+              close();
             }
           }}
         >

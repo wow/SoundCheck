@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { MeterFrame } from '@/lib/ipc';
+import { watchPixelRatio } from '@/lib/media';
 import { cn } from '@/lib/utils';
 import { useLibrary } from '@/state/library';
 import { useSettings } from '@/state/settings';
@@ -10,6 +11,7 @@ import {
   type StripScene,
   STRIP_W,
   STRIP_W_NARROW,
+  HEADER_H,
   drawStrip,
   readStripPalette,
   stripLayout,
@@ -142,9 +144,8 @@ export function MeterStrip({ side, narrow }: { side: Side; narrow: boolean }) {
       put(loudRef.current, null, readingText(loudDb, false));
       put(captionRef.current, null, captionText(f.caption));
       if (captionRef.current) captionRef.current.hidden = playing;
-      if (f.narrow) put(el, 'title', tip);
-      else if (mono) put(el, 'title', `${name} · ${MONO_NOTE}`);
-      else el.removeAttribute('title');
+      // The numbers carry no units on screen: the tooltip has them.
+      put(el, 'title', tip);
     };
 
     const render = (now: number) => {
@@ -192,6 +193,7 @@ export function MeterStrip({ side, narrow }: { side: Side; narrow: boolean }) {
     palette = readStripPalette();
     const observer = new ResizeObserver(resize);
     observer.observe(el);
+    const unPixelRatio = watchPixelRatio(resize);
 
     const onTrack = () => {
       const t = useTrack.getState();
@@ -221,6 +223,7 @@ export function MeterStrip({ side, narrow }: { side: Side; narrow: boolean }) {
     redraw.current();
     return () => {
       observer.disconnect();
+      unPixelRatio();
       unTrack();
       redraw.current = () => {};
       if (pending !== null) cancelAnimationFrame(pending);
@@ -246,15 +249,16 @@ export function MeterStrip({ side, narrow }: { side: Side; narrow: boolean }) {
         className={
           narrow
             ? 'sr-only'
-            : 'absolute inset-x-0 top-0 flex h-[26px] flex-col items-center justify-center font-mono text-[9px] leading-[11px] tracking-[-0.03em] tabular-nums'
+            : 'absolute inset-x-0 top-0 flex flex-col items-center justify-center font-mono text-[12px] leading-[14px] tracking-[-0.02em] tabular-nums'
         }
+        style={narrow ? undefined : { height: HEADER_H }}
       >
         <span
           ref={peakRef}
           role="meter"
           aria-valuemin={SCALE_MIN}
           aria-valuemax={SCALE_MAX}
-          className={over ? 'text-err' : 'text-meter-tp'}
+          className={over ? 'text-err' : 'text-fg-0'}
         />
         <span
           ref={loudRef}
@@ -265,15 +269,18 @@ export function MeterStrip({ side, narrow }: { side: Side; narrow: boolean }) {
         />
       </div>
       {!narrow && (
-        // Stopped, the empty well carries the track's numbers, read from the bottom up.
+        // Stopped, the empty well carries the track's numbers, read from the bottom up (and cut
+        // at the top in a window too short for them; the tooltip has them all).
         <span
-          ref={captionRef}
           aria-hidden
           className={cn(
-            'absolute bottom-[32px] w-[10px] rotate-180 whitespace-nowrap bg-bg-0 py-1 font-mono text-[9px] leading-[10px] text-fg-1 [writing-mode:vertical-rl]',
-            side === 'in' ? 'right-[3px]' : 'left-[3px]',
+            'absolute bottom-[32px] w-[14px] rotate-180 overflow-hidden whitespace-nowrap font-mono text-[12px] leading-[14px] text-fg-1 [writing-mode:vertical-rl]',
+            side === 'in' ? 'right-[4px]' : 'left-[4px]',
           )}
-        />
+          style={{ top: HEADER_H + 4 }}
+        >
+          <span ref={captionRef} className="bg-bg-0 py-1" />
+        </span>
       )}
       <div className="absolute inset-x-0 bottom-0 flex h-[28px] items-center justify-center">
         {over ? (

@@ -10,7 +10,16 @@ import {
   peakInput,
   smoothed,
 } from './ballistics';
-import { SCALE_MAX, SCALE_MIN, caption, captionText, levelY, readingText } from './scale';
+import {
+  SCALE_MAX,
+  SCALE_MIN,
+  caption,
+  captionText,
+  levelY,
+  readingText,
+  zoneOf,
+  zoneRuns,
+} from './scale';
 import { analysis } from '@/test/fixtures';
 
 function frame(inPeak: number | null, outPeak: number | null): MeterFrame {
@@ -85,6 +94,23 @@ describe('the meter scale and captions', () => {
     expect(levelY(SCALE_MIN, 10, 400)).toBe(400);
     expect(levelY(-60, 10, 400)).toBe(400);
     expect(levelY(-16.5, 10, 400)).toBeCloseTo(205, 9);
+  });
+
+  it('colours the bar in fixed zones: green below -12, yellow to -3, red above', () => {
+    expect(zoneRuns(-2)).toEqual([
+      { zone: 'ok', from: SCALE_MIN, to: -12 },
+      { zone: 'warn', from: -12, to: -3 },
+      { zone: 'err', from: -3, to: -2 },
+    ]);
+    expect(zoneRuns(-20)).toEqual([{ zone: 'ok', from: SCALE_MIN, to: -20 }]);
+    expect(zoneRuns(-40)).toEqual([]);
+    expect(zoneRuns(9).at(-1)).toEqual({ zone: 'err', from: -3, to: SCALE_MAX });
+    expect([zoneOf(-12.1), zoneOf(-12), zoneOf(-3), zoneOf(-2.9)]).toEqual([
+      'ok',
+      'ok',
+      'warn',
+      'err',
+    ]);
   });
 
   it('captions IN with the analysis and OUT with the planned values, per mode', () => {

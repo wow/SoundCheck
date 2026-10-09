@@ -1,16 +1,18 @@
 import { OVERVIEW_H, RULER_H } from '../draw';
-import { SCALE_MIN, type Side, TICKS, levelY } from './scale';
+import { SCALE_MIN, type Side, TICKS, levelY, zoneOf, zoneRuns } from './scale';
 
 /**
  * The meter strip painter: a plain function of what to show, drawn on a canvas already scaled
- * by the device pixel ratio. The bar runs beside the waveform and residual lane, from the
- * ruler's bottom edge to the overview's top edge; the readouts sit above it in the ruler band,
- * the label below it in the overview band.
+ * by the device pixel ratio. The bar runs beside the waveform and residual lane, down to the
+ * overview's top edge; the readouts sit above it (in a band a little taller than the ruler, for
+ * two lines of 12 px numbers), the label below it in the overview band.
  */
 
 /** Strip widths, CSS pixels: a normal window, and one narrower than 1000 px. */
-export const STRIP_W = 28;
-export const STRIP_W_NARROW = 12;
+export const STRIP_W = 40;
+export const STRIP_W_NARROW = 16;
+/** The readouts' band at the top: two 12 px lines. */
+export const HEADER_H = Math.max(RULER_H, 32);
 /** Inside the bar band: room for the +3 dB end and the -36 dB end. */
 const PAD = 4;
 
@@ -30,7 +32,7 @@ export interface StripLayout {
 
 export function stripLayout(side: Side, width: number, height: number): StripLayout {
   // The bar band is the waveform and the residual lane; never inverted in a tiny box.
-  const barTop = RULER_H + PAD;
+  const barTop = HEADER_H + PAD;
   const barBottom = Math.max(barTop + 1, height - OVERVIEW_H - PAD);
   // IN is left of the waveform, so its scale is on the outer (left) side; OUT mirrors it.
   const outer = side === 'in' ? -1 : 1;
@@ -38,12 +40,12 @@ export function stripLayout(side: Side, width: number, height: number): StripLay
     const wellW = Math.max(2, width - 4);
     return { width, height, barTop, barBottom, wellX: 2, wellW, numbers: null, outer };
   }
-  const wellW = 10;
-  const wellX = side === 'in' ? width - 3 - wellW : 3;
+  const wellW = 14;
+  const wellX = side === 'in' ? width - 4 - wellW : 4;
   const numbers =
     side === 'in'
-      ? { x: wellX - 3, align: 'right' as const }
-      : { x: wellX + wellW + 3, align: 'left' as const };
+      ? { x: wellX - 6, align: 'right' as const }
+      : { x: wellX + wellW + 6, align: 'left' as const };
   return { width, height, barTop, barBottom, wellX, wellW, numbers, outer };
 }
 
@@ -54,6 +56,8 @@ export interface StripPalette {
   fg2: string;
   tp: string;
   lufs: string;
+  ok: string;
+  warn: string;
   err: string;
   mono: string;
 }
@@ -68,6 +72,8 @@ export function readStripPalette(el: Element = document.documentElement): StripP
     fg2: v('--sc-fg-2', '#7d8594'),
     tp: v('--sc-meter-tp', '#fb7185'),
     lufs: v('--sc-meter-lufs', '#7dd3fc'),
+    ok: v('--sc-ok', '#4ade80'),
+    warn: v('--sc-warn', '#fbbf24'),
     err: v('--sc-err', '#f87171'),
     mono: v('--sc-font-mono', 'ui-monospace, monospace'),
   };
@@ -81,7 +87,7 @@ export interface StripScene {
   /** OUT only: the loudness target (dashed) and the true-peak ceiling. */
   target: number | null;
   ceiling: number | null;
-  /** The peak went over its limit: the hold tick turns red. */
+  /** The peak went over its limit: the hold tick turns red whatever its zone. */
   over: boolean;
 }
 
@@ -99,7 +105,7 @@ export function drawStrip(
   ctx.fillRect(l.wellX, l.barTop, l.wellW, l.barBottom - l.barTop);
 
   // The scale: a hairline across the well per tick, its number beside it.
-  ctx.font = `8px ${p.mono}`;
+  ctx.font = `9px ${p.mono}`;
   ctx.textBaseline = 'middle';
   for (const db of TICKS) {
     const ty = Math.round(y(db)) + 0.5;
@@ -114,8 +120,12 @@ export function drawStrip(
 
   if (s.bar !== null && Number.isFinite(s.bar)) {
     const top = y(s.bar);
-    ctx.fillStyle = p.tp;
-    ctx.fillRect(l.wellX, top, l.wellW, l.barBottom - top);
+    for (const run of zoneRuns(s.bar)) {
+      const from = y(run.from);
+      const to = y(run.to);
+      ctx.fillStyle = p[run.zone];
+      ctx.fillRect(l.wellX, to, l.wellW, from - to);
+    }
     // The ticks read through the bar as gaps.
     ctx.fillStyle = p.bg0;
     for (const db of TICKS) {
@@ -145,7 +155,7 @@ export function drawStrip(
   }
 
   if (s.hold !== null && Number.isFinite(s.hold) && s.hold >= SCALE_MIN) {
-    ctx.fillStyle = s.over ? p.err : p.tp;
+    ctx.fillStyle = s.over ? p.err : p[zoneOf(s.hold)];
     ctx.fillRect(l.wellX, Math.round(y(s.hold)) - 1, l.wellW, 2);
   }
   if (s.momentary !== null) {

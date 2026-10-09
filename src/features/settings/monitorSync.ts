@@ -23,15 +23,21 @@ export function startMonitorSync(): () => void {
     if (db === sent) return;
     inFlight = true;
     sent = db;
-    void playerVolume(db)
-      .catch(() => {
-        // Told again with the next change; the slider keeps showing the user's choice.
-        sent = undefined;
-      })
-      .finally(() => {
+    void playerVolume(db).then(
+      () => {
         inFlight = false;
+        // A change made meanwhile goes now.
         send();
-      });
+      },
+      () => {
+        // Not tried again until the next change, so a player that keeps refusing is not
+        // asked in a loop; the slider keeps showing the user's choice.
+        inFlight = false;
+        sent = undefined;
+        // A change made meanwhile is new, not a retry: it goes now.
+        if (heardDb(useMonitor.getState()) !== db) send();
+      },
+    );
   };
 
   const save = () => {
@@ -47,8 +53,8 @@ export function startMonitorSync(): () => void {
     }, MONITOR_SAVE_DELAY_MS);
   };
 
-  const unsubscribe = useMonitor.subscribe(() => {
-    send();
+  const unsubscribe = useMonitor.subscribe((m, prev) => {
+    if (m.db !== prev.db || m.muted !== prev.muted || m.hydrated !== prev.hydrated) send();
     save();
   });
   void loadMonitor().then((saved) => {

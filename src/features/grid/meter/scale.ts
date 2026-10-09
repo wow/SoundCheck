@@ -17,6 +17,35 @@ export function levelY(db: number, top: number, bottom: number): number {
   return top + ((SCALE_MAX - clamped) / (SCALE_MAX - SCALE_MIN)) * (bottom - top);
 }
 
+/**
+ * The bar's fixed colour zones, as on an LED meter: green below -12 dB, yellow from -12 to
+ * -3 dB, red above -3 dB. A bar at -2 dB is green at the bottom, yellow, then red at the top.
+ */
+export type Zone = 'ok' | 'warn' | 'err';
+export const WARN_FROM = -12;
+export const ERR_FROM = -3;
+
+/** The zone a level falls in. */
+export function zoneOf(db: number): Zone {
+  return db > ERR_FROM ? 'err' : db > WARN_FROM ? 'warn' : 'ok';
+}
+
+/** The bar's runs from the bottom of the scale up to `db`: each zone's span it reaches. */
+export function zoneRuns(db: number): { zone: Zone; from: number; to: number }[] {
+  const top = Math.min(SCALE_MAX, db);
+  const runs: { zone: Zone; from: number; to: number }[] = [];
+  const spans: [Zone, number, number][] = [
+    ['ok', SCALE_MIN, WARN_FROM],
+    ['warn', WARN_FROM, ERR_FROM],
+    ['err', ERR_FROM, SCALE_MAX],
+  ];
+  for (const [zone, from, to] of spans) {
+    if (top <= from) break;
+    runs.push({ zone, from, to: Math.min(to, top) });
+  }
+  return runs;
+}
+
 export type Side = 'in' | 'out';
 
 /** What one strip shows while stopped: the track's numbers, or the planned ones for OUT. */

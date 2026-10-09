@@ -129,8 +129,30 @@ let refitSeq = 0;
 /** The newest save queued. */
 let saveSeq = 0;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
-/** Listen commands of this session on their way: until they land, events report the old one. */
-let listenPending = 0;
+/**
+ * After a switch lands, how long a report may still show the version before: the player's
+ * reports run at 30 Hz, so one sent just before the switch can arrive just after it.
+ */
+export const LISTEN_GRACE_MS = 150;
+/**
+ * The newest switch the user made and no report has shown yet. Until a report shows it (or the
+ * grace after its command landed runs out), reports keep the user's choice on screen.
+ */
+let wanted: { listen: Listen; until: number } | null = null;
+
+/** Whether a report's `listen` replaces the one shown, and the wanted switch it settles. */
+function reportedListen(reported: Listen, now: number): boolean {
+  if (wanted) {
+    if (sameListen(reported, wanted.listen)) {
+      wanted = null;
+      return true;
+    }
+    if (now <= wanted.until) return false;
+    // The player says otherwise past the grace: it is the authority.
+    wanted = null;
+  }
+  return true;
+}
 
 function message(e: unknown): string {
   if (typeof e === 'object' && e !== null && 'message' in e)
@@ -245,7 +267,7 @@ export const useTrack = create<TrackState>()((set, get) => {
       flush();
       const token = ++session;
       refitSeq++;
-      listenPending = 0;
+      wanted = null;
       set({ ...CLOSED, fileId, phase: 'opening' });
       try {
         const opened = await enqueue(() =>
@@ -277,7 +299,7 @@ export const useTrack = create<TrackState>()((set, get) => {
       flush();
       session++;
       refitSeq++;
-      listenPending = 0;
+      wanted = null;
       set({ ...CLOSED });
       await enqueue(() => trackClose()).catch(() => {});
     },
@@ -347,16 +369,17 @@ export const useTrack = create<TrackState>()((set, get) => {
       if (fileId === null || phase !== 'open' || sameListen(listen, before)) return;
       set({ listen });
       const token = session;
-      listenPending++;
+      const want = { listen, until: Infinity };
+      wanted = want;
       playerCommand(async () => {
         try {
           await gridPlayerListen(fileId, listen);
+          if (wanted === want) want.until = performance.now() + LISTEN_GRACE_MS;
         } catch (e) {
+          if (wanted === want) wanted = null;
           // Still what the user hears: the version before.
           if (session === token && get().listen === listen) set({ listen: before });
           throw e;
-        } finally {
-          if (session === token) listenPending--;
         }
       });
     },
@@ -391,8 +414,9 @@ export const useTrack = create<TrackState>()((set, get) => {
             },
             meter: event.meter,
             overs: latched(get().overs, event.meter, useSettings.getState().ceiling),
-            // Reported once every switch has landed, so a report from before one never undoes it.
-            ...(listenPending === 0 && !sameListen(event.listen, get().listen)
+            // A report from before the newest switch never undoes it.
+            ...(reportedListen(event.listen, performance.now()) &&
+            !sameListen(event.listen, get().listen)
               ? { listen: event.listen }
               : {}),
           });

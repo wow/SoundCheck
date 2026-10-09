@@ -62,6 +62,12 @@ describe('listening keys', () => {
     expect(gridKey(key({ key: 'и', code: 'KeyB' }))).toEqual({ type: 'version' });
     expect(gridKey(key({ key: 'И', code: 'KeyB', shiftKey: true }))).toEqual({ type: 'match' });
     expect(gridKey(key({ key: '∫', code: 'KeyB', altKey: true }))).toBeNull();
+    // Turkish Q types ı on the key at I's place: a Latin letter of its own, so not Details.
+    expect(gridKey(key({ key: 'ı', code: 'KeyI' }))).toBeNull();
+    expect(gridKey(key({ key: 'ä', code: 'Quote' }))).toBeNull();
+    // Cyrillic ш on the same key goes by its place, and Greek ρ on R's.
+    expect(gridKey(key({ key: 'ш', code: 'KeyI' }))).toEqual({ type: 'details' });
+    expect(gridKey(key({ key: 'ρ', code: 'KeyR' }))).toEqual({ type: 'reset' });
     expect(gridKey(key({ key: 'b', code: 'KeyB', metaKey: true }))).toBeNull();
   });
 

@@ -5,7 +5,7 @@ import { useSettings } from '@/state/settings';
 import { entry } from '@/test/fixtures';
 import { switchVersion, toggleMatch } from './actions';
 import { NO_EDIT } from './edit';
-import { OPEN_LISTEN, useTrack } from './store';
+import { LISTEN_GRACE_MS, OPEN_LISTEN, useTrack } from './store';
 import { testGrid } from './testGrid';
 
 vi.mock('@/lib/ipc', async (original) => ({
@@ -61,6 +61,7 @@ function deferred() {
 
 const initialTrack = useTrack.getState();
 const initialSettings = useSettings.getState();
+afterEach(() => vi.restoreAllMocks());
 beforeEach(async () => {
   useTrack.setState(initialTrack, true);
   useSettings.setState(initialSettings, true);
@@ -83,18 +84,38 @@ describe('the version heard', () => {
     ]);
   });
 
-  it('takes the reported version once the switch has landed, never a report from before it', async () => {
+  it('keeps a switch on screen until a report shows it, or its grace runs out', async () => {
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
     const slow = deferred();
     vi.mocked(gridPlayerListen).mockImplementationOnce(() => slow.promise);
+    const t = () => useTrack.getState();
     switchVersion();
-    // A report sent before the switch reached the player.
-    useTrack.getState().handle(player(OPEN_LISTEN));
-    expect(useTrack.getState().listen.version).toBe('original');
+    // Reports sent before the switch reached the player.
+    t().handle(player(OPEN_LISTEN));
+    expect(t().listen.version).toBe('original');
     slow.resolve();
     await vi.waitFor(() => expect(vi.mocked(gridPlayerListen)).toHaveBeenCalled());
     await Promise.resolve();
     await Promise.resolve();
-    // Now the player is the authority: it says processed (another window, a reload).
+    // Landed, but the player's next report can still predate it: no flash back.
+    now += LISTEN_GRACE_MS - 10;
+    t().handle(player(OPEN_LISTEN));
+    expect(t().listen.version).toBe('original');
+    // A report that shows it settles it; from then on the player is the authority.
+    t().handle(player({ version: 'original', matched: false }));
+    t().handle(player(OPEN_LISTEN));
+    expect(t().listen).toEqual(OPEN_LISTEN);
+  });
+
+  it('takes the player’s word once the grace after a landed switch runs out', async () => {
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    switchVersion();
+    await vi.waitFor(() => expect(vi.mocked(gridPlayerListen)).toHaveBeenCalled());
+    await Promise.resolve();
+    await Promise.resolve();
+    now += LISTEN_GRACE_MS + 1;
     useTrack.getState().handle(player(OPEN_LISTEN));
     expect(useTrack.getState().listen).toEqual(OPEN_LISTEN);
   });

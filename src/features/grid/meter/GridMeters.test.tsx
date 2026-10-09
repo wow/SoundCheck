@@ -85,13 +85,13 @@ const frame: MeterFrame = {
 };
 
 describe('the meter strips', () => {
-  it('stand either side of the waveform, 28 px wide, with the track’s numbers while stopped', () => {
+  it('stand either side of the waveform, 40 px wide, with the track’s numbers while stopped', () => {
     openTrack();
     render(<GridView />);
     const inStrip = meterGroup(/^IN meter/);
     const outStrip = meterGroup(/^OUT meter/);
-    expect(inStrip.style.width).toBe('28px');
-    expect(outStrip.style.width).toBe('28px');
+    expect(inStrip.style.width).toBe('40px');
+    expect(outStrip.style.width).toBe('40px');
     // IN, the waveform, OUT: in that order.
     const waveform = screen.getByRole('img', { name: /Waveform/ });
     expect(inStrip.compareDocumentPosition(waveform)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
@@ -114,12 +114,12 @@ describe('the meter strips', () => {
     expect(meterGroup(/^OUT meter/)).toHaveTextContent('Integrated -12.4 · TP -2.1');
   });
 
-  it('fold to 12 px in a narrow window, the numbers in a tooltip', () => {
+  it('fold to 16 px in a narrow window, the numbers in a tooltip', () => {
     narrow = true;
     openTrack();
     render(<GridView />);
     const outStrip = meterGroup(/^OUT meter/);
-    expect(outStrip.style.width).toBe('12px');
+    expect(outStrip.style.width).toBe('16px');
     expect(outStrip).toHaveAttribute('title', 'OUT · S-P95 -11.0 · TP -2.1');
     // The readings stay for screen readers.
     expect(within(outStrip).getByRole('meter', { name: 'OUT S-P95' })).toBeInTheDocument();
@@ -176,7 +176,7 @@ describe('a long track held as mono', () => {
         within(outStrip).getByRole('meter', { name: 'OUT true peak, mono sum' }),
       ).toHaveAttribute('aria-valuetext', '-4.8 dBTP'),
     );
-    expect(outStrip.getAttribute('title')).toMatch(/^OUT · mono sum/);
+    expect(outStrip.getAttribute('title')).toMatch(/^OUT · peak -4\.8 dBTP .* · mono sum/);
   });
 });
 
@@ -211,8 +211,13 @@ describe('the volume control', () => {
     expect(play.compareDocumentPosition(slider)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(slider).toHaveAttribute('aria-valuetext', '0.0 dB');
     fireEvent.keyDown(window, { key: 'ArrowDown', shiftKey: true });
+    // Held, the volume keys repeat; no other key does.
     fireEvent.keyDown(window, { key: 'ArrowDown', shiftKey: true, repeat: true });
     expect(slider).toHaveAttribute('aria-valuetext', '−2.0 dB');
+    fireEvent.keyDown(window, { key: 'b', code: 'KeyB', repeat: true });
+    fireEvent.keyDown(window, { key: 'c', code: 'KeyC', repeat: true });
+    expect(useTrack.getState().listen).toEqual(OPEN_LISTEN);
+    expect(useTrack.getState().click).toBe(true);
     fireEvent.keyDown(window, { key: 'ArrowUp', shiftKey: true });
     expect(useMonitor.getState().db).toBe(-1);
     fireEvent.click(within(transport).getByRole('button', { name: 'Mute' }));
@@ -236,7 +241,13 @@ describe('the volume control', () => {
     expect(pop).toHaveTextContent('0.0 dB');
     fireEvent.keyDown(slider, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: 'Monitor volume' })).toBeNull();
-    // Esc closed the popover, not the grid view.
+    // Esc closed the popover, not the grid view, and focus went back to the speaker button.
     expect(useTrack.getState().fileId).toBe(1);
+    expect(screen.getByRole('button', { name: 'Volume' })).toHaveFocus();
+    // A press outside closes it the same way.
+    fireEvent.click(screen.getByRole('button', { name: 'Volume' }));
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('dialog', { name: 'Monitor volume' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Volume' })).toHaveFocus();
   });
 });

@@ -77,6 +77,20 @@ describe('the monitor volume sync', () => {
     stop();
   });
 
+  it('asks a refusing player again only on the next change, never in a loop', async () => {
+    vi.mocked(playerVolume).mockRejectedValue({ message: 'no output device' });
+    const stop = startMonitorSync();
+    await vi.waitFor(() => expect(vi.mocked(playerVolume)).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(vi.mocked(playerVolume)).toHaveBeenCalledTimes(1);
+    useMonitor.getState().step(-1);
+    await vi.waitFor(() => expect(vi.mocked(playerVolume)).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(vi.mocked(playerVolume)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(playerVolume)).toHaveBeenLastCalledWith(-1);
+    stop();
+  });
+
   it('saves once after a drag, and never writes back what it read', async () => {
     vi.useFakeTimers();
     const stop = startMonitorSync();
