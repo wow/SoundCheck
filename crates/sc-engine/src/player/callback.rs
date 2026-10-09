@@ -65,9 +65,12 @@ impl Default for Shared {
 
 impl Shared {
     /// Plays the rendered audio at `linear` times its level (the version gain), before the clamp
-    /// to full scale; the callback ramps to it over [`RAMP_S`].
+    /// to full scale; the callback ramps to it over [`RAMP_S`]. A factor that is not a finite
+    /// number is ignored (the gain stays).
     pub fn set_listen_gain(&self, linear: f32) {
-        self.listen_gain.store(linear.to_bits(), Ordering::Release);
+        if linear.is_finite() {
+            self.listen_gain.store(linear.to_bits(), Ordering::Release);
+        }
     }
 
     /// The version gain the callback is moving to, linear.
@@ -77,9 +80,12 @@ impl Shared {
     }
 
     /// Scales what is heard by `linear` (the monitor volume, 0 for muted), after the clamp; the
-    /// callback ramps to it over [`RAMP_S`].
+    /// callback ramps to it over [`RAMP_S`]. A factor that is not a finite number is ignored
+    /// (the volume stays).
     pub fn set_volume(&self, linear: f32) {
-        self.volume.store(linear.to_bits(), Ordering::Release);
+        if linear.is_finite() {
+            self.volume.store(linear.to_bits(), Ordering::Release);
+        }
     }
 
     /// The monitor volume the callback is moving to, linear.

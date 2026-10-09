@@ -2,7 +2,9 @@
 //! thread's part): switching versions is heard within one device buffer along a 10 ms ramp, level
 //! matching plays the processed version at the original level, the monitor volume scales what is
 //! heard by exactly its dB and changes no meter, OUT reads the planned gain above IN, and the meter
-//! frame for the heard position lies within one block of it, also after a seek.
+//! frame for the heard position lies within one block of it, also after a seek; read at 30 Hz,
+//! the frames still hold the peak of every block in between, and a long stereo track held as mono
+//! says so.
 
 use std::path::Path;
 use std::sync::atomic::Ordering;
@@ -46,8 +48,13 @@ fn sine(amp: f64) -> impl Fn(u32) -> i16 {
 }
 
 fn track(path: &Path) -> Arc<Track> {
+    track_folding_after(path, 1_200.0)
+}
+
+/// As [`track`], holding a stereo file as mono when it is longer than `mono_after_s`.
+fn track_folding_after(path: &Path, mono_after_s: f64) -> Arc<Track> {
     let (tx, rx) = mpsc::channel();
-    let t = Track::open(path, DbFs(-1.0), move |p| {
+    let t = Track::open_with(path, DbFs(-1.0), mono_after_s, move |p| {
         if !matches!(p, TrackProgress::Decoded(_)) {
             let _ = tx.send(());
         }
@@ -66,6 +73,7 @@ struct Rig {
 fn rig(track: Arc<Track>, planned: f64) -> Rig {
     let shared = Arc::new(Shared::default());
     let (producer, consumer) = ring(RATE, 2);
+    // The device is stereo whatever the track's channels.
     let renderer = Renderer::new(track, RATE, 2).unwrap();
     let meters = Arc::new(Meters::new());
     let mut feeder = Feeder::new(renderer, producer, Arc::clone(&shared), meters, RATE, 2).unwrap();
@@ -283,4 +291,101 @@ fn a_seek_restarts_the_meters_at_the_new_position() {
     // 400 ms later the window is full again.
     let _ = r.play(80);
     assert!(r.heard_meter().1.unwrap().in_momentary.is_some());
+}
+
+#[test]
+fn read_at_30_hz_the_frames_hold_a_one_block_over() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("over.wav");
+    // A quiet sine with 400 frames near full scale at 1.5 s: one block's worth.
+    let quiet = sine(0.1);
+    let loud = sine(0.99);
+    wav(&path, 4 * RATE, |n| {
+        if (72_000..72_400).contains(&n) {
+            loud(n)
+        } else {
+            quiet(n)
+        }
+    });
+    let mut r = rig(track(&path), -3.0);
+    r.feeder.play();
+    let (mut previous, mut loudest) = (None, f64::NEG_INFINITY);
+    // About 30 readings a second: one every six 256-frame buffers (32 ms).
+    for _ in 0..60 {
+        let _ = r.play(6);
+        let heard = r.feeder.state().position;
+        if let Some(frame) = r.feeder.meter_since(heard, previous) {
+            loudest = loudest.max(frame.in_peak.unwrap().0);
+            let gain = frame.out_peak.unwrap().0 - frame.in_peak.unwrap().0;
+            assert!((gain + 3.0).abs() <= 0.002, "{gain}");
+            previous = Some(frame.position);
+        }
+    }
+    assert!(
+        loudest > -0.2,
+        "the over reached a frame: {loudest:.2} dBTP"
+    );
+}
+
+/// A 16-bit 48 kHz WAV of `channels` channels, each frame from `f(n)` on every channel.
+fn wav_channels(path: &Path, channels: u16, frames: u32, f: impl Fn(u32) -> i16) {
+    let mut w = hound::WavWriter::create(
+        path,
+        hound::WavSpec {
+            channels,
+            sample_rate: RATE,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .unwrap();
+    for n in 0..frames {
+        for _ in 0..channels {
+            w.write_sample(f(n)).unwrap();
+        }
+    }
+    w.finalize().unwrap();
+}
+
+#[test]
+fn a_track_of_more_than_two_channels_is_refused_before_it_reaches_the_player() {
+    // The meter takes any channel count (its unit tests meter three), but the decoder refuses
+    // more than two, so the player never gets such a track.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("three.wav");
+    wav_channels(&path, 3, RATE, sine(0.25));
+    let opened = Track::open(&path, DbFs(-1.0), |_| {});
+    assert!(matches!(
+        opened,
+        Err(sc_core::Error::UnsupportedChannels { channels: 3, .. })
+    ));
+}
+
+#[test]
+fn a_long_stereo_track_held_as_mono_is_metered_as_such() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("long.wav");
+    wav(&path, 2 * RATE, sine(0.25));
+    let t = track_folding_after(&path, 1.0);
+    assert!(t.folded() && t.channels() == 1);
+    let mut r = rig(t, 0.0);
+    r.feeder.play();
+    let _ = r.play(100);
+    assert!(r.heard_meter().1.expect("metered").folded);
+}
+
+#[test]
+fn a_planned_gain_that_is_not_a_number_is_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dc.wav");
+    wav(&path, RATE, |_| 8_192);
+    let mut r = rig(track(&path), -6.0);
+    let gain = r.shared.listen_gain();
+    for wrong in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        r.feeder.set_planned_gain(DbFs(wrong));
+        r.feeder.set_volume(Some(DbFs(wrong.abs())));
+    }
+    assert_eq!(r.feeder.planned_gain(), DbFs(-6.0));
+    assert_eq!(r.shared.listen_gain().to_bits(), gain.to_bits());
+    assert_eq!(r.shared.volume().to_bits(), 1.0_f32.to_bits());
 }

@@ -60,10 +60,14 @@ pub struct Status {
     /// first load). Right after a load, the status still describes the track before until the
     /// player's thread has taken the new one.
     pub load: u64,
-    /// The meter reading for `state`'s position while playing; `None` while stopped.
+    /// The meter reading for `state`'s position while playing (that block's peak alone; a
+    /// reporter uses [`Player::meter_since`] for the peaks since its last frame); `None` while
+    /// stopped.
     pub meter: Option<MeterFrame>,
     /// The version heard.
     pub listen: Listen,
+    /// The track's planned gain: what the processed version plays at and OUT reads above IN.
+    pub planned: DbFs,
 }
 
 /// The click audition player on the default output device.
@@ -142,7 +146,7 @@ impl Player {
     }
 
     /// Changes the track's planned gain (dB, after a target change): the processed version plays
-    /// at it and OUT reads it above IN.
+    /// at it and OUT reads it above IN. A gain that is not a finite number is ignored.
     pub fn set_planned_gain(&self, gain: DbFs) {
         self.send(Command::PlannedGain(gain));
     }
@@ -164,6 +168,17 @@ impl Player {
     #[must_use]
     pub fn meter_at(&self, heard: SampleIndex) -> Option<MeterFrame> {
         self.meters.at(heard)
+    }
+
+    /// The meter reading for `heard` with the peaks of every block since the frame read before,
+    /// which ended at `previous` ([`Meters::since`]).
+    #[must_use]
+    pub fn meter_since(
+        &self,
+        heard: SampleIndex,
+        previous: Option<SampleIndex>,
+    ) -> Option<MeterFrame> {
+        self.meters.since(heard, previous)
     }
 
     /// Stops and releases the track and the device.
@@ -277,12 +292,14 @@ impl Thread {
             load: self.load,
             meter,
             listen: self.loaded.as_ref().map(|l| l.listen).unwrap_or_default(),
+            planned: self.loaded.as_ref().map_or(DbFs(0.0), |l| l.gain),
         }
     }
 
     fn handle(&mut self, command: Command) {
         match command {
             Command::Load { track, gain, load } => {
+                let gain = if gain.0.is_finite() { gain } else { DbFs(0.0) };
                 self.load = load;
                 self.meters.clear();
                 self.meters.set_out_offset(gain);
@@ -321,13 +338,14 @@ impl Thread {
                 }
                 self.with_feeder(|f| f.set_grid(grid));
             }
-            Command::PlannedGain(gain) => {
+            Command::PlannedGain(gain) if gain.0.is_finite() => {
                 if let Some(l) = self.loaded.as_mut() {
                     l.gain = gain;
                 }
                 self.meters.set_out_offset(gain);
                 self.with_feeder(|f| f.set_planned_gain(gain));
             }
+            Command::PlannedGain(_) => {}
             Command::Listen(listen) => {
                 if let Some(l) = self.loaded.as_mut() {
                     l.listen = listen;

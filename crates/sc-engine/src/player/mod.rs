@@ -122,6 +122,7 @@ impl Feeder {
         let origin = renderer.position();
         let mut metering = Metering::new(renderer.sample_rate(), renderer.channels(), meters)?;
         metering.reset();
+        metering.meters().set_folded(renderer.folded());
         let mut feeder = Self {
             renderer,
             metering,
@@ -180,8 +181,12 @@ impl Feeder {
     }
 
     /// The track's planned gain (dB): what the processed version plays at and what OUT reads
-    /// above IN. Heard within one device buffer, over [`callback::RAMP_S`].
+    /// above IN. Heard within one device buffer, over [`callback::RAMP_S`]. A gain that is not a
+    /// finite number is ignored.
     pub fn set_planned_gain(&mut self, gain: DbFs) {
+        if !gain.0.is_finite() {
+            return;
+        }
         self.planned = gain;
         self.metering.meters().set_out_offset(gain);
         self.apply_listen();
@@ -206,7 +211,8 @@ impl Feeder {
     }
 
     /// Sets the monitor volume (dB, `None` for muted), applied after the clamp to full scale,
-    /// within one device buffer, over [`callback::RAMP_S`]; the meters do not change.
+    /// within one device buffer, over [`callback::RAMP_S`]; the meters do not change. A volume
+    /// that is not a finite number of dB is ignored.
     pub fn set_volume(&mut self, volume: Option<DbFs>) {
         self.shared.set_volume(linear(volume));
     }
@@ -215,6 +221,23 @@ impl Feeder {
     #[must_use]
     pub fn meter_at(&self, heard: SampleIndex) -> Option<MeterFrame> {
         self.metering.meters().at(heard)
+    }
+
+    /// The meter reading for `heard` with the peaks since the frame read before, which ended at
+    /// `previous` ([`Meters::since`]).
+    #[must_use]
+    pub fn meter_since(
+        &self,
+        heard: SampleIndex,
+        previous: Option<SampleIndex>,
+    ) -> Option<MeterFrame> {
+        self.metering.meters().since(heard, previous)
+    }
+
+    /// The planned gain the processed version plays at.
+    #[must_use]
+    pub fn planned_gain(&self) -> DbFs {
+        self.planned
     }
 
     /// Clicks on `grid`'s lines from the audio rendered next (about 150 ms later).

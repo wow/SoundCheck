@@ -6,16 +6,19 @@
 //!
 //! [`Metering`] runs on the feeding thread, never on the audio thread: it takes each block of the
 //! track as rendered, at its own rate and channels and at unity gain (before the click is mixed
-//! in and before resampling), and after each block stores the block's true peak (the louder
+//! in and before resampling), and after each block stores the block's true peak (the loudest
 //! channel) and the momentary loudness ending there in a fixed-size history ([`Meters`]). The
 //! history is read for the position being heard, which trails the rendering by the queued audio
 //! and the device latency; it holds [`HISTORY_BLOCKS`] blocks (6 s at 44.1 kHz, 1.4 s at
-//! 192 kHz), more than the 150 ms queue plus the latency of a Bluetooth output.
+//! 192 kHz), more than the 150 ms queue plus the latency of a Bluetooth output. A reader that
+//! looks a few times a second ([`Meters::since`]) gets the largest block peak since its last
+//! reading, so a short over between two readings is never lost.
 //!
 //! OUT is IN plus the planned gain, added to each reading as it is read: BS.1770 loudness and true
 //! peak are homogeneous, so a gain of `g` dB moves both by exactly `g`. A mono file is measured as
-//! dual mono, as the analysis does; a track held as mono because it is longer than 20 minutes is
-//! measured as that mono fold.
+//! dual mono, as the analysis does; more channels use the BS.1770 channel order (L, R, C, LFE
+//! excluded, Ls, Rs). A stereo track held as mono because it is longer than 20 minutes is
+//! measured as that mono fold, and its frames say so ([`MeterFrame::folded`]).
 //!
 //! Momentary loudness at or below the -70 LUFS absolute gate of BS.1770-5 reads as silence
 //! (`None`), as it does in the analysis; so does a block whose samples are all zero, for the peak.
@@ -54,6 +57,8 @@ struct History {
     readings: VecDeque<Reading>,
     /// The planned gain, dB, which OUT adds to IN.
     out_offset_db: f64,
+    /// The readings are of a stereo track folded to mono.
+    folded: bool,
 }
 
 /// The meter readings of the blocks rendered last, shared between the feeding thread (which
@@ -77,6 +82,7 @@ impl Meters {
             history: Mutex::new(History {
                 readings: VecDeque::with_capacity(HISTORY_BLOCKS),
                 out_offset_db: 0.0,
+                folded: false,
             }),
         }
     }
@@ -89,6 +95,11 @@ impl Meters {
     /// too.
     pub fn set_out_offset(&self, gain: DbFs) {
         self.lock().out_offset_db = gain.0;
+    }
+
+    /// Marks the readings as those of a stereo track held (and measured) as mono.
+    pub fn set_folded(&self, folded: bool) {
+        self.lock().folded = folded;
     }
 
     /// Forgets every reading (a seek or a new track).
@@ -110,21 +121,39 @@ impl Meters {
     /// is that close (nothing measured yet since a seek, or the history has moved on).
     #[must_use]
     pub fn at(&self, heard: SampleIndex) -> Option<MeterFrame> {
+        self.since(heard, None)
+    }
+
+    /// As [`Meters::at`], but the peaks are the largest of every stored block from the one after
+    /// the block ending at `previous` (the `position` of the frame read before) up to the one
+    /// holding `heard`: what a reader that looks every 33 ms needs so that no block's peak is
+    /// skipped. `None`, or a `previous` at or after the heard block (a seek back), takes the
+    /// heard block alone; a seek empties the history, so peaks never reach back across one.
+    /// Momentary loudness is always the heard block's.
+    #[must_use]
+    pub fn since(&self, heard: SampleIndex, previous: Option<SampleIndex>) -> Option<MeterFrame> {
         let history = self.lock();
         let readings = &history.readings;
         let i = readings.partition_point(|r| r.end <= heard.0);
-        let reading = match readings.get(i) {
-            Some(r) if r.start <= heard.0 => *r,
+        let i = match readings.get(i) {
+            Some(r) if r.start <= heard.0 => i,
             Some(_) => return None,
             None => {
-                let last = *readings.back()?;
+                let last = readings.back()?;
                 if heard.0 - last.end > BLOCK_FRAMES as u64 {
                     return None;
                 }
-                last
+                readings.len() - 1
             }
         };
-        Some(frame(reading, history.out_offset_db))
+        let mut reading = readings[i];
+        if let Some(previous) = previous {
+            let first = readings.partition_point(|r| r.end <= previous.0);
+            for r in readings.range(first.min(i)..i) {
+                reading.peak = reading.peak.max(r.peak);
+            }
+        }
+        Some(frame(reading, history.out_offset_db, history.folded))
     }
 
     /// The reading of the last block measured.
@@ -132,12 +161,12 @@ impl Meters {
     pub fn latest(&self) -> Option<MeterFrame> {
         let history = self.lock();
         let last = *history.readings.back()?;
-        Some(frame(last, history.out_offset_db))
+        Some(frame(last, history.out_offset_db, history.folded))
     }
 }
 
 /// The frame for `r` with OUT `offset_db` above IN.
-fn frame(r: Reading, offset_db: f64) -> MeterFrame {
+fn frame(r: Reading, offset_db: f64, folded: bool) -> MeterFrame {
     let peak_db = (r.peak > 0.0).then(|| 20.0 * r.peak.log10());
     MeterFrame {
         position: SampleIndex(r.end),
@@ -145,6 +174,7 @@ fn frame(r: Reading, offset_db: f64) -> MeterFrame {
         in_momentary: r.momentary.map(|m| Lufs(round_db(m))),
         out_peak: peak_db.map(|p| DbTp(round_db(p + offset_db))),
         out_momentary: r.momentary.map(|m| Lufs(round_db(m + offset_db))),
+        folded,
     }
 }
 
@@ -174,17 +204,14 @@ impl std::fmt::Debug for Metering {
 }
 
 impl Metering {
-    /// A meter for a track of `rate` Hz and `channels` channels (1 or 2) that stores its
-    /// readings in `meters`.
+    /// A meter for a track of `rate` Hz and `channels` channels that stores its readings in
+    /// `meters`.
     ///
     /// # Errors
-    /// [`Error::InvalidArgument`] for a channel count other than 1 or 2, or a rate the meter
-    /// cannot run at.
+    /// [`Error::InvalidArgument`] for no channels, or a rate the meter cannot run at.
     pub fn new(rate: u32, channels: u16, meters: Arc<Meters>) -> Result<Self> {
-        if !(1..=2).contains(&channels) {
-            return Err(Error::InvalidArgument(format!(
-                "{channels} channels; the player's meter takes mono or stereo"
-            )));
+        if channels == 0 {
+            return Err(Error::InvalidArgument("no channels to meter".into()));
         }
         let mut meter = EbuR128::new(u32::from(channels), rate, Mode::M | Mode::TRUE_PEAK)
             .map_err(|e| Error::InvalidArgument(format!("meter at {rate} Hz: {e}")))?;

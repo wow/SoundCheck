@@ -111,11 +111,13 @@ pub enum TrackEvent {
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct MeterFrame {
-    /// End of the block the reading describes (the first frame after it), at the file's rate;
-    /// within one block of the heard position.
+    /// End of the block holding the heard position (the first frame after it), at the file's
+    /// rate; within one block of the heard position.
     pub position: SampleIndex,
-    /// True peak of the original over the block, the louder channel (ITU-R BS.1770-5 Annex 2,
-    /// 4x oversampled); `None` for digital silence.
+    /// True peak of the original since the previous frame: the largest over every block after
+    /// the previous frame's block up to this one, the loudest channel (ITU-R BS.1770-5 Annex 2,
+    /// 4x oversampled), so an over between two frames is never missed. The first frame after a
+    /// start, seek or load covers its own block. `None` for digital silence.
     pub in_peak: Option<DbTp>,
     /// Momentary loudness of the original: the 400 ms ending at `position` (ITU-R BS.1770-5,
     /// ungated); `None` for silence (at or below the -70 LUFS absolute gate) and in the first
@@ -125,6 +127,9 @@ pub struct MeterFrame {
     pub out_peak: Option<DbTp>,
     /// `in_momentary` plus the planned gain.
     pub out_momentary: Option<Lufs>,
+    /// The track is a stereo file longer than 20 minutes, held, played and measured as mono
+    /// (left and right averaged), so its readings can differ from the file's own.
+    pub folded: bool,
 }
 
 /// One of the two versions the player can play.

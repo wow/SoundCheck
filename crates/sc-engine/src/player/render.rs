@@ -103,6 +103,12 @@ impl Renderer {
         self.track.channels()
     }
 
+    /// The track is a stereo file held as mono ([`Track::folded`]).
+    #[must_use]
+    pub fn folded(&self) -> bool {
+        self.track.folded()
+    }
+
     /// The music of the last block rendered, interleaved at the track's channels and at the
     /// file's own level (unity gain, no click): what the meters measure.
     #[must_use]

@@ -1,13 +1,17 @@
 //! The player's meter against the standards and the analysis: momentary loudness at every block
 //! end equals an independent ITU-R BS.1770-5 computation (K-weighting from the analog prototype,
-//! f64 mean square over the last 400 ms) within 0.05 LU, a 1 kHz sine at -20 dBFS reads
-//! -20.0 LUFS, the true peak of each block is within 0.1 dB of an independent 4x-oversampled
+//! f64 mean square over the last 400 ms) within 0.005 LU, a 1 kHz sine at -20 dBFS reads
+//! -20.0 LUFS, the true peak of each block is within 0.02 dB of an independent 4x-oversampled
 //! peak over the same frames, and the largest block peak over a whole signal equals the analysis's
-//! true peak within 0.05 dB.
+//! true peak within 0.005 dB. (The readings are rounded to 0.001 dB, so 0.0005 of each margin is
+//! rounding.)
 //!
 //! EBU Tech 3341 cases 1 to 5 run the same comparisons on the EBU loudness test set, which is not
 //! committed: fetch it with `scripts/fetch-ebu-testset.sh`, then
-//! `SC_EBU_TESTSET=1 cargo test -p sc-engine --test meter -- --include-ignored`.
+//! `SC_EBU_TESTSET=1 cargo test -p sc-engine --test meter -- --include-ignored`. Real music: with
+//! `SC_REAL_FIXTURES=<dir>` (WAV, AIFF, FLAC and MP3 files; the folder is only read),
+//! `cargo test -p sc-engine --release --test meter real -- --include-ignored --nocapture` runs the
+//! momentary and track-peak comparisons on every file, one line per file.
 
 use std::f64::consts::PI;
 use std::path::{Path, PathBuf};
@@ -202,14 +206,14 @@ fn assert_momentary(buf: &AudioBuffer, frames: &[MeterFrame], tolerance: f64, wh
     eprintln!("{what}: momentary within {worst:.5} LU of the reference at {compared} block ends");
 }
 
-/// Each block's true peak within 0.1 dB of the reference over the same frames.
+/// Each block's true peak within 0.02 dB of the reference over the same frames.
 fn assert_peaks(buf: &AudioBuffer, frames: &[MeterFrame], what: &str) {
     let mut worst = 0.0_f64;
     for (f, r) in frames.iter().zip(reference_peaks(buf)) {
         let reference = 20.0 * r.log10();
         let peak = f.in_peak.map_or(f64::NEG_INFINITY, |p| p.0);
         assert!(
-            (peak - reference).abs() <= 0.1,
+            (peak - reference).abs() <= 0.02,
             "{what} at {}: {peak:.3} vs {reference:.3} dBTP",
             f.position.0
         );
@@ -218,7 +222,7 @@ fn assert_peaks(buf: &AudioBuffer, frames: &[MeterFrame], what: &str) {
     eprintln!("{what}: block true peaks within {worst:.4} dB of the reference");
 }
 
-/// The largest block peak equals the analysis's true peak within 0.05 dB.
+/// The largest block peak equals the analysis's true peak within 0.005 dB.
 fn assert_track_peak(buf: &AudioBuffer, frames: &[MeterFrame], what: &str) {
     let analysis = sc_analysis::loudness::measure(buf).unwrap().true_peak.0;
     let max = frames
@@ -226,7 +230,7 @@ fn assert_track_peak(buf: &AudioBuffer, frames: &[MeterFrame], what: &str) {
         .filter_map(|f| f.in_peak)
         .fold(f64::NEG_INFINITY, |m, p| m.max(p.0));
     assert!(
-        (max - analysis).abs() <= 0.05,
+        (max - analysis).abs() <= 0.005,
         "{what}: {max:.3} vs {analysis:.3}"
     );
     eprintln!("{what}: track peak {max:.3} vs analysis {analysis:.4} dBTP");
@@ -264,7 +268,7 @@ fn a_1_khz_sine_at_minus_20_dbfs_reads_minus_20_lufs() {
         assert!((m + 20.0).abs() <= 0.1, "{m}");
         assert!((f.in_peak.unwrap().0 + 20.0).abs() <= 0.05);
     }
-    assert_momentary(&tone, &frames, 0.05, "sine");
+    assert_momentary(&tone, &frames, 0.005, "sine");
 }
 
 #[test]
@@ -275,7 +279,7 @@ fn momentary_loudness_follows_bs_1770_at_every_block_end() {
         AudioSpec::new(44_100, 1),
     ] {
         let music = chord(spec, 3.0);
-        assert_momentary(&music, &stream(&music), 0.05, "chord");
+        assert_momentary(&music, &stream(&music), 0.005, "chord");
     }
     // Noise bursts with silent gaps: the window fills, empties and fills again.
     let mut noise = testsig::seeded_noise(AudioSpec::CD, 7, 0.3, 3.0);
@@ -284,7 +288,7 @@ fn momentary_loudness_follows_bs_1770_at_every_block_end() {
             frame.fill(0.0);
         }
     }
-    assert_momentary(&noise, &stream(&noise), 0.05, "bursts");
+    assert_momentary(&noise, &stream(&noise), 0.005, "bursts");
 }
 
 #[test]
@@ -358,7 +362,7 @@ fn tech_3341_cases_1_to_5_read_as_the_offline_meter() {
     ] {
         let buf = sc_io::read_all(&find(file)).unwrap();
         let frames = stream(&buf);
-        assert_momentary(&buf, &frames, 0.05, file);
+        assert_momentary(&buf, &frames, 0.005, file);
         if let Some(level) = steady {
             for f in &frames[20..frames.len() - 1] {
                 let m = f.in_momentary.unwrap().0;
@@ -376,5 +380,57 @@ fn tech_3341_cases_1_to_5_read_as_the_offline_meter() {
             "{file}: max {loudest} vs {offline}"
         );
         assert_track_peak(&buf, &frames, file);
+    }
+}
+
+/// Every WAV, AIFF, FLAC or MP3 file directly in `dir`, skipping names starting with `.`.
+fn audio_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or(".");
+            let ext = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase);
+            p.is_file()
+                && !name.starts_with('.')
+                && matches!(
+                    ext.as_deref(),
+                    Some("wav" | "aif" | "aiff" | "flac" | "mp3")
+                )
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+#[test]
+#[ignore = "needs a folder of real music: SC_REAL_FIXTURES=<dir>"]
+fn real_music_reads_as_the_reference_and_the_analysis() {
+    let Some(dir) = std::env::var_os("SC_REAL_FIXTURES") else {
+        eprintln!("skipped: set SC_REAL_FIXTURES=<dir> to a folder of music");
+        return;
+    };
+    let files = audio_files(Path::new(&dir));
+    assert!(
+        !files.is_empty(),
+        "no audio files in {}",
+        Path::new(&dir).display()
+    );
+    for path in files {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let buf = match sc_io::read_all(&path) {
+            Ok(buf) => buf,
+            Err(e) => {
+                eprintln!("{name}: not read ({e})");
+                continue;
+            }
+        };
+        let frames = stream(&buf);
+        assert_momentary(&buf, &frames, 0.005, &name);
+        assert_track_peak(&buf, &frames, &name);
     }
 }

@@ -13,7 +13,9 @@ use std::sync::{Arc, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use sc_core::analysis::{AnalysisRecord, Grid, GridEdit};
-use sc_core::ipc::{GridFitHeader, IpcError, Listen, RowUpdate, TrackEvent, TrackOpened};
+use sc_core::ipc::{
+    GridFitHeader, IpcError, Listen, MeterFrame, RowUpdate, TrackEvent, TrackOpened,
+};
 use sc_core::{Bpm, DbFs, Error, SampleIndex};
 use sc_engine::edits::{audio_of, fit_choice, refit_record, snap_onsets};
 use sc_engine::player::{Player, Status};
@@ -112,7 +114,6 @@ impl Shell {
             .filter(|saved| saved.audio == audio_of(&record))
             .map(|saved| saved.edit)
             .unwrap_or_default();
-        let gain = DbFs(self.session().planned_gain(file_id).unwrap_or(0.0));
 
         let decoding = Arc::clone(&send);
         let track = Arc::new(
@@ -132,6 +133,9 @@ impl Shell {
         // Held from loading the player until the track is in place: a refit or save of the
         // track before (which set the player's grid under this lock) cannot land in between.
         let mut view = self.view();
+        // Read under the view lock (lock order: view, session, player), so a settings change
+        // cannot land between reading the gain and loading the player.
+        let gain = DbFs(self.session().planned_gain(file_id).unwrap_or(0.0));
         let load = self.load_player(&track, gain, shown.grid.clone())?;
         let stop = Arc::new(AtomicBool::new(false));
         self.report_player(Arc::clone(&stop), load, send);
@@ -206,21 +210,36 @@ impl Shell {
     }
 
     /// Sends the player's position with its meter reading and the version heard at 30 Hz while
-    /// it plays (and once when it stops), and a device error once, until `stop` is set. Only the state of load `load` is sent: until the
-    /// player has taken the track, its status still describes the track before (maybe playing,
-    /// far into it), which is not this track's.
+    /// it plays, once when it stops, and whenever the version heard changes (also while
+    /// paused), and a device error once, until `stop` is set. Each meter reading carries the
+    /// peaks of every block since the reading sent before, so an over between two ticks is never
+    /// lost. Only the state of load `load` is sent: until the player has taken the track, its
+    /// status still describes the track before (maybe playing, far into it), which is not this
+    /// track's.
     fn report_player(&self, stop: Arc<AtomicBool>, load: u64, send: Send) {
         let shell = self.clone();
         let spawned = std::thread::Builder::new()
             .name("sc-player-state".into())
             .spawn(move || {
-                let (mut was_playing, mut last_error) = (false, None);
+                let mut reported = Sent::default();
+                let mut last_error = None;
                 while !stop.load(Ordering::Acquire) {
-                    let status = shell.player().as_ref().map(Player::status);
-                    if let Some(status) = status.filter(|s| s.load == load) {
-                        if let Some(event) = player_event(&status, was_playing) {
+                    let read = shell.player().as_ref().map(|p| {
+                        let status = p.status();
+                        let meter = status
+                            .state
+                            .filter(|s| s.playing && status.load == load)
+                            .and_then(|s| p.meter_since(s.position, reported.meter_end));
+                        (status, meter)
+                    });
+                    if let Some((status, meter)) = read.filter(|(s, _)| s.load == load) {
+                        if let Some(event) = player_event(&status, meter, &reported) {
                             send(event);
-                            was_playing = status.state.is_some_and(|s| s.playing);
+                            reported = Sent {
+                                playing: status.state.is_some_and(|s| s.playing),
+                                listen: status.listen,
+                                meter_end: meter.map(|m| m.position).or(reported.meter_end),
+                            };
                         }
                         if status.error.is_some() && status.error != last_error {
                             send(TrackEvent::PlayerError {
@@ -467,16 +486,25 @@ impl Shell {
     }
 }
 
-/// The `player` event for `status`: sent while playing and once when playing stops (`None`
-/// otherwise). The meter reading is the one for the heard position the status carries, `None`
-/// while stopped.
-fn player_event(status: &Status, was_playing: bool) -> Option<TrackEvent> {
+/// What the reporter last sent: whether the player was playing, the version heard and where the
+/// last meter reading ended. A track loads playing nothing, on the processed version.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Sent {
+    playing: bool,
+    listen: Listen,
+    meter_end: Option<SampleIndex>,
+}
+
+/// The `player` event for `status` with the reading `meter` (`None` while stopped): sent while
+/// playing, once when playing stops, and when the version heard changed since `sent`; `None`
+/// otherwise.
+fn player_event(status: &Status, meter: Option<MeterFrame>, sent: &Sent) -> Option<TrackEvent> {
     let state = status.state?;
-    (state.playing || was_playing).then(|| TrackEvent::Player {
+    (state.playing || sent.playing || status.listen != sent.listen).then(|| TrackEvent::Player {
         playing: state.playing,
         position: state.position,
         underruns: state.underruns,
-        meter: status.meter.filter(|_| state.playing),
+        meter: meter.filter(|_| state.playing),
         listen: status.listen,
     })
 }

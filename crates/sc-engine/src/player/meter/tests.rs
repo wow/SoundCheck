@@ -116,11 +116,57 @@ fn mono_reads_as_dual_mono_like_the_analysis() {
 }
 
 #[test]
-fn more_than_two_channels_are_refused() {
+fn any_channel_count_but_none_is_metered() {
     let meters = Arc::new(Meters::new());
+    let mut metering = Metering::new(48_000, 3, Arc::clone(&meters)).expect("three channels");
+    // Left and right silent, a 1 kHz sine at half scale in the centre: the centre counts.
+    let tone = testsig::sine(AudioSpec::new(48_000, 1), 1_000.0, 0.5, 0.1);
+    let block: Vec<f32> = tone.data.iter().flat_map(|&c| [0.0, 0.0, c]).collect();
+    metering.push(&block, SampleIndex(4_800));
+    let peak = meters.latest().and_then(|f| f.in_peak).expect("a peak");
+    assert!((peak.0 - 20.0 * 0.5_f64.log10()).abs() < 0.01, "{peak:?}");
     assert!(matches!(
-        Metering::new(44_100, 3, Arc::clone(&meters)),
+        Metering::new(44_100, 0, meters),
         Err(Error::InvalidArgument(_))
     ));
-    assert!(Metering::new(44_100, 0, meters).is_err());
+}
+
+#[test]
+fn a_reading_since_the_previous_one_holds_every_peak_in_between() {
+    let meters = Meters::new();
+    for b in 0..10_u64 {
+        meters.push(Reading {
+            start: b * 1_024,
+            end: (b + 1) * 1_024,
+            // One loud block, the fourth.
+            peak: if b == 3 { 1.0 } else { 0.1 },
+            momentary: Some(-20.0 - f64::from(u32::try_from(b).unwrap())),
+        });
+    }
+    let peak = |f: Option<MeterFrame>| f.and_then(|f| f.in_peak).map(|p| p.0);
+    // Read at blocks 1 and 5: the second reading covers blocks 2 to 5, the loud one included.
+    let first = meters.since(SampleIndex(1_500), None);
+    assert_eq!(peak(first), Some(-20.0));
+    let second = meters.since(SampleIndex(5_500), first.map(|f| f.position));
+    assert_eq!(peak(second), Some(0.0));
+    assert_eq!(
+        second.and_then(|f| f.in_momentary),
+        Some(Lufs(-25.0)),
+        "the heard block's"
+    );
+    // The block alone, without a previous reading or after a seek back.
+    assert_eq!(peak(meters.since(SampleIndex(5_500), None)), Some(-20.0));
+    assert_eq!(
+        peak(meters.since(SampleIndex(1_500), Some(SampleIndex(9_000)))),
+        Some(-20.0)
+    );
+}
+
+#[test]
+fn frames_say_when_the_track_is_a_mono_fold() {
+    let meters = Meters::new();
+    meters.push(reading(0, 1_024));
+    assert!(!meters.latest().expect("a reading").folded);
+    meters.set_folded(true);
+    assert!(meters.latest().expect("a reading").folded);
 }

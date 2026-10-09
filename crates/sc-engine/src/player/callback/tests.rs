@@ -113,3 +113,16 @@ fn ramps_settle_while_paused_and_start_at_the_shared_gains() {
     assert_eq!(callback.volume.current, 1.0);
     assert_eq!(callback.ramp_frames, 441);
 }
+
+#[test]
+fn gains_that_are_not_finite_numbers_are_ignored() {
+    let shared = Shared::default();
+    shared.set_listen_gain(0.5);
+    shared.set_volume(0.25);
+    for wrong in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        shared.set_listen_gain(wrong);
+        shared.set_volume(wrong);
+    }
+    assert_eq!(shared.listen_gain().to_bits(), 0.5_f32.to_bits());
+    assert_eq!(shared.volume().to_bits(), 0.25_f32.to_bits());
+}

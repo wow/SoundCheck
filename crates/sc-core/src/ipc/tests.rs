@@ -159,22 +159,28 @@ fn worst_meter_frame() -> MeterFrame {
         in_momentary: Some(Lufs(-123.457)),
         out_peak: Some(DbTp(-123.457)),
         out_momentary: Some(Lufs(-123.457)),
+        folded: false,
     }
 }
 
 #[test]
 fn meter_frame_stays_within_budget() {
     let frame = worst_meter_frame();
-    assert!(json_len(&frame) <= 160, "{} bytes", json_len(&frame));
+    assert!(json_len(&frame) <= 176, "{} bytes", json_len(&frame));
 }
 
 #[test]
 fn a_player_event_with_its_meter_stays_within_budget() {
+    // Ten hours at 192 kHz, every level present with three decimals.
+    let ten_hours = crate::SampleIndex(10 * 3_600 * 192_000);
     let event = TrackEvent::Player {
         playing: true,
-        position: crate::SampleIndex(9_007_199_254_740_991),
+        position: ten_hours,
         underruns: u64::from(u32::MAX),
-        meter: Some(worst_meter_frame()),
+        meter: Some(MeterFrame {
+            position: ten_hours,
+            ..worst_meter_frame()
+        }),
         listen: Listen {
             version: Version::Processed,
             matched: true,
