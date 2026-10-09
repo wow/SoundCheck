@@ -45,7 +45,36 @@ describe('grid view keys', () => {
     expect(gridKey(key({ key: 'я', code: 'KeyZ', metaKey: true }))).toEqual({ type: 'undo' });
     expect(gridKey(key({ key: 'y', code: 'KeyZ', metaKey: true }))).toBeNull();
     expect(gridKey(key({ key: 'x' }))).toBeNull();
+    // Option+letter types a symbol on a Mac: no action.
+    expect(gridKey(key({ key: '∂', code: 'KeyD', altKey: true }))).toBeNull();
     expect(gridKey(key({ key: 'c', metaKey: true }))).toBeNull();
+  });
+});
+
+describe('listening keys', () => {
+  it('switch the version with B and match the level with Shift+B, on any layout', () => {
+    expect(gridKey(key({ key: 'b', code: 'KeyB' }))).toEqual({ type: 'version' });
+    expect(gridKey(key({ key: 'B', code: 'KeyB', shiftKey: true }))).toEqual({ type: 'match' });
+    // By the letter typed where it is Latin: Dvorak types b on the key at N's place.
+    expect(gridKey(key({ key: 'b', code: 'KeyN' }))).toEqual({ type: 'version' });
+    expect(gridKey(key({ key: 'n', code: 'KeyB' }))).toEqual({ type: 'nextReview' });
+    // A Cyrillic layout types и on that key: by its place.
+    expect(gridKey(key({ key: 'и', code: 'KeyB' }))).toEqual({ type: 'version' });
+    expect(gridKey(key({ key: 'И', code: 'KeyB', shiftKey: true }))).toEqual({ type: 'match' });
+    expect(gridKey(key({ key: '∫', code: 'KeyB', altKey: true }))).toBeNull();
+    expect(gridKey(key({ key: 'b', code: 'KeyB', metaKey: true }))).toBeNull();
+  });
+
+  it('step the volume with Shift+Up and Shift+Down only', () => {
+    expect(gridKey(key({ key: 'ArrowUp', shiftKey: true }))).toEqual({ type: 'volume', step: 1 });
+    expect(gridKey(key({ key: 'ArrowDown', shiftKey: true }))).toEqual({
+      type: 'volume',
+      step: -1,
+    });
+    expect(gridKey(key({ key: 'ArrowUp' }))).toBeNull();
+    expect(gridKey(key({ key: 'ArrowDown' }))).toBeNull();
+    // The number keys stay beat 1: nothing mutes from the keyboard.
+    expect(gridKey(key({ key: '0', code: 'Digit0' }))).toBeNull();
   });
 });
 

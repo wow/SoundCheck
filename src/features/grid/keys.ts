@@ -1,6 +1,7 @@
 /**
  * The grid view's keys, as actions. Nudge and beat-1 keys go by physical key (`code`), so they
- * work on any keyboard layout; letters, and Cmd+Z, go by the character typed.
+ * work on any keyboard layout; letters, and Cmd+Z, go by the character typed, and on a layout
+ * that types no Latin letters (Cyrillic, Greek) by the key's place.
  */
 
 export type GridKey =
@@ -21,7 +22,10 @@ export type GridKey =
   | { type: 'undo' }
   | { type: 'redo' }
   | { type: 'pan'; bars: number }
-  | { type: 'zoom'; factor: number };
+  | { type: 'zoom'; factor: number }
+  | { type: 'version' }
+  | { type: 'match' }
+  | { type: 'volume'; step: 1 | -1 };
 
 export interface KeyLike {
   key: string;
@@ -37,9 +41,7 @@ export function gridKey(e: KeyLike): GridKey | null {
   if (command) {
     // Undo goes by the letter typed, as macOS does: the key labelled Z is `KeyY` on a German
     // keyboard and `KeyW` on a French one. A non-Latin layout falls back to the key's place.
-    const latin = /^[a-z]$/i.test(e.key);
-    if (latin ? e.key.toLowerCase() === 'z' : e.code === 'KeyZ')
-      return e.shiftKey ? { type: 'redo' } : { type: 'undo' };
+    if (letterOf(e) === 'z') return e.shiftKey ? { type: 'redo' } : { type: 'undo' };
     return null;
   }
   if (e.code === 'Comma' || e.code === 'Period') {
@@ -64,13 +66,17 @@ export function gridKey(e: KeyLike): GridKey | null {
       return { type: 'pan', bars: e.shiftKey ? -8 : -1 };
     case 'ArrowRight':
       return { type: 'pan', bars: e.shiftKey ? 8 : 1 };
+    case 'ArrowUp':
+    case 'ArrowDown':
+      return e.shiftKey ? { type: 'volume', step: e.key === 'ArrowUp' ? 1 : -1 } : null;
     case '+':
     case '=':
       return { type: 'zoom', factor: 1.5 };
     case '-':
       return { type: 'zoom', factor: 1 / 1.5 };
   }
-  switch (e.key.toLowerCase()) {
+  // Option+letter types a symbol on a Mac (Option+D is `∂`): not a letter key here.
+  switch (e.altKey ? e.key.toLowerCase() : letterOf(e)) {
     case 'n':
       return { type: 'nextReview' };
     case 'c':
@@ -87,7 +93,19 @@ export function gridKey(e: KeyLike): GridKey | null {
       return { type: 'meter' };
     case 'r':
       return { type: 'reset' };
+    case 'b':
+      return e.shiftKey ? { type: 'match' } : { type: 'version' };
     default:
       return null;
   }
+}
+
+/**
+ * The letter a key stands for: the one typed, or, on a layout that types no Latin letter on it,
+ * the one at its place (`KeyB`); else the key itself, lower-cased.
+ */
+function letterOf(e: KeyLike): string {
+  if (/^[a-z]$/i.test(e.key)) return e.key.toLowerCase();
+  const place = /^Key([A-Z])$/.exec(e.code)?.[1];
+  return place && /^\p{L}$/u.test(e.key) ? place.toLowerCase() : e.key.toLowerCase();
 }

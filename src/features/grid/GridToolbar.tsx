@@ -13,6 +13,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
+import { NARROW, useMediaQuery } from '@/lib/media';
 import { cn } from '@/lib/utils';
 import {
   barOneHere,
@@ -31,8 +32,11 @@ import {
 } from './actions';
 import { samplesPerBeat } from './geometry';
 import { playText } from './readout';
+import { AbControl } from './meter/AbControl';
+import { VolumeControl } from './meter/VolumeControl';
 import { meterText, pickerMeters } from './meters';
 import { edited, useTrack } from './store';
+import { TRANSPORT_FOLD } from './fold';
 import { Btn, Kbd } from './ui';
 import { useView } from './viewStore';
 
@@ -104,36 +108,47 @@ function TransportBar() {
   const ghost = useView((s) => s.ghost);
   const toggleGhost = useView((s) => s.toggleGhost);
   const rate = opened?.sampleRate ?? 44_100;
+  const narrow = useMediaQuery(NARROW);
   return (
     <div className="@container flex h-10 shrink-0 items-center border-t border-line bg-bg-1">
       <Group label="Transport">
         <Btn onClick={toBarOne} aria-label="To bar 1" title="To bar 1 · Home" className="px-2">
           <SkipBack className={ICON} aria-hidden />
         </Btn>
-        <Btn hint="Space" onClick={playPause} aria-label={playing ? 'Pause' : 'Play'}>
+        <Btn
+          hint="Space"
+          hintClassName={TRANSPORT_FOLD.hint}
+          onClick={playPause}
+          aria-label={playing ? 'Pause' : 'Play'}
+        >
           {playing ? (
             <Pause className={ICON} fill="currentColor" aria-hidden />
           ) : (
             <Play className={ICON} fill="currentColor" aria-hidden />
           )}
         </Btn>
+        <VolumeControl narrow={narrow} />
         <PlayClock />
       </Group>
+      <Group label="Audition">
+        <AbControl />
+      </Group>
       <Group label="Listen" className="border-r-0">
-        <Btn hint="C" pressed={click} onClick={toggleClick}>
+        <Btn hint="C" hintClassName={TRANSPORT_FOLD.hint} pressed={click} onClick={toggleClick}>
           <Metronome className={ICON} aria-hidden />
-          Click
+          <span className={TRANSPORT_FOLD.compact}>Click</span>
         </Btn>
         <Btn
           hint="A"
           pressed={ghost}
           onClick={toggleGhost}
           disabled={!isEdited}
+          hintClassName={TRANSPORT_FOLD.hint}
           aria-label="Before / after"
           title="The analysed grid, dashed, under yours"
         >
           <Layers2 className={ICON} aria-hidden />
-          <span className="@max-[780px]:hidden">Before / after</span>
+          <span className={TRANSPORT_FOLD.label}>Before / after</span>
         </Btn>
       </Group>
       <div className="flex-1" />
@@ -152,7 +167,12 @@ function TransportBar() {
         <Btn onClick={fitWhole} aria-label="Whole track" title="Whole track" className="px-2">
           <Maximize2 className={ICON} aria-hidden />
         </Btn>
-        <span className="w-[88px] text-right font-mono text-[11.5px] tabular-nums text-fg-1 @max-[780px]:hidden">
+        <span
+          className={cn(
+            'w-[88px] text-right font-mono text-[11.5px] tabular-nums text-fg-1',
+            TRANSPORT_FOLD.label,
+          )}
+        >
           {grid ? `${formatPxPerBeat(samplesPerBeat(grid, rate) / samplesPerPx)} px / beat` : '–'}
         </span>
       </Group>
@@ -176,7 +196,9 @@ function PlayClock() {
   return (
     <span className="px-1 font-mono text-[12px] tabular-nums text-fg-1">
       <span ref={clock} />
-      <span className="px-1.5 text-fg-2">|</span>bar <span ref={bar} />
+      <span className={TRANSPORT_FOLD.tight}>
+        <span className="px-1.5 text-fg-2">|</span>bar <span ref={bar} />
+      </span>
     </span>
   );
 }
