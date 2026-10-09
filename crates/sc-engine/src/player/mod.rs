@@ -29,7 +29,7 @@ use sc_core::{DbFs, Result, SampleIndex};
 pub use callback::{Callback, Shared};
 #[cfg(feature = "playback")]
 pub use device::{Player, Status};
-pub use meter::{Meters, Metering};
+pub use meter::{Metering, Meters};
 pub use render::Renderer;
 
 /// Audio kept queued ahead of the device.

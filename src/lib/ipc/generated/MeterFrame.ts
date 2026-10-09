@@ -24,7 +24,8 @@ position: SampleIndex,
 inPeak: DbTp | null, 
 /**
  * Momentary loudness of the original: the 400 ms ending at `position` (ITU-R BS.1770-5,
- * ungated); `None` for digital silence and in the first 400 ms after a start, seek or load.
+ * ungated); `None` for silence (at or below the -70 LUFS absolute gate) and in the first
+ * 400 ms after a start, seek or load.
  */
 inMomentary: Lufs | null, 
 /**

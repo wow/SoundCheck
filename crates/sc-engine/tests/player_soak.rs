@@ -20,7 +20,7 @@ use sc_engine::player::{Callback, Feeder, Meters, Renderer, Shared, ring};
 use sc_engine::{Track, TrackProgress};
 
 const OUT_RATE: u32 = 48_000;
-const BUFFER_FRAMES: usize = 512;
+const BUFFER_FRAMES: u32 = 512;
 const SWITCHES: u32 = 50;
 
 enum Change {
@@ -117,8 +117,8 @@ fn fifty_switches_on_a_real_time_null_sink_never_run_the_ring_dry() {
     };
 
     let run = Duration::from_secs(seconds);
-    let period = Duration::from_secs_f64(BUFFER_FRAMES as f64 / f64::from(OUT_RATE));
-    let mut buffer = vec![0.0_f32; BUFFER_FRAMES * 2];
+    let period = Duration::from_secs(1) * BUFFER_FRAMES / OUT_RATE;
+    let mut buffer = vec![0.0_f32; BUFFER_FRAMES as usize * 2];
     let start = Instant::now();
     let mut next = start;
     let mut switches = 0;

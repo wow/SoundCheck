@@ -215,7 +215,10 @@ fn a_row_that_is_not_open_is_refused() {
 fn player_status(shell: &Shell, ok: impl Fn(&Status) -> bool) -> Status {
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     loop {
-        let status = shell.player().as_ref().map(sc_engine::player::Player::status);
+        let status = shell
+            .player()
+            .as_ref()
+            .map(sc_engine::player::Player::status);
         if let Some(status) = status
             && (ok(&status) || std::time::Instant::now() > deadline)
         {
@@ -307,8 +310,7 @@ fn the_player_event_carries_the_heard_reading_while_playing() {
     assert_eq!(meter, Some(frame));
     assert!(meter.unwrap().position.0.abs_diff(position.0) <= 1_024);
     assert_eq!(listen.version, Version::Original);
-    let Some(TrackEvent::Player { meter, playing, .. }) = player_event(&status(false), true)
-    else {
+    let Some(TrackEvent::Player { meter, playing, .. }) = player_event(&status(false), true) else {
         panic!("one event when playing stops");
     };
     assert!(!playing);

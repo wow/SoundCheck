@@ -37,11 +37,16 @@ fn a_new_version_gain_is_reached_in_ten_milliseconds_along_a_straight_line() {
     // 10 ms at 48 kHz is 480 frames: frame k of the ramp is at 1 + (0.5 - 1) * (k + 1) / 480.
     for (k, &x) in heard.iter().enumerate().take(480) {
         #[allow(clippy::cast_precision_loss)]
-        let expected = 0.25 * (1.0 - 0.5 * (k as f32 + 1.0) / 480.0);
+        let expected = 0.25 - 0.125 * (k as f32 + 1.0) / 480.0;
         assert!((x - expected).abs() < 1e-6, "frame {k}: {x} vs {expected}");
     }
     assert_eq!(heard[479], 0.125, "the target at the 480th frame");
-    assert!(heard[480..].iter().all(|&x| x == 0.125), "and held there");
+    assert!(
+        heard[480..]
+            .iter()
+            .all(|&x| x.to_bits() == 0.125_f32.to_bits()),
+        "and held there"
+    );
 }
 
 #[test]
@@ -91,7 +96,11 @@ fn the_clamp_comes_before_the_volume_so_turning_down_shows_the_over() {
     shared.playing.store(true, Ordering::Release);
     let heard = left(&mut callback, 256);
     // 0.8 x 2 = 1.6 clips to 1.0, then the volume halves it: a flat 0.5, not 0.8.
-    assert!(heard.iter().all(|&x| x == 0.5), "{:?}", &heard[..4]);
+    assert!(
+        heard.iter().all(|&x| x.to_bits() == 0.5_f32.to_bits()),
+        "{:?}",
+        &heard[..4]
+    );
 }
 
 #[test]

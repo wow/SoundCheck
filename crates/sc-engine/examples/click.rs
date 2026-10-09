@@ -58,12 +58,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     player.set_click(true);
     player.play(None);
     rx.recv()?;
-    let mut switched = 0;
+    let mut made = 0;
     for second in 1..=seconds {
         std::thread::sleep(Duration::from_secs(1));
-        while switched < switches && second * (switches + 1) >= (switched + 1) * seconds {
-            switched += 1;
-            let version = if switched % 2 == 1 {
+        while made < switches && second * (switches + 1) >= (made + 1) * seconds {
+            made += 1;
+            let version = if made % 2 == 1 {
                 Version::Original
             } else {
                 Version::Processed
@@ -72,8 +72,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 version,
                 matched: false,
             });
-            if switched % 5 == 0 {
-                let down = switched % 10 == 5;
+            if made % 5 == 0 {
+                let down = made % 10 == 5;
                 player.set_volume(Some(DbFs(if down { -6.0 } else { 0.0 })));
             }
         }
@@ -82,7 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(error.into());
         }
         if let Some(state) = status.state {
-            let level = |v: Option<f64>| v.map_or_else(|| "    -".to_owned(), |v| format!("{v:5.1}"));
+            let level =
+                |v: Option<f64>| v.map_or_else(|| "    -".to_owned(), |v| format!("{v:5.1}"));
             let meter = status.meter;
             println!(
                 "{:>8.3} s  {}  {:?}  IN {} dBTP {} LUFS  OUT {} dBTP {} LUFS",
@@ -97,6 +98,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let underruns = player.status().state.map_or(0, |s| s.underruns);
-    println!("switches: {switched}, underruns: {underruns}");
+    println!("switches: {made}, underruns: {underruns}");
     Ok(())
 }

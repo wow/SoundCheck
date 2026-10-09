@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use sc_core::{AudioSpec, SampleIndex, testsig};
-use sc_engine::player::{BLOCK_FRAMES, Meters, Metering};
+use sc_engine::player::{BLOCK_FRAMES, Metering, Meters};
 
 const SECONDS: f64 = 360.0;
 
