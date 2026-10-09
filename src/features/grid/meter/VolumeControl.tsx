@@ -193,20 +193,22 @@ function VolumePopover() {
   const db = useMonitor((s) => s.db);
   const muted = useMonitor((s) => s.muted);
   const box = useRef<HTMLDivElement>(null);
+  /** The popover was opened from the keyboard (Tab to the speaker button, then Space or Enter). */
+  const fromKeyboard = useRef(false);
   /**
-   * Closes the popover; focus that was inside it goes back to the speaker button rather than
-   * to the page. A press elsewhere still moves focus where it lands (a text field takes it).
+   * Closes the popover. Opened from the keyboard, Esc gives focus back to the speaker button.
+   * Opened with a click, focus goes back to the page, where Space plays (a focused button would
+   * take it); and a press outside never moves focus.
    */
-  const close = useCallback(() => {
-    const active = document.activeElement;
-    const inside = active === document.body || (active !== null && !!box.current?.contains(active));
+  const close = useCallback((refocus: boolean) => {
     setOpen(false);
-    if (inside) box.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    if (refocus && fromKeyboard.current)
+      box.current?.querySelector<HTMLButtonElement>('button')?.focus();
   }, []);
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (box.current && e.target instanceof Node && !box.current.contains(e.target)) close();
+      if (box.current && e.target instanceof Node && !box.current.contains(e.target)) close(false);
     };
     document.addEventListener('pointerdown', onDown);
     return () => document.removeEventListener('pointerdown', onDown);
@@ -215,7 +217,11 @@ function VolumePopover() {
     <div ref={box} className="relative">
       <Btn
         pressed={open}
-        onClick={() => setOpen(!open)}
+        onClick={(e) => {
+          // A click has a count; Space or Enter on the focused button has none.
+          fromKeyboard.current = e.detail === 0;
+          setOpen(!open);
+        }}
         aria-label="Volume"
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -232,7 +238,7 @@ function VolumePopover() {
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
               e.stopPropagation();
-              close();
+              close(true);
             }
           }}
         >

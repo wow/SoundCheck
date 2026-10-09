@@ -108,6 +108,24 @@ describe('the version heard', () => {
     expect(t().listen).toEqual(OPEN_LISTEN);
   });
 
+  it('never flashes back on a quick B, B whose reports arrive out of step', async () => {
+    const first = deferred();
+    const second = deferred();
+    vi.mocked(gridPlayerListen)
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const t = () => useTrack.getState();
+    switchVersion();
+    switchVersion();
+    expect(t().listen).toEqual(OPEN_LISTEN);
+    // A report from before either switch matches the second; then the first lands and reports.
+    t().handle(player(OPEN_LISTEN));
+    t().handle(player({ version: 'original', matched: false }));
+    expect(t().listen).toEqual(OPEN_LISTEN);
+    first.resolve();
+    second.resolve();
+  });
+
   it('takes the player’s word once the grace after a landed switch runs out', async () => {
     let now = 1000;
     vi.spyOn(performance, 'now').mockImplementation(() => now);

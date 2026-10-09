@@ -144,7 +144,9 @@ let wanted: { listen: Listen; until: number } | null = null;
 function reportedListen(reported: Listen, now: number): boolean {
   if (wanted) {
     if (sameListen(reported, wanted.listen)) {
-      wanted = null;
+      // Settled only once its command has landed: until then a matching report may predate an
+      // earlier switch still on its way (B, B), whose report could follow it.
+      if (wanted.until !== Infinity) wanted = null;
       return true;
     }
     if (now <= wanted.until) return false;

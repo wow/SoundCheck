@@ -120,9 +120,10 @@ export function drawStrip(
 
   if (s.bar !== null && Number.isFinite(s.bar)) {
     const top = y(s.bar);
+    // Whole pixels at the zone seams, so no anti-aliased line shows between two colours.
     for (const run of zoneRuns(s.bar)) {
-      const from = y(run.from);
-      const to = y(run.to);
+      const from = Math.round(y(run.from));
+      const to = Math.round(y(run.to));
       ctx.fillStyle = p[run.zone];
       ctx.fillRect(l.wellX, to, l.wellW, from - to);
     }

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import type { MeterFrame, TrackOpened } from '@/lib/ipc';
 import { useLibrary } from '@/state/library';
@@ -234,7 +234,8 @@ describe('the volume control', () => {
     openTrack();
     render(<GridView />);
     expect(screen.queryByRole('slider')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Volume' }));
+    // Opened from the keyboard (a click with no count).
+    fireEvent.click(screen.getByRole('button', { name: 'Volume' }), { detail: 0 });
     const pop = screen.getByRole('dialog', { name: 'Monitor volume' });
     const slider = within(pop).getByRole('slider', { name: 'Volume' });
     expect(slider).toHaveFocus();
@@ -244,10 +245,24 @@ describe('the volume control', () => {
     // Esc closed the popover, not the grid view, and focus went back to the speaker button.
     expect(useTrack.getState().fileId).toBe(1);
     expect(screen.getByRole('button', { name: 'Volume' })).toHaveFocus();
-    // A press outside closes it the same way.
-    fireEvent.click(screen.getByRole('button', { name: 'Volume' }));
+  });
+
+  it('gives Space back to play after a popover opened with a click closes', async () => {
+    narrow = true;
+    openTrack();
+    render(<GridView />);
+    const trigger = screen.getByRole('button', { name: 'Volume' });
+    fireEvent.click(trigger, { detail: 1 });
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Volume' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Monitor volume' })).toBeNull();
+    expect(trigger).not.toHaveFocus();
+    fireEvent.keyDown(document.activeElement ?? window, { key: ' ' });
+    expect(screen.queryByRole('dialog', { name: 'Monitor volume' })).toBeNull();
+    await waitFor(() => expect(calls.some((c) => c.cmd === 'player_play')).toBe(true));
+    // A press outside closes it without moving focus.
+    fireEvent.click(trigger, { detail: 1 });
     fireEvent.pointerDown(document.body);
     expect(screen.queryByRole('dialog', { name: 'Monitor volume' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Volume' })).toHaveFocus();
+    expect(trigger).not.toHaveFocus();
   });
 });
