@@ -3,8 +3,8 @@
 //!
 //! Four parts, so everything but the device is tested without one:
 //! - [`render::Renderer`] mixes and resamples blocks of the track at its own level (any thread);
-//! - [`meter::Metering`] measures each rendered block for the IN and OUT meters (the feeding
-//!   thread);
+//! - [`meter::Metering`] measures each rendered block for the IN and OUT meters, primed after a
+//!   seek with the frames just before it (the feeding thread);
 //! - [`Feeder`] keeps a lock-free ring about 150 ms ahead of the device and handles play, pause,
 //!   seek, the version heard and the monitor volume (the controlling thread);
 //! - [`callback::Callback`] copies from the ring into the device buffer and applies the version
@@ -99,6 +99,10 @@ pub struct Feeder {
     origin: u64,
     /// A seek waiting for the callback to empty the ring.
     awaiting: Option<u64>,
+    /// The meter was reset and is primed before it measures the next block rendered.
+    unprimed: bool,
+    /// The frames before a new position that prime the meter (reused).
+    prime: Vec<f32>,
     /// Output stopped by itself at the end of the track.
     finished: bool,
 }
@@ -135,6 +139,8 @@ impl Feeder {
             preroll: preroll_samples(out_rate, out_channels),
             origin,
             awaiting: None,
+            unprimed: true,
+            prime: Vec::new(),
             finished: false,
         };
         feeder.set_planned_gain(DbFs(0.0));
@@ -168,13 +174,15 @@ impl Feeder {
     }
 
     /// Continues from source frame `frame`: the callback drops what was queued, then the ring
-    /// fills from there.
+    /// fills from there. The meters start over there, primed with the frames before `frame`
+    /// when the first block from it is rendered.
     pub fn seek(&mut self, frame: u64) {
         let epoch = self.shared.epoch.fetch_add(1, Ordering::AcqRel) + 1;
         self.awaiting = Some(epoch);
         self.pending.clear();
         self.renderer.seek(frame);
         self.metering.reset();
+        self.unprimed = true;
         self.origin = frame;
         self.finished = false;
         self.shared.ended.store(false, Ordering::Release);
@@ -276,6 +284,9 @@ impl Feeder {
                     break;
                 }
                 let end = SampleIndex(self.renderer.position());
+                if self.unprimed {
+                    self.prime_meter(end.0 - frames as u64);
+                }
                 self.metering.push(self.renderer.source(), end);
             }
             let take = self.pending.len().min(self.ring.slots());
@@ -296,6 +307,16 @@ impl Feeder {
             self.finished = true;
         }
         queued
+    }
+
+    /// Primes the reset meter with the frames before `start`, the first frame of the block
+    /// rendered first since the reset ([`Metering::prime`]). Done once that block is rendered,
+    /// so decoding has passed `start` and the frames before it are there.
+    fn prime_meter(&mut self, start: u64) {
+        let frames = self.metering.prime_frames();
+        self.renderer.preceding(start, frames, &mut self.prime);
+        self.metering.prime(&self.prime);
+        self.unprimed = false;
     }
 
     /// Output stopped by itself at the end of the track (so playing again starts over).

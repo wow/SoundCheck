@@ -1,5 +1,5 @@
 //! Unit tests of the private parts of `crates/sc-engine/src/player/meter.rs`: the history, the
-//! `None` cases, reset, and OUT as IN plus the planned gain.
+//! `None` cases, reset and priming, and OUT as IN plus the planned gain.
 use sc_core::{AudioSpec, testsig};
 
 use super::*;
@@ -100,6 +100,34 @@ fn a_reset_empties_the_history_and_restarts_the_window() {
     let f = meters.latest().expect("a reading");
     assert_eq!(f.in_momentary, None, "a fresh window");
     assert_eq!(f.position, SampleIndex(90_000));
+}
+
+#[test]
+fn priming_measures_nothing_and_keeps_the_window_empty() {
+    let meters = Arc::new(Meters::new());
+    let mut metering = Metering::new(44_100, 2, Arc::clone(&meters)).expect("a meter");
+    assert_eq!(metering.prime_frames(), 4_410, "100 ms");
+    let tone = testsig::sine(AudioSpec::CD, 1_000.0, 0.1, 2.0);
+    let (before, after) = tone.data.split_at(2 * 44_100);
+    metering.reset();
+    metering.prime(before);
+    assert_eq!(meters.latest(), None, "no reading");
+    let mut end = 44_100;
+    let mut first_momentary = None;
+    for block in after.chunks(2 * 1_024) {
+        end += 1_024;
+        metering.push(block, SampleIndex(end));
+        if first_momentary.is_none() && meters.latest().and_then(|f| f.in_momentary).is_some() {
+            first_momentary = Some(end - 44_100);
+        }
+    }
+    // As without priming: the 18th block measured is the first with 400 ms (17,640 frames).
+    assert_eq!(first_momentary, Some(18 * 1_024));
+    // Frames that are not whole, or none at all, prime with what is there.
+    metering.reset();
+    metering.prime(&before[..7]);
+    metering.prime(&[]);
+    assert_eq!(meters.latest(), None);
 }
 
 #[test]

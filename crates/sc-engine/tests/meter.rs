@@ -4,7 +4,9 @@
 //! -20.0 LUFS, the true peak of each block is within 0.02 dB of an independent 4x-oversampled
 //! peak over the same frames, and the largest block peak over a whole signal equals the analysis's
 //! true peak within 0.005 dB. (The readings are rounded to 0.001 dB, so 0.0005 of each margin is
-//! rounding.)
+//! rounding.) After a seek, primed with the frames before it, the meter reads the same block
+//! peaks and, once 400 ms have been measured, the same momentary loudness as the references over
+//! the whole signal.
 //!
 //! EBU Tech 3341 cases 1 to 5 run the same comparisons on the EBU loudness test set, which is not
 //! committed: fetch it with `scripts/fetch-ebu-testset.sh`, then
@@ -29,6 +31,28 @@ fn stream(buf: &AudioBuffer) -> Vec<MeterFrame> {
         Metering::new(buf.spec.sample_rate, buf.spec.channels, Arc::clone(&meters)).unwrap();
     let mut end = 0;
     buf.data
+        .chunks(BLOCK_FRAMES * channels)
+        .map(|block| {
+            end += (block.len() / channels) as u64;
+            metering.push(block, SampleIndex(end));
+            meters.latest().unwrap()
+        })
+        .collect()
+}
+
+/// As [`stream`], after a seek to frame `at`: the meter is reset, primed with the frames before
+/// `at`, then fed from `at` in player blocks.
+fn stream_from(buf: &AudioBuffer, at: usize) -> Vec<MeterFrame> {
+    let channels = usize::from(buf.spec.channels);
+    let meters = Arc::new(Meters::new());
+    let mut metering =
+        Metering::new(buf.spec.sample_rate, buf.spec.channels, Arc::clone(&meters)).unwrap();
+    // Some audio first, so the reset has filters and a window to empty.
+    metering.push(&buf.data[..BLOCK_FRAMES * channels], SampleIndex(1_024));
+    metering.reset();
+    metering.prime(&buf.data[..at * channels]);
+    let mut end = at as u64;
+    buf.data[at * channels..]
         .chunks(BLOCK_FRAMES * channels)
         .map(|block| {
             end += (block.len() / channels) as u64;
@@ -316,6 +340,72 @@ fn block_true_peaks_follow_a_4x_oversampled_reference() {
         assert!((-0.4..=0.2).contains(&p), "{p:+.3} dB from -6.02 dBTP");
     }
     assert_track_peak(&quarter, &frames, "quarter-rate sine");
+}
+
+/// A bass line near full scale: 55 Hz and 110 Hz with a little 3.1 kHz, the same on both
+/// channels, peaking at about -0.9 dBFS.
+fn bass(spec: AudioSpec, seconds: f64) -> AudioBuffer {
+    let frames = testsig::frames_for(spec, seconds);
+    let rate = f64::from(spec.sample_rate);
+    let mut data = Vec::with_capacity(frames * usize::from(spec.channels));
+    for n in 0..frames {
+        #[allow(clippy::cast_precision_loss)]
+        let t = n as f64 / rate;
+        #[allow(clippy::cast_possible_truncation)]
+        let x = (0.62 * (2.0 * PI * 55.0 * t).sin()
+            + 0.25 * (2.0 * PI * 110.0 * t + 0.5).sin()
+            + 0.04 * (2.0 * PI * 3_100.0 * t).sin()) as f32;
+        data.extend(std::iter::repeat_n(x, usize::from(spec.channels)));
+    }
+    AudioBuffer::new(spec, data)
+}
+
+#[test]
+fn after_a_seek_the_primed_meter_reads_as_a_continuous_play() {
+    for spec in [AudioSpec::CD, AudioSpec::new(48_000, 1)] {
+        let music = bass(spec, 1.5);
+        let continuous = stream(&music);
+        assert_eq!(continuous, stream_from(&music, 0), "nothing to prime at 0");
+        let peaks = reference_peaks(&music);
+        let window = (u64::from(spec.sample_rate) + 5) / 10 * 4;
+        let offline = sc_analysis::loudness::measure(&music).unwrap().true_peak.0;
+        // Seeks to the four block boundaries where the bass is loudest, where an interpolator
+        // started from zeros would overshoot most; at block boundaries, the blocks after the
+        // seek are the reference's blocks.
+        let channels = usize::from(spec.channels);
+        let mut seeks: Vec<usize> = (1..peaks.len() - 20).collect();
+        seeks.sort_by(|&a, &b| {
+            let level = |block: usize| music.data[block * BLOCK_FRAMES * channels].abs();
+            level(b).total_cmp(&level(a))
+        });
+        for &block in &seeks[..4] {
+            let at = block * BLOCK_FRAMES;
+            let frames = stream_from(&music, at);
+            for (f, r) in frames.iter().zip(&peaks[block..]) {
+                let peak = f.in_peak.unwrap().0;
+                let reference = 20.0 * r.log10();
+                assert!(
+                    (peak - reference).abs() <= 0.02 && peak <= offline + 0.02,
+                    "seek to {at}, at {}: {peak:.3} vs {reference:.3} dBTP",
+                    f.position.0
+                );
+            }
+            let reference = reference_momentary(&music, &ends(&frames));
+            for (f, r) in frames.iter().zip(&reference) {
+                let measured = f.position.0 - at as u64;
+                match (f.in_momentary, r) {
+                    (None, _) if measured < window => {}
+                    (Some(m), Some(r)) if measured >= window => assert!(
+                        (m.0 - r).abs() <= 0.005,
+                        "seek to {at}, at {}: {} vs {r:.4} LUFS",
+                        f.position.0,
+                        m.0
+                    ),
+                    (m, r) => panic!("seek to {at}, at {}: {m:?} vs {r:?}", f.position.0),
+                }
+            }
+        }
+    }
 }
 
 #[test]

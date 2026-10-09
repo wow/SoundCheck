@@ -116,6 +116,23 @@ impl Renderer {
         &self.source
     }
 
+    /// Writes into `out` (emptied first) the up to `frames` frames of the track just before
+    /// source frame `before`, interleaved at the track's channels and at unity gain, as
+    /// [`Renderer::source`] has them: what primes the meters after a seek. Fewer near the start
+    /// of the track; none when decoding has not reached `before`. [`Renderer::source`] is kept.
+    pub fn preceding(&mut self, before: u64, frames: usize, out: &mut Vec<f32>) {
+        out.clear();
+        let from = before.saturating_sub(frames as u64);
+        let in_ch = usize::from(self.track.channels());
+        let want = usize::try_from(before - from).unwrap_or(0);
+        self.pcm.resize(want * in_ch, 0);
+        if self.track.read(from, &mut self.pcm) < want {
+            return;
+        }
+        let unity = self.unity;
+        out.extend(self.pcm.iter().map(|&s| f32::from(s) * unity));
+    }
+
     /// Clicks on `grid`'s lines from the next block on; `None` clicks nowhere.
     pub fn set_grid(&mut self, grid: Option<Arc<Grid>>) {
         self.grid = grid;
