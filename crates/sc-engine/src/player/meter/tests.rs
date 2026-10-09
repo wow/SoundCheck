@@ -154,12 +154,19 @@ fn a_reading_since_the_previous_one_holds_every_peak_in_between() {
         Some(Lufs(-25.0)),
         "the heard block's"
     );
-    // The block alone, without a previous reading or after a seek back.
-    assert_eq!(peak(meters.since(SampleIndex(5_500), None)), Some(-20.0));
+    // Without a previous reading, or after a seek back, every stored block up to the heard one
+    // (the history holds only what was measured since the seek or load).
+    assert_eq!(peak(meters.since(SampleIndex(5_500), None)), Some(0.0));
+    assert_eq!(
+        peak(meters.since(SampleIndex(5_500), Some(SampleIndex(9_000)))),
+        Some(0.0)
+    );
     assert_eq!(
         peak(meters.since(SampleIndex(1_500), Some(SampleIndex(9_000)))),
         Some(-20.0)
     );
+    // `at` is the heard block alone.
+    assert_eq!(peak(meters.at(SampleIndex(5_500))), Some(-20.0));
 }
 
 #[test]

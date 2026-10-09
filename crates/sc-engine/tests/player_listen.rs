@@ -297,33 +297,42 @@ fn a_seek_restarts_the_meters_at_the_new_position() {
 fn read_at_30_hz_the_frames_hold_a_one_block_over() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("over.wav");
-    // A quiet sine with 400 frames near full scale at 1.5 s: one block's worth.
+    // A quiet sine (-20 dBTP) with 400 frames near full scale inside block 71 (frames 72,704 to
+    // 73,727), which no reading's heard position falls in.
+    let over = 72_800..73_200;
+    let block_71 = 72_704..73_728;
     let quiet = sine(0.1);
     let loud = sine(0.99);
     wav(&path, 4 * RATE, |n| {
-        if (72_000..72_400).contains(&n) {
-            loud(n)
-        } else {
-            quiet(n)
-        }
+        if over.contains(&n) { loud(n) } else { quiet(n) }
     });
     let mut r = rig(track(&path), -3.0);
+    // A device that plays each buffer 1,500 frames after it is filled.
+    r.shared.latency_frames.store(1_500, Ordering::Release);
     r.feeder.play();
-    let (mut previous, mut loudest) = (None, f64::NEG_INFINITY);
-    // About 30 readings a second: one every six 256-frame buffers (32 ms).
+    let (mut previous, mut since, mut per_block) = (None, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    // About 30 readings a second: one every six 256-frame buffers (1,536 frames, 32 ms).
     for _ in 0..60 {
         let _ = r.play(6);
         let heard = r.feeder.state().position;
+        assert!(
+            !block_71.contains(&heard.0),
+            "a reading landed in the over's block"
+        );
         if let Some(frame) = r.feeder.meter_since(heard, previous) {
-            loudest = loudest.max(frame.in_peak.unwrap().0);
+            since = since.max(frame.in_peak.unwrap().0);
             let gain = frame.out_peak.unwrap().0 - frame.in_peak.unwrap().0;
             assert!((gain + 3.0).abs() <= 0.002, "{gain}");
             previous = Some(frame.position);
         }
+        if let Some(frame) = r.feeder.meter_at(heard) {
+            per_block = per_block.max(frame.in_peak.unwrap().0);
+        }
     }
+    assert!(since > -0.2, "the over reached a frame: {since:.2} dBTP");
     assert!(
-        loudest > -0.2,
-        "the over reached a frame: {loudest:.2} dBTP"
+        per_block < -15.0,
+        "the heard block alone misses it: {per_block:.2} dBTP"
     );
 }
 

@@ -12,7 +12,8 @@
 //! and the device latency; it holds [`HISTORY_BLOCKS`] blocks (6 s at 44.1 kHz, 1.4 s at
 //! 192 kHz), more than the 150 ms queue plus the latency of a Bluetooth output. A reader that
 //! looks a few times a second ([`Meters::since`]) gets the largest block peak since its last
-//! reading, so a short over between two readings is never lost.
+//! reading (or, for its first, since the start, seek or load), so a short over between two
+//! readings is never lost.
 //!
 //! OUT is IN plus the planned gain, added to each reading as it is read: BS.1770 loudness and true
 //! peak are homogeneous, so a gain of `g` dB moves both by exactly `g`. A mono file is measured as
@@ -121,17 +122,31 @@ impl Meters {
     /// is that close (nothing measured yet since a seek, or the history has moved on).
     #[must_use]
     pub fn at(&self, heard: SampleIndex) -> Option<MeterFrame> {
-        self.since(heard, None)
+        self.read(heard, |_, i| i)
     }
 
     /// As [`Meters::at`], but the peaks are the largest of every stored block from the one after
     /// the block ending at `previous` (the `position` of the frame read before) up to the one
     /// holding `heard`: what a reader that looks every 33 ms needs so that no block's peak is
-    /// skipped. `None`, or a `previous` at or after the heard block (a seek back), takes the
-    /// heard block alone; a seek empties the history, so peaks never reach back across one.
-    /// Momentary loudness is always the heard block's.
+    /// skipped. With no `previous`, or one at or after the heard block (a seek back or a replay
+    /// from the end), the peaks are those of every stored block up to the heard one: a seek or a
+    /// load empties the history, so that is everything played since. Momentary loudness is
+    /// always the heard block's.
     #[must_use]
     pub fn since(&self, heard: SampleIndex, previous: Option<SampleIndex>) -> Option<MeterFrame> {
+        self.read(heard, |readings, i| match previous {
+            Some(p) if p.0 < readings[i].end => readings.partition_point(|r| r.end <= p.0).min(i),
+            _ => 0,
+        })
+    }
+
+    /// The frame for the block holding `heard`, with the largest peak of the stored blocks from
+    /// `first(readings, heard_index)` up to it.
+    fn read(
+        &self,
+        heard: SampleIndex,
+        first: impl FnOnce(&VecDeque<Reading>, usize) -> usize,
+    ) -> Option<MeterFrame> {
         let history = self.lock();
         let readings = &history.readings;
         let i = readings.partition_point(|r| r.end <= heard.0);
@@ -147,11 +162,8 @@ impl Meters {
             }
         };
         let mut reading = readings[i];
-        if let Some(previous) = previous {
-            let first = readings.partition_point(|r| r.end <= previous.0);
-            for r in readings.range(first.min(i)..i) {
-                reading.peak = reading.peak.max(r.peak);
-            }
+        for r in readings.range(first(readings, i)..i) {
+            reading.peak = reading.peak.max(r.peak);
         }
         Some(frame(reading, history.out_offset_db, history.folded))
     }

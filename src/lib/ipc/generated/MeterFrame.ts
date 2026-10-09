@@ -21,7 +21,7 @@ position: SampleIndex,
  * True peak of the original since the previous frame: the largest over every block after
  * the previous frame's block up to this one, the loudest channel (ITU-R BS.1770-5 Annex 2,
  * 4x oversampled), so an over between two frames is never missed. The first frame after a
- * start, seek or load covers its own block. `None` for digital silence.
+ * start, seek or load covers every block since it. `None` for digital silence.
  */
 inPeak: DbTp | null, 
 /**
