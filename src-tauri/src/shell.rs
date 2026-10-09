@@ -235,12 +235,15 @@ impl Shell {
         self.jobs().get(&job_id).map(CancelToken::cancel).is_some()
     }
 
-    /// Changes the decide settings; returns every analysed row's new plan and its revision.
+    /// Changes the decide settings; returns every analysed row's new plan and its revision. The
+    /// track open in the grid view plays at its new planned gain.
     ///
     /// # Errors
     /// An `invalidArgument` error when a value is out of its limits; nothing changes then.
     pub fn set_decide_settings(&self, settings: DecideSettings) -> Result<Replan, IpcError> {
-        Ok(self.session().set_settings(settings)?)
+        let replan = self.session().set_settings(settings)?;
+        self.follow_plan();
+        Ok(replan)
     }
 
     /// Empties the track list: running jobs are cancelled and every file is forgotten, so the

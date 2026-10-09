@@ -11,6 +11,7 @@ import type {
   Grid,
   GridEdit,
   GridFitHeader,
+  Listen,
   Meter,
   Plan,
   RowAnalysis,
@@ -60,6 +61,8 @@ const player = {
    * a background tab reports fewer events but never a slower clock. */
   from: 0,
   startedAt: 0,
+  /** The version heard; a new track starts on the processed one. */
+  listen: { version: 'processed', matched: false } as Listen,
 };
 
 function clock(): number {
@@ -124,6 +127,8 @@ function playerEvent() {
     playing: player.playing,
     position: Math.round(player.position),
     underruns: 0,
+    meter: null,
+    listen: player.listen,
   });
 }
 
@@ -312,6 +317,7 @@ export function gridCommand(
       if (!row?.analysis.grid)
         throw { kind: 'invalidArgument', message: 'no grid to open', fileId };
       const analysed = gridOf(row.analysis.grid);
+      player.listen = { version: 'processed', matched: false };
       open = {
         fileId,
         row,
@@ -430,6 +436,12 @@ export function gridCommand(
       playerEvent();
       return null;
     case 'player_set_click':
+      return null;
+    case 'grid_player_listen':
+      player.listen = a.listen as Listen;
+      playerEvent();
+      return null;
+    case 'player_volume':
       return null;
     default:
       return undefined;

@@ -150,19 +150,68 @@ fn a_worst_case_refit_header_stays_within_4_kb() {
     assert!(json_len(&header) <= 4096, "{} bytes", json_len(&header));
 }
 
+/// The largest meter frame the player sends: every level present, rounded to 0.001 dB as the
+/// engine rounds them, at the largest position a JavaScript number holds exactly.
+fn worst_meter_frame() -> MeterFrame {
+    MeterFrame {
+        position: crate::SampleIndex(9_007_199_254_740_991),
+        in_peak: Some(DbTp(-123.457)),
+        in_momentary: Some(Lufs(-123.457)),
+        out_peak: Some(DbTp(-123.457)),
+        out_momentary: Some(Lufs(-123.457)),
+    }
+}
+
 #[test]
 fn meter_frame_stays_within_budget() {
-    let frame = MeterFrame {
-        file_id: u32::MAX,
-        momentary: Lufs(-123.456_789),
-        short_term: Lufs(-123.456_789),
-        true_peak: DbTp(-123.456_789),
+    let frame = worst_meter_frame();
+    assert!(json_len(&frame) <= 160, "{} bytes", json_len(&frame));
+}
+
+#[test]
+fn a_player_event_with_its_meter_stays_within_budget() {
+    let event = TrackEvent::Player {
+        playing: true,
+        position: crate::SampleIndex(9_007_199_254_740_991),
+        underruns: u64::from(u32::MAX),
+        meter: Some(worst_meter_frame()),
+        listen: Listen {
+            version: Version::Processed,
+            matched: true,
+        },
     };
     assert!(
-        json_len(&frame) <= MAX_EVENT_BYTES,
+        json_len(&event) <= MAX_EVENT_BYTES,
         "{} bytes",
-        json_len(&frame)
+        json_len(&event)
     );
+}
+
+#[test]
+fn listen_has_the_shape_the_view_sends() {
+    let listen: Listen =
+        serde_json::from_str(r#"{"version":"original","matched":true}"#).expect("parses");
+    assert_eq!(
+        listen,
+        Listen {
+            version: Version::Original,
+            matched: true
+        }
+    );
+    assert_eq!(
+        Listen::default(),
+        Listen {
+            version: Version::Processed,
+            matched: false
+        }
+    );
+    let frame = MeterFrame {
+        in_momentary: None,
+        ..worst_meter_frame()
+    };
+    let json = serde_json::to_string(&frame).expect("serialisable");
+    assert!(json.contains(r#""inMomentary":null"#), "{json}");
+    assert!(json.contains(r#""outPeak":-123.457"#), "{json}");
 }
 
 #[test]

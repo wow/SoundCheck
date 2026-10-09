@@ -8,6 +8,9 @@ import { NO_EDIT, nudged, octaveStep, typedBpm } from './edit';
 import { SAVE_DELAY_MS, useTrack } from './store';
 import { testGrid } from './testGrid';
 
+/** The player event's meter and version fields, as the player sends them while stopped. */
+const HEARD = { meter: null, listen: { version: 'processed', matched: false } } as const;
+
 vi.mock('@/lib/ipc', async (original) => ({
   ...(await original<typeof Ipc>()),
   trackOpen: vi.fn(),
@@ -243,14 +246,14 @@ describe('grid view store', () => {
     const opening = useTrack.getState().open(1);
     // While opening, the player's report can only be of the track before.
     await vi.waitFor(() => expect(vi.mocked(trackOpen)).toHaveBeenCalled());
-    send({ type: 'player', playing: true, position: 2_736_000, underruns: 0 });
+    send({ type: 'player', playing: true, position: 2_736_000, underruns: 0, ...HEARD });
     expect(useTrack.getState().player).toMatchObject({ playing: false, position: 0 });
     answer.resolve(opened());
     await opening;
     send({ type: 'decoded', frames: 10 });
     expect(useTrack.getState().decoded).toBe(10);
     await useTrack.getState().close();
-    send({ type: 'player', playing: true, position: 5, underruns: 0 });
+    send({ type: 'player', playing: true, position: 5, underruns: 0, ...HEARD });
     expect(useTrack.getState().player.playing).toBe(false);
   });
 
@@ -281,7 +284,7 @@ describe('grid view store', () => {
     expect(useTrack.getState().decoded).toBe(65_536);
     s.handle({ type: 'ready', frames: RATE * 200 });
     expect(useTrack.getState().decodeDone).toBe(true);
-    s.handle({ type: 'player', playing: true, position: 96_000, underruns: 0 });
+    s.handle({ type: 'player', playing: true, position: 96_000, underruns: 0, ...HEARD });
     expect(useTrack.getState().player).toMatchObject({ playing: true, position: 96_000 });
     s.handle({ type: 'playerError', message: 'Output device changed. Press Space to resume.' });
     expect(useTrack.getState().player).toMatchObject({

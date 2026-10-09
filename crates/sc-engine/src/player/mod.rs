@@ -1,12 +1,14 @@
-//! The click audition player: the open track at its planned gain with an accented click on the
-//! grid, on the default output device.
+//! The audition player: the open track, original or at its planned gain, with an accented click
+//! on the grid and live meters, on the default output device.
 //!
-//! Three parts, so everything but the device is tested without one:
-//! - [`render::Renderer`] mixes and resamples blocks of the track (any thread);
-//! - [`Feeder`] keeps a lock-free ring about 150 ms ahead of the device and handles play, pause
-//!   and seek (the controlling thread);
-//! - [`callback::Callback`] copies from the ring into the device buffer (the audio thread, which
-//!   never allocates, locks or blocks).
+//! Four parts, so everything but the device is tested without one:
+//! - [`render::Renderer`] mixes and resamples blocks of the track at its own level (any thread);
+//! - [`meter::Metering`] measures each rendered block for the IN and OUT meters (the feeding
+//!   thread);
+//! - [`Feeder`] keeps a lock-free ring about 150 ms ahead of the device and handles play, pause,
+//!   seek, the version heard and the monitor volume (the controlling thread);
+//! - [`callback::Callback`] copies from the ring into the device buffer and applies the version
+//!   gain and the volume (the audio thread, which never allocates, locks or blocks).
 //!
 //! With the `playback` feature, `Player` runs them on the default cpal device.
 
@@ -14,17 +16,20 @@ pub mod callback;
 pub mod click;
 #[cfg(feature = "playback")]
 mod device;
+pub mod meter;
 pub mod render;
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use sc_core::analysis::Grid;
-use sc_core::{DbFs, SampleIndex};
+use sc_core::ipc::{Listen, MeterFrame, Version};
+use sc_core::{DbFs, Result, SampleIndex};
 
 pub use callback::{Callback, Shared};
 #[cfg(feature = "playback")]
-pub use device::Player;
+pub use device::{Player, Status};
+pub use meter::{Meters, Metering};
 pub use render::Renderer;
 
 /// Audio kept queued ahead of the device.
@@ -43,6 +48,29 @@ pub struct PlayerState {
     pub underruns: u64,
 }
 
+/// The version gain for `listen` of a track whose planned gain is `planned`: 0 dB for the
+/// original, the planned gain for the processed version, and for the level-matched processed
+/// version the planned gain less the loudness change it makes. Processing applies gain only, so
+/// that change is the planned gain itself and matched versions play at the same level (0 dB).
+#[must_use]
+pub fn version_gain(listen: Listen, planned: DbFs) -> DbFs {
+    match listen.version {
+        Version::Original => DbFs(0.0),
+        Version::Processed if listen.matched => {
+            let loudness_change = planned.0;
+            DbFs(planned.0 - loudness_change)
+        }
+        Version::Processed => planned,
+    }
+}
+
+/// A gain in dB as the linear factor the callback multiplies by; `None` (muted) is 0.
+#[must_use]
+pub fn linear(gain: Option<DbFs>) -> f32 {
+    #[allow(clippy::cast_possible_truncation)] // a gain factor well inside the f32 range
+    gain.map_or(0.0, |g| g.to_linear() as f32)
+}
+
 /// The ring for a device of `rate` Hz and `channels` channels: twice the pre-roll.
 #[must_use]
 pub fn ring(rate: u32, channels: u16) -> (rtrb::Producer<f32>, rtrb::Consumer<f32>) {
@@ -59,8 +87,11 @@ fn preroll_samples(rate: u32, channels: u16) -> usize {
 /// and click changes.
 pub struct Feeder {
     renderer: Renderer,
+    metering: Metering,
     ring: rtrb::Producer<f32>,
     shared: Arc<Shared>,
+    planned: DbFs,
+    listen: Listen,
     out_rate: u32,
     pending: Vec<f32>,
     preroll: usize,
@@ -74,27 +105,39 @@ pub struct Feeder {
 
 impl Feeder {
     /// A feeder for `renderer` into `ring`, played by a device of `out_rate` Hz and
-    /// `out_channels` channels.
-    #[must_use]
+    /// `out_channels` channels, with its meter readings in `meters` (emptied here). It plays the
+    /// processed version at a planned gain of 0 dB, at the volume `shared` holds, until told
+    /// otherwise.
+    ///
+    /// # Errors
+    /// [`sc_core::Error::InvalidArgument`] when the track's rate or channels cannot be metered.
     pub fn new(
         renderer: Renderer,
         ring: rtrb::Producer<f32>,
         shared: Arc<Shared>,
+        meters: Arc<Meters>,
         out_rate: u32,
         out_channels: u16,
-    ) -> Self {
+    ) -> Result<Self> {
         let origin = renderer.position();
-        Self {
+        let mut metering = Metering::new(renderer.sample_rate(), renderer.channels(), meters)?;
+        metering.reset();
+        let mut feeder = Self {
             renderer,
+            metering,
             ring,
             shared,
+            planned: DbFs(0.0),
+            listen: Listen::default(),
             out_rate,
             pending: Vec::new(),
             preroll: preroll_samples(out_rate, out_channels),
             origin,
             awaiting: None,
             finished: false,
-        }
+        };
+        feeder.set_planned_gain(DbFs(0.0));
+        Ok(feeder)
     }
 
     /// Starts or resumes output.
@@ -130,15 +173,48 @@ impl Feeder {
         self.awaiting = Some(epoch);
         self.pending.clear();
         self.renderer.seek(frame);
+        self.metering.reset();
         self.origin = frame;
         self.finished = false;
         self.shared.ended.store(false, Ordering::Release);
     }
 
-    /// Plays at `gain` (dB) from the audio rendered next.
-    pub fn set_gain(&mut self, gain: DbFs) {
-        self.renderer.set_gain(gain);
-        self.rerender_if_paused();
+    /// The track's planned gain (dB): what the processed version plays at and what OUT reads
+    /// above IN. Heard within one device buffer, over [`callback::RAMP_S`].
+    pub fn set_planned_gain(&mut self, gain: DbFs) {
+        self.planned = gain;
+        self.metering.meters().set_out_offset(gain);
+        self.apply_listen();
+    }
+
+    /// Plays the version `listen` asks for, within one device buffer, over
+    /// [`callback::RAMP_S`]; the meters do not change.
+    pub fn set_listen(&mut self, listen: Listen) {
+        self.listen = listen;
+        self.apply_listen();
+    }
+
+    /// What is heard.
+    #[must_use]
+    pub fn listen(&self) -> Listen {
+        self.listen
+    }
+
+    fn apply_listen(&self) {
+        let gain = version_gain(self.listen, self.planned);
+        self.shared.set_listen_gain(linear(Some(gain)));
+    }
+
+    /// Sets the monitor volume (dB, `None` for muted), applied after the clamp to full scale,
+    /// within one device buffer, over [`callback::RAMP_S`]; the meters do not change.
+    pub fn set_volume(&mut self, volume: Option<DbFs>) {
+        self.shared.set_volume(linear(volume));
+    }
+
+    /// The meter reading for the source frame `heard` ([`Meters::at`]).
+    #[must_use]
+    pub fn meter_at(&self, heard: SampleIndex) -> Option<MeterFrame> {
+        self.metering.meters().at(heard)
     }
 
     /// Clicks on `grid`'s lines from the audio rendered next (about 150 ms later).
@@ -176,6 +252,8 @@ impl Feeder {
                     }
                     break;
                 }
+                let end = SampleIndex(self.renderer.position());
+                self.metering.push(self.renderer.source(), end);
             }
             let take = self.pending.len().min(self.ring.slots());
             if take == 0 {

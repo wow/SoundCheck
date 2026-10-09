@@ -1,6 +1,8 @@
-//! The grid view's IPC: opening a track, its event channel (analysis, decoding, playback), the
-//! header of a refit's binary answer, and the row a saved edit gives. Waveform bins and residuals
-//! travel as raw bytes (`tauri::ipc::Response`), never as JSON arrays of numbers.
+//! The grid view's IPC: opening a track, its event channel (analysis, decoding, playback with its
+//! meter readings), what the player lets the user hear, the header of a refit's binary answer,
+//! and the row a saved edit gives. Waveform bins and residuals travel as raw bytes
+//! (`tauri::ipc::Response`), never as JSON arrays of numbers; meters travel as a few numbers per
+//! reading, never as audio.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -8,7 +10,7 @@ use ts_rs::TS;
 use super::{FileEntry, IpcError, RowAnalysis};
 use crate::analysis::{Grid, GridEdit, Timeline};
 use crate::plan::Plan;
-use crate::units::{Bpm, DbFs, SampleIndex};
+use crate::units::{Bpm, DbFs, DbTp, Lufs, SampleIndex};
 
 /// What `track_open` answers: everything the grid view draws before the audio has decoded.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -22,7 +24,8 @@ pub struct TrackOpened {
     /// Playable frames.
     #[ts(type = "number")]
     pub frames: u64,
-    /// The gain the player plays at: the row's planned gain, 0 dB for a skipped file.
+    /// The row's planned gain (0 dB for a skipped file): what the player's processed version
+    /// plays at and what the OUT meter reads above IN.
     pub gain: DbFs,
     /// The DJ-app BPM range the grid is solved under.
     pub bpm_range: (Bpm, Bpm),
@@ -76,7 +79,7 @@ pub enum TrackEvent {
         #[ts(type = "number")]
         frames: u64,
     },
-    /// Where playback is.
+    /// Where playback is, what is heard and how loud it is.
     Player {
         /// Output is running.
         playing: bool,
@@ -85,12 +88,67 @@ pub enum TrackEvent {
         /// Device buffers that ran dry since the track was opened.
         #[ts(type = "number")]
         underruns: u64,
+        /// The meter reading for the audio being heard; `None` while stopped and for the moment
+        /// after a seek before the first block at the new position has been measured.
+        meter: Option<MeterFrame>,
+        /// The version being heard.
+        listen: Listen,
     },
     /// The output device failed; playback stopped.
     PlayerError {
         /// What to tell the user.
         message: String,
     },
+}
+
+/// One reading of the player's meters for the audio being heard, at most 30 per second.
+///
+/// IN is the original audio, OUT the same audio at the planned gain (what an export would hold,
+/// before any 16-bit dither). OUT is IN plus the planned gain exactly, whatever version is heard
+/// and whatever the monitor volume: the meters show the signal, not the speaker level. Levels are
+/// rounded to 0.001 dB. Readings come from 1,024-frame blocks of the file (23 ms at 44.1 kHz).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct MeterFrame {
+    /// End of the block the reading describes (the first frame after it), at the file's rate;
+    /// within one block of the heard position.
+    pub position: SampleIndex,
+    /// True peak of the original over the block, the louder channel (ITU-R BS.1770-5 Annex 2,
+    /// 4x oversampled); `None` for digital silence.
+    pub in_peak: Option<DbTp>,
+    /// Momentary loudness of the original: the 400 ms ending at `position` (ITU-R BS.1770-5,
+    /// ungated); `None` for silence (at or below the -70 LUFS absolute gate) and in the first
+    /// 400 ms after a start, seek or load.
+    pub in_momentary: Option<Lufs>,
+    /// `in_peak` plus the planned gain.
+    pub out_peak: Option<DbTp>,
+    /// `in_momentary` plus the planned gain.
+    pub out_momentary: Option<Lufs>,
+}
+
+/// One of the two versions the player can play.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub enum Version {
+    /// The file as it is.
+    Original,
+    /// The file at its planned gain, as processing would write it.
+    #[default]
+    Processed,
+}
+
+/// What the player lets the user hear. A new track starts on `Processed`, not matched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct Listen {
+    /// The version heard.
+    pub version: Version,
+    /// Play both versions at the same loudness: the processed one less its loudness change.
+    /// With gain-only processing the two then play at the same level and sound the same.
+    pub matched: bool,
 }
 
 /// The JSON header of `grid_refit`'s answer. The bytes are a little-endian `u32` header length,

@@ -1,6 +1,8 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type { GridEdit } from './generated/GridEdit';
+import type { DbFs } from './generated/DbFs';
 import type { GridFitHeader } from './generated/GridFitHeader';
+import type { Listen } from './generated/Listen';
 import type { RowUpdate } from './generated/RowUpdate';
 import type { TrackEvent } from './generated/TrackEvent';
 import type { TrackOpened } from './generated/TrackOpened';
@@ -16,11 +18,14 @@ export type { Grid } from './generated/Grid';
 export type { GridFit as EditFit } from './generated/GridFit';
 export type { GridEdit } from './generated/GridEdit';
 export type { GridFitHeader } from './generated/GridFitHeader';
+export type { Listen } from './generated/Listen';
 export type { Meter } from './generated/Meter';
+export type { MeterFrame } from './generated/MeterFrame';
 export type { RowUpdate } from './generated/RowUpdate';
 export type { TrackEvent } from './generated/TrackEvent';
 export type { TrackOpened } from './generated/TrackOpened';
 export type { Verdict } from './generated/Verdict';
+export type { Version } from './generated/Version';
 
 /** A refit's answer: the fit and one residual in milliseconds per grid line (NaN: no attack). */
 export interface GridFit {
@@ -115,4 +120,21 @@ export function playerSeek(to: number): Promise<void> {
 
 export function playerSetClick(on: boolean): Promise<void> {
   return invoke<void>('player_set_click', { on });
+}
+
+/**
+ * Plays the original or the processed version of the open track at the same position (heard
+ * within one device buffer, over a 10 ms ramp), optionally level-matched. A newly opened track
+ * starts on `{ version: 'processed', matched: false }`; `player` events carry the version heard.
+ */
+export function gridPlayerListen(fileId: number, listen: Listen): Promise<void> {
+  return invoke<void>('grid_player_listen', { fileId, listen });
+}
+
+/**
+ * Sets the monitor volume for every track: dB up to 0 (0 = unity), `null` mutes. It scales only
+ * what is heard; meters and the planned gain do not change. Rejects a value above 0 dB.
+ */
+export function playerVolume(db: DbFs | null): Promise<void> {
+  return invoke<void>('player_volume', { db });
 }
