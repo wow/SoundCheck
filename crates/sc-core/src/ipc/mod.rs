@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 pub use recovery::{PendingChange, RecoveredChange, RecoveryOutcome, RecoveryStatus};
-pub use track::{FitChoice, GridFitHeader, RowUpdate, TrackEvent, TrackOpened};
+pub use track::{
+    FitChoice, GridFitHeader, Listen, MeterFrame, RowUpdate, TrackEvent, TrackOpened, Version,
+};
 
 use crate::analysis::{AnalysisRecord, AnalysisSettings, Confidence, Reason, Verdict};
 use crate::plan::{Codec, Plan};
@@ -51,21 +53,6 @@ pub enum JobStage {
     Cancelled,
     /// Skipped for a stated reason.
     Skipped,
-}
-
-/// One meter reading for the previewed file, sent at most 30 times per second.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export)]
-#[serde(rename_all = "camelCase")]
-pub struct MeterFrame {
-    /// The file being previewed.
-    pub file_id: u32,
-    /// Momentary loudness (400 ms window).
-    pub momentary: Lufs,
-    /// Short-term loudness (3 s window).
-    pub short_term: Lufs,
-    /// True peak since the last frame.
-    pub true_peak: DbTp,
 }
 
 /// Why a file's format is not what DJ players handle everywhere; export would convert it.

@@ -1,6 +1,7 @@
 //! The grid view's command bodies on a click track: open (analysis, decoding, player loaded),
 //! waveform bins, onsets, refits with and without an edit, saving a confirmed edit, closing, and
-//! the errors for a row that is not open. Needs the model files (skipped without); no test
+//! the errors for a row that is not open, the version heard and the monitor volume, and the
+//! player event built from the player's status. Needs the model files (skipped without); no test
 //! starts playback, so no audio device is opened.
 
 use std::path::{Path, PathBuf};
@@ -8,11 +9,17 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use sc_core::analysis::{AnalysisSettings, GridEdit, Model};
-use sc_core::ipc::{AnalyzeRequest, GridFitHeader, IpcErrorKind, JobEvent, JobStage, TrackEvent};
-use sc_core::{AudioSpec, Bpm, testsig};
+use sc_core::ipc::{
+    AnalyzeRequest, GridFitHeader, IpcErrorKind, JobEvent, JobStage, Listen, MeterFrame,
+    TrackEvent, Version,
+};
+use sc_core::plan::DecideSettings;
+use sc_core::{AudioSpec, Bpm, DbFs, DbTp, Lufs, SampleIndex, testsig};
+use sc_engine::player::{PlayerState, Status};
 use sc_io::cache::Cache;
 use sc_io::edits::EditStore;
 
+use super::{Sent, player_event};
 use crate::shell::Shell;
 
 fn have_models() -> bool {
@@ -202,4 +209,162 @@ fn a_row_that_is_not_open_is_refused() {
         "no place to save edits"
     );
     drop(dir);
+}
+
+/// Waits (up to 2 s) for the player's published status to satisfy `ok`.
+fn player_status(shell: &Shell, ok: impl Fn(&Status) -> bool) -> Status {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let status = shell
+            .player()
+            .as_ref()
+            .map(sc_engine::player::Player::status);
+        if let Some(status) = status
+            && (ok(&status) || std::time::Instant::now() > deadline)
+        {
+            return status;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn the_version_heard_follows_the_view_and_a_new_track_starts_processed() {
+    if !have_models() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (shell, id) = analysed_shell(dir.path());
+    let (tx, rx) = mpsc::channel();
+    let _ = shell
+        .open_track(id, move |e| {
+            let _ = tx.send(e);
+        })
+        .unwrap();
+    let original = Listen {
+        version: Version::Original,
+        matched: true,
+    };
+    shell.set_listen(id, original).unwrap();
+    // Paused, the view still hears about the switch.
+    let confirmed = loop {
+        if let TrackEvent::Player {
+            listen,
+            playing,
+            meter,
+            ..
+        } = rx.recv_timeout(Duration::from_secs(2)).unwrap()
+        {
+            break (listen, playing, meter);
+        }
+    };
+    assert_eq!(confirmed, (original, false, None));
+    let status = player_status(&shell, |s| s.listen == original);
+    assert_eq!(status.listen, original);
+    assert_eq!(status.meter, None, "nothing plays, nothing is metered");
+    assert_eq!(
+        shell.set_listen(id + 1, original).unwrap_err().kind,
+        IpcErrorKind::InvalidArgument,
+        "only the open track"
+    );
+    // A new target replans the rows and the open track's player follows its new planned gain.
+    let before = status.planned;
+    let mut settings = DecideSettings::dj();
+    settings.target = Lufs(-30.0);
+    let replan = shell.set_decide_settings(settings).unwrap();
+    assert_eq!(replan.plans.len(), 1);
+    let expected = DbFs(shell.session().planned_gain(id).unwrap());
+    assert_ne!(
+        expected, before,
+        "the test needs a target that changes the gain"
+    );
+    let status = player_status(&shell, |s| s.planned == expected);
+    assert_eq!(status.planned, expected);
+
+    let _ = shell.open_track(id, |_| {}).unwrap();
+    let status = player_status(&shell, |s| s.listen == Listen::default());
+    assert_eq!(status.listen, Listen::default(), "a load starts processed");
+}
+
+#[test]
+fn the_volume_goes_up_to_0_db_and_needs_no_open_track() {
+    let shell = Shell::new(None, None, 1);
+    shell.set_volume(Some(DbFs(-12.5))).unwrap();
+    shell.set_volume(None).unwrap();
+    shell.set_volume(Some(DbFs(0.0))).unwrap();
+    for wrong in [0.5, f64::NAN] {
+        assert_eq!(
+            shell.set_volume(Some(DbFs(wrong))).unwrap_err().kind,
+            IpcErrorKind::InvalidArgument,
+            "{wrong}"
+        );
+    }
+    assert!(shell.player().is_some(), "the player started for it");
+}
+
+#[test]
+fn the_player_event_carries_the_reading_while_playing_and_any_version_change() {
+    let frame = MeterFrame {
+        position: SampleIndex(44_544),
+        in_peak: Some(DbTp(-1.0)),
+        in_momentary: Some(Lufs(-9.0)),
+        out_peak: Some(DbTp(-3.5)),
+        out_momentary: Some(Lufs(-11.5)),
+        folded: false,
+    };
+    let original = Listen {
+        version: Version::Original,
+        matched: false,
+    };
+    let status = |playing, listen| Status {
+        state: Some(PlayerState {
+            playing,
+            position: SampleIndex(44_000),
+            underruns: 0,
+        }),
+        listen,
+        ..Status::default()
+    };
+    let stopped = Sent::default();
+    let was_playing = Sent {
+        playing: true,
+        ..Sent::default()
+    };
+    let Some(TrackEvent::Player {
+        meter, position, ..
+    }) = player_event(&status(true, Listen::default()), Some(frame), &stopped)
+    else {
+        panic!("an event while playing");
+    };
+    assert_eq!(meter, Some(frame));
+    assert!(meter.unwrap().position.0.abs_diff(position.0) <= 1_024);
+    let Some(TrackEvent::Player { meter, playing, .. }) =
+        player_event(&status(false, Listen::default()), Some(frame), &was_playing)
+    else {
+        panic!("one event when playing stops");
+    };
+    assert!(!playing);
+    assert_eq!(meter, None, "stopped: empty meters");
+    assert_eq!(
+        player_event(&status(false, Listen::default()), None, &stopped),
+        None,
+        "then nothing"
+    );
+    // Paused, a version switch is still confirmed.
+    let Some(TrackEvent::Player { listen, meter, .. }) =
+        player_event(&status(false, original), None, &stopped)
+    else {
+        panic!("an event for the new version while paused");
+    };
+    assert_eq!((listen, meter), (original, None));
+    let sent = Sent {
+        listen: original,
+        ..Sent::default()
+    };
+    assert_eq!(player_event(&status(false, original), None, &sent), None);
+    assert_eq!(
+        player_event(&Status::default(), None, &was_playing),
+        None,
+        "no track"
+    );
 }

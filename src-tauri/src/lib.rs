@@ -11,11 +11,11 @@ mod shell;
 
 use sc_core::analysis::GridEdit;
 use sc_core::ipc::{
-    AnalyzeRequest, FileEntry, IpcError, IpcErrorKind, JobEvent, JobId, RecoveryStatus, Replan,
-    RowUpdate, SessionSnapshot, TrackEvent, TrackOpened,
+    AnalyzeRequest, FileEntry, IpcError, IpcErrorKind, JobEvent, JobId, Listen, RecoveryStatus,
+    Replan, RowUpdate, SessionSnapshot, TrackEvent, TrackOpened,
 };
 use sc_core::plan::DecideSettings;
-use sc_core::{Lufs, SampleIndex};
+use sc_core::{DbFs, Lufs, SampleIndex};
 use tauri::State;
 use tauri::ipc::{Channel, Response};
 
@@ -224,6 +224,22 @@ async fn player_set_click(shell: State<'_, Shell>, on: bool) -> Result<(), IpcEr
     Ok(())
 }
 
+/// Plays the original or the processed version of the open track (optionally level-matched).
+#[tauri::command]
+async fn grid_player_listen(
+    shell: State<'_, Shell>,
+    file_id: u32,
+    listen: Listen,
+) -> Result<(), IpcError> {
+    shell.set_listen(file_id, listen)
+}
+
+/// Sets the monitor volume (dB up to 0, `null` mutes) for every track.
+#[tauri::command]
+async fn player_volume(shell: State<'_, Shell>, db: Option<DbFs>) -> Result<(), IpcError> {
+    shell.set_volume(db)
+}
+
 /// Builds and runs the application.
 ///
 /// # Panics
@@ -259,7 +275,9 @@ pub fn run() {
             player_play,
             player_pause,
             player_seek,
-            player_set_click
+            player_set_click,
+            grid_player_listen,
+            player_volume
         ])
         .run(tauri::generate_context!())
         .expect("the Tauri runtime failed to start");

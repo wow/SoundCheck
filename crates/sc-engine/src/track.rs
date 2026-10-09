@@ -88,6 +88,8 @@ pub struct Track {
     sample_rate: u32,
     channels: u16,
     scale: f32,
+    /// A stereo file held as mono.
+    folded: bool,
 }
 
 impl Track {
@@ -145,6 +147,7 @@ impl Track {
             sample_rate: spec.sample_rate,
             channels,
             scale,
+            folded: channels != spec.channels,
         })
     }
 
@@ -158,6 +161,12 @@ impl Track {
     #[must_use]
     pub fn channels(&self) -> u16 {
         self.channels
+    }
+
+    /// A stereo file longer than [`MONO_AFTER_S`] held as mono (left and right averaged).
+    #[must_use]
+    pub fn folded(&self) -> bool {
+        self.folded
     }
 
     /// Gain the samples were stored with: 1, or below 1 for a float file with overs.

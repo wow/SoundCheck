@@ -11,7 +11,7 @@ use std::sync::{Arc, mpsc};
 use sc_core::analysis::{Alternatives, Confidence, Grid, Meter, Verdict};
 use sc_core::{Bpm, DbFs, SampleIndex};
 use sc_engine::player::click::{Accent, Clicks};
-use sc_engine::player::{Callback, Feeder, Renderer, Shared, ring};
+use sc_engine::player::{Callback, Feeder, Meters, Renderer, Shared, ring};
 use sc_engine::{Track, TrackProgress};
 
 /// A 16-bit stereo WAV at `rate` whose frame `n` is `f(n)` on both channels.
@@ -79,10 +79,21 @@ fn rig(track: Arc<Track>, gain: f64, out_rate: u32) -> Rig {
 fn rig_with(track: Arc<Track>, gain: f64, out_rate: u32, channels: u16) -> Rig {
     let shared = Arc::new(Shared::default());
     let (producer, consumer) = ring(out_rate, channels);
-    let renderer = Renderer::new(track, DbFs(gain), out_rate, channels).unwrap();
+    let renderer = Renderer::new(track, out_rate, channels).unwrap();
+    let meters = Arc::new(Meters::new());
+    let mut feeder = Feeder::new(
+        renderer,
+        producer,
+        Arc::clone(&shared),
+        meters,
+        out_rate,
+        channels,
+    )
+    .unwrap();
+    feeder.set_planned_gain(DbFs(gain));
     Rig {
-        feeder: Feeder::new(renderer, producer, Arc::clone(&shared), out_rate, channels),
-        callback: Callback::new(consumer, Arc::clone(&shared), channels),
+        feeder,
+        callback: Callback::new(consumer, Arc::clone(&shared), channels, out_rate),
         shared,
         channels: usize::from(channels),
     }

@@ -1,6 +1,7 @@
 //! The grid view's command bodies, as plain Rust tested without a window: opening a track
 //! (analysing it again when the cache lacks its evidence), waveform bins, the cover, kick onsets,
-//! refits, saving an edit, and the click player. `lib.rs` wraps each in a one-line command.
+//! refits, saving an edit, and the player (with its meters, the version heard and the monitor
+//! volume). `lib.rs` wraps each in a one-line command.
 //!
 //! One track is open at a time. Its analysis record (evidence included) and its decoded audio
 //! stay here until another track opens or the view closes; the webview gets bins, residuals and
@@ -12,10 +13,12 @@ use std::sync::{Arc, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use sc_core::analysis::{AnalysisRecord, Grid, GridEdit};
-use sc_core::ipc::{GridFitHeader, IpcError, RowUpdate, TrackEvent, TrackOpened};
+use sc_core::ipc::{
+    GridFitHeader, IpcError, Listen, MeterFrame, RowUpdate, TrackEvent, TrackOpened,
+};
 use sc_core::{Bpm, DbFs, Error, SampleIndex};
 use sc_engine::edits::{audio_of, fit_choice, refit_record, snap_onsets};
-use sc_engine::player::Player;
+use sc_engine::player::{Player, Status};
 use sc_engine::{
     Analyzer, CancelToken, Progress, Timings, Track, TrackProgress, apply_saved, save_edit,
 };
@@ -24,7 +27,7 @@ use sc_io::tags;
 
 use crate::shell::Shell;
 
-/// How often the player's position goes to the view (30 Hz).
+/// How often the player's position and meters go to the view (30 Hz).
 const PLAYER_TICK: Duration = Duration::from_millis(33);
 
 /// The track open in the grid view.
@@ -111,7 +114,6 @@ impl Shell {
             .filter(|saved| saved.audio == audio_of(&record))
             .map(|saved| saved.edit)
             .unwrap_or_default();
-        let gain = DbFs(self.session().planned_gain(file_id).unwrap_or(0.0));
 
         let decoding = Arc::clone(&send);
         let track = Arc::new(
@@ -131,6 +133,9 @@ impl Shell {
         // Held from loading the player until the track is in place: a refit or save of the
         // track before (which set the player's grid under this lock) cannot land in between.
         let mut view = self.view();
+        // Read under the view lock (lock order: view, session, player), so a settings change
+        // cannot land between reading the gain and loading the player.
+        let gain = DbFs(self.session().planned_gain(file_id).unwrap_or(0.0));
         let load = self.load_player(&track, gain, shown.grid.clone())?;
         let stop = Arc::new(AtomicBool::new(false));
         self.report_player(Arc::clone(&stop), load, send);
@@ -204,28 +209,37 @@ impl Shell {
         Ok(load)
     }
 
-    /// Sends the player's position at 30 Hz while it plays (and once when it stops), and a
-    /// device error once, until `stop` is set. Only the state of load `load` is sent: until the
-    /// player has taken the track, its status still describes the track before (maybe playing,
-    /// far into it), which is not this track's.
+    /// Sends the player's position with its meter reading and the version heard at 30 Hz while
+    /// it plays, once when it stops, and whenever the version heard changes (also while
+    /// paused), and a device error once, until `stop` is set. Each meter reading carries the
+    /// peaks of every block since the reading sent before, so an over between two ticks is never
+    /// lost. Only the state of load `load` is sent: until the player has taken the track, its
+    /// status still describes the track before (maybe playing, far into it), which is not this
+    /// track's.
     fn report_player(&self, stop: Arc<AtomicBool>, load: u64, send: Send) {
         let shell = self.clone();
         let spawned = std::thread::Builder::new()
             .name("sc-player-state".into())
             .spawn(move || {
-                let (mut was_playing, mut last_error) = (false, None);
+                let mut reported = Sent::default();
+                let mut last_error = None;
                 while !stop.load(Ordering::Acquire) {
-                    let status = shell.player().as_ref().map(Player::status);
-                    if let Some(status) = status.filter(|s| s.load == load) {
-                        if let Some(state) = status.state
-                            && (state.playing || was_playing)
-                        {
-                            send(TrackEvent::Player {
-                                playing: state.playing,
-                                position: state.position,
-                                underruns: state.underruns,
-                            });
-                            was_playing = state.playing;
+                    let read = shell.player().as_ref().map(|p| {
+                        let status = p.status();
+                        let meter = status
+                            .state
+                            .filter(|s| s.playing && status.load == load)
+                            .and_then(|s| p.meter_since(s.position, reported.meter_end));
+                        (status, meter)
+                    });
+                    if let Some((status, meter)) = read.filter(|(s, _)| s.load == load) {
+                        if let Some(event) = player_event(&status, meter, &reported) {
+                            send(event);
+                            reported = Sent {
+                                playing: status.state.is_some_and(|s| s.playing),
+                                listen: status.listen,
+                                meter_end: meter.map(|m| m.position).or(reported.meter_end),
+                            };
                         }
                         if status.error.is_some() && status.error != last_error {
                             send(TrackEvent::PlayerError {
@@ -421,6 +435,78 @@ impl Shell {
             p.set_click(on);
         }
     }
+
+    /// Plays the version `listen` asks for of the open track `file_id`, at the same position.
+    ///
+    /// # Errors
+    /// `invalidArgument` when the track is not open.
+    pub fn set_listen(&self, file_id: u32, listen: Listen) -> Result<(), IpcError> {
+        self.with_open(file_id, |_| {
+            if let Some(p) = self.player().as_ref() {
+                p.set_listen(listen);
+            }
+            Ok(())
+        })
+    }
+
+    /// Sets the monitor volume for every track (dB from -inf up to 0; `None` mutes). It scales
+    /// only what is heard; the meters and the planned gain stay. The player starts here when no
+    /// track has been opened yet, so the volume is in place before the first one.
+    ///
+    /// # Errors
+    /// `invalidArgument` for a volume above 0 dB or not a number; `internal` when the player
+    /// cannot start.
+    pub fn set_volume(&self, volume: Option<DbFs>) -> Result<(), IpcError> {
+        if let Some(db) = volume
+            && (db.0.is_nan() || db.0 > 0.0)
+        {
+            return Err(IpcError::from(Error::InvalidArgument(format!(
+                "volume {} dB; the player's volume goes up to 0 dB",
+                db.0
+            ))));
+        }
+        let mut player = self.player();
+        let p = match player.as_mut() {
+            Some(p) => p,
+            None => player.insert(Player::new()?),
+        };
+        p.set_volume(volume);
+        Ok(())
+    }
+
+    /// Plays the open track at its plan's gain after the plans changed (a new target or mode):
+    /// the processed version and the OUT meter follow it.
+    pub(crate) fn follow_plan(&self) {
+        let view = self.view();
+        let Some(open) = view.as_ref() else { return };
+        let gain = DbFs(self.session().planned_gain(open.file_id).unwrap_or(0.0));
+        if let Some(p) = self.player().as_ref() {
+            p.set_planned_gain(gain);
+        }
+    }
+}
+
+/// What the reporter last sent: whether the player was playing, the version heard and where the
+/// last meter reading ended. A track loads playing nothing, on the processed version.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Sent {
+    playing: bool,
+    listen: Listen,
+    meter_end: Option<SampleIndex>,
+}
+
+/// The `player` event for `status` with the reading `meter` (`None` while stopped): sent while
+/// playing, once when playing stops, and when the version heard changed since `sent`; `None`
+/// otherwise.
+fn player_event(status: &Status, meter: Option<MeterFrame>, sent: &Sent) -> Option<TrackEvent> {
+    let state = status.state?;
+    (state.playing || sent.playing || status.listen != sent.listen).then(|| TrackEvent::Player {
+        playing: state.playing,
+        position: state.position,
+        underruns: state.underruns,
+        meter: meter.filter(|_| state.playing),
+        listen: status.listen,
+    })
 }
 
 #[cfg(test)]

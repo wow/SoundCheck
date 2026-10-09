@@ -14,6 +14,7 @@ sc-core = { workspace = true }
 sc-dsp = { workspace = true }
 sc-io = { workspace = true }
 sc-analysis = { workspace = true }
+ebur128 = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 rtrb = { workspace = true }
@@ -42,6 +43,10 @@ harness = false
 
 [[bench]]
 name = "fit_choice"
+harness = false
+
+[[bench]]
+name = "meter"
 harness = false
 
 [[example]]

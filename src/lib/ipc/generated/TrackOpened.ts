@@ -23,7 +23,8 @@ sampleRate: number,
  */
 frames: number, 
 /**
- * The gain the player plays at: the row's planned gain, 0 dB for a skipped file.
+ * The row's planned gain (0 dB for a skipped file): what the player's processed version
+ * plays at and what the OUT meter reads above IN.
  */
 gain: DbFs, 
 /**

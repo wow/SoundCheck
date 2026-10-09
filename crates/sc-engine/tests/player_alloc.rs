@@ -1,6 +1,7 @@
 //! The audio callback never allocates: it runs here under a global allocator that counts every
-//! allocation made while counting is switched on, through playing, a seek and a pause. This
-//! binary holds this one test, so no other test allocates while the count runs.
+//! allocation made while counting is switched on, through playing, switching versions (the gain
+//! ramp), level matching, volume changes down to mute, a seek and a pause. This binary holds this
+//! one test, so no other test allocates while the count runs.
 #![allow(unsafe_code)] // a global allocator is an unsafe trait; each method only forwards
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -8,7 +9,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 
 use sc_core::DbFs;
-use sc_engine::player::{Callback, Feeder, Renderer, Shared, ring};
+use sc_core::ipc::{Listen, Version};
+use sc_engine::player::{Callback, Feeder, Meters, Renderer, Shared, ring};
 use sc_engine::{Track, TrackProgress};
 
 struct Counting;
@@ -77,9 +79,12 @@ fn the_callback_never_allocates() {
 
     let shared = Arc::new(Shared::default());
     let (producer, consumer) = ring(48_000, 2);
-    let renderer = Renderer::new(track, DbFs(0.0), 48_000, 2).unwrap();
-    let mut feeder = Feeder::new(renderer, producer, Arc::clone(&shared), 48_000, 2);
-    let mut callback = Callback::new(consumer, Arc::clone(&shared), 2);
+    let renderer = Renderer::new(track, 48_000, 2).unwrap();
+    let meters = Arc::new(Meters::new());
+    let mut feeder =
+        Feeder::new(renderer, producer, Arc::clone(&shared), meters, 48_000, 2).unwrap();
+    feeder.set_planned_gain(DbFs(-4.5));
+    let mut callback = Callback::new(consumer, Arc::clone(&shared), 2, 48_000);
     let mut buffer = vec![0.0_f32; 512];
     feeder.play();
 
@@ -92,8 +97,26 @@ fn the_callback_never_allocates() {
         }
     };
     measured(&mut feeder, 50);
+    // Each change lands mid-ramp of the one before (10 ms is under two 256-frame buffers).
+    for listen in [
+        (Version::Original, false),
+        (Version::Processed, false),
+        (Version::Processed, true),
+        (Version::Original, true),
+    ] {
+        feeder.set_listen(Listen {
+            version: listen.0,
+            matched: listen.1,
+        });
+        measured(&mut feeder, 1);
+    }
+    for volume in [Some(DbFs(-12.0)), None, Some(DbFs(0.0))] {
+        feeder.set_volume(volume);
+        measured(&mut feeder, 3);
+    }
     feeder.seek(30_000);
     measured(&mut feeder, 50);
+    feeder.set_listen(Listen::default());
     feeder.pause();
     measured(&mut feeder, 10);
     assert_eq!(ALLOCATIONS.load(Ordering::SeqCst), 0);
