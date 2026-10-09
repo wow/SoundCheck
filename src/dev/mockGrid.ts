@@ -21,6 +21,7 @@ import type {
   TrackOpened,
 } from '@/lib/ipc';
 import { METERS, meterText } from '@/features/grid/meters';
+import { mockMeterFrame } from './mockMeter';
 
 const RATE = 44_100;
 const SECONDS = 240;
@@ -121,13 +122,28 @@ function send(event: TrackEvent) {
   open?.channel.onmessage(event);
 }
 
+function plannedGain(row: MockRow): number {
+  const gain = row.plan.gain;
+  return gain && gain.type !== 'atTarget' ? gain.gainDb : 0;
+}
+
 function playerEvent() {
   send({
     type: 'player',
     playing: player.playing,
     position: Math.round(player.position),
     underruns: 0,
-    meter: null,
+    meter:
+      player.playing && open
+        ? mockMeterFrame(
+            player.position,
+            player.position - player.from,
+            RATE,
+            open.kicks,
+            open.row.analysis,
+            plannedGain(open.row),
+          )
+        : null,
     listen: player.listen,
   });
 }
@@ -350,12 +366,11 @@ export function gridCommand(
           send({ type: 'ready', frames: decode.frames });
         }
       }, 100);
-      const gain = row.plan.gain;
       const opened: TrackOpened = {
         entry: row.entry,
         sampleRate: RATE,
         frames: SECONDS * RATE,
-        gain: gain && gain.type !== 'atTarget' ? gain.gainDb : 0,
+        gain: plannedGain(row),
         bpmRange: [70, 180],
         analysed,
         grid: applied(edit),

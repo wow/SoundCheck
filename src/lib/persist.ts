@@ -1,4 +1,5 @@
 import { load, type Store } from '@tauri-apps/plugin-store';
+import { MONITOR_SCHEMA, sanitizeMonitor, type SavedMonitor } from '@/state/monitor';
 import { SETTINGS_SCHEMA, sanitize, type SavedSettings } from '@/state/settings';
 
 /** Settings live in the app's own store file; nothing is written next to the music. */
@@ -29,6 +30,29 @@ export async function saveSettings(settings: SavedSettings): Promise<void> {
     await (await open()).set(KEY, { schema: SETTINGS_SCHEMA, ...settings });
   } catch {
     // Not remembered this time; the app keeps working with the values on screen.
+  }
+}
+
+/** The monitor volume sits beside the settings, under its own key: it never replans a row. */
+const MONITOR_KEY = 'monitor';
+
+/** The saved monitor volume, or none when there is none yet or the store cannot be read. */
+export async function loadMonitor(): Promise<Partial<SavedMonitor>> {
+  try {
+    const saved = await (await open()).get<Record<string, unknown>>(MONITOR_KEY);
+    if (!saved || saved.schema !== MONITOR_SCHEMA) return {};
+    return sanitizeMonitor(saved);
+  } catch {
+    return {};
+  }
+}
+
+/** Saves the monitor volume; a failure only means it is not remembered. */
+export async function saveMonitor(monitor: SavedMonitor): Promise<void> {
+  try {
+    await (await open()).set(MONITOR_KEY, { schema: MONITOR_SCHEMA, ...monitor });
+  } catch {
+    // Not remembered this time.
   }
 }
 

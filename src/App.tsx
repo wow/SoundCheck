@@ -16,6 +16,7 @@ import { usePanels } from '@/state/panels';
 import { openInGridView } from '@/features/grid/actions';
 import { GridView } from '@/features/grid/GridView';
 import { useTrack } from '@/features/grid/store';
+import { startMonitorSync } from '@/features/settings/monitorSync';
 import { startSettingsSync } from '@/features/settings/sync';
 
 
@@ -75,6 +76,7 @@ export default function App() {
   // restoring the list again on its return would reset the selection and every row.
   useKeys();
   useEffect(() => startSettingsSync(), []);
+  useEffect(() => startMonitorSync(), []);
   useEffect(() => startTrackListPersistence(), []);
   return (
     <div className="contents" onMouseDownCapture={keepFocusOnClick}>

@@ -1,5 +1,6 @@
 import type { EditFit, Grid, Meter } from '@/lib/ipc';
 import { useLibrary } from '@/state/library';
+import { useMonitor } from '@/state/monitor';
 import {
   NO_EDIT,
   beatOne,
@@ -204,4 +205,24 @@ export function openInGridView(fileId: number): void {
   if (!row?.analysis) return;
   lib.select(fileId);
   void useTrack.getState().open(fileId);
+}
+
+/** `B`: the other version, at the same position. */
+export function switchVersion(): void {
+  const t = useTrack.getState();
+  t.setListen({
+    ...t.listen,
+    version: t.listen.version === 'processed' ? 'original' : 'processed',
+  });
+}
+
+/** `Shift+B`: both versions at the same loudness, or each at its own. */
+export function toggleMatch(): void {
+  const t = useTrack.getState();
+  t.setListen({ ...t.listen, matched: !t.listen.matched });
+}
+
+/** `Shift+Up` / `Shift+Down`: the monitor volume 1 dB up or down. */
+export function stepVolume(step: 1 | -1): void {
+  useMonitor.getState().step(step);
 }

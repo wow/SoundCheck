@@ -5,7 +5,7 @@
 SoundCheck is a free, open-source desktop app for DJs and producers. Drop a folder, see what every track needs, fix the few grids that are wrong, and export files that rekordbox, Serato and Traktor agree with.
 
 > **Status: in development, no usable release yet.** What works today, from source:
-> - **The app** analyses a dropped library (loudness, BPM, meter and bar 1, with a Needs-review queue) and opens any track in a grid view to inspect and fix its grid while a click plays along. It does not write files yet.
+> - **The app** analyses a dropped library (loudness, BPM, meter and bar 1, with a Needs-review queue) and opens any track in a grid view to inspect and fix its grid while a click plays along, with live IN/OUT meters, an original/processed A/B and a volume control. It does not write files yet.
 > - **`sc-cli apply`** already changes WAV, AIFF and FLAC files: gain and an optional head trim, every other chunk, block and tag carried byte for byte, verified, with a backup in `~/Music/SoundCheck Backups` and `sc-cli undo`.
 >
 > Exporting from the app, the rekordbox XML and MP3 output come next. The first pre-release, `v0.1.0-alpha.1`, follows once exported files pass rekordbox 7's own analysis; `v0.1.0` is the first release for everyone. Watch the releases page or the changelog.

@@ -191,6 +191,9 @@ function runJob(jobId: number, fileIds: number[], channel: unknown) {
   });
 }
 
+/** Where the mock keeps the monitor volume between reloads. */
+const MONITOR_KEY = 'soundcheck-mock-monitor';
+
 export function installMockBackend(): void {
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
@@ -231,8 +234,14 @@ export function installMockBackend(): void {
         return null;
       case 'plugin:store|load':
         return 1;
-      case 'plugin:store|get':
-        return [null, false];
+      case 'plugin:store|get': {
+        // The monitor volume survives a reload, as it survives a restart in the app.
+        const kept = a.key === 'monitor' ? localStorage.getItem(MONITOR_KEY) : null;
+        return kept === null ? [null, false] : [JSON.parse(kept) as unknown, true];
+      }
+      case 'plugin:store|set':
+        if (a.key === 'monitor') localStorage.setItem(MONITOR_KEY, JSON.stringify(a.value));
+        return null;
       case 'plugin:dialog|open':
         return ['/Music/Mock Crate'];
       case 'plugin:dialog|message':

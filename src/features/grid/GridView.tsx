@@ -14,9 +14,12 @@ import {
   pan,
   playPause,
   resetGrid,
+  stepVolume,
+  switchVersion,
   tap,
   toBarOne,
   toggleClick,
+  toggleMatch,
   zoom,
 } from './actions';
 import { CursorReadout } from './CursorReadout';
@@ -27,20 +30,32 @@ import { FitStrip } from './FitStrip';
 import { GridDetails, GridRail } from './GridRail';
 import { GridToolbar } from './GridToolbar';
 import { type GridKey, gridKey } from './keys';
+import { MeterStrip } from './meter/MeterStrip';
 import { useTrack } from './store';
 import { useView } from './viewStore';
 
-const DRAWER_KEYS = new Set<GridKey['type']>(['details', 'undo', 'redo', 'playPause', 'click']);
+const DRAWER_KEYS = new Set<GridKey['type']>([
+  'details',
+  'undo',
+  'redo',
+  'playPause',
+  'click',
+  'version',
+  'match',
+  'volume',
+]);
 
 /** The grid view's keys, while it is open. */
 function useGridKeys(toggleMeter: () => void) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (ownsKey(e.target, e.key) || e.repeat) return;
+      if (ownsKey(e.target, e.key)) return;
       const action = gridKey(e);
-      if (!action) return;
-      // While the details drawer is open, only I (closes it), undo, redo, play and the click
-      // reach the view; Esc closes the drawer rather than leaving.
+      // A held key repeats only the volume.
+      if (!action || (e.repeat && action.type !== 'volume')) return;
+      // While the details drawer is open, only I (closes it), undo, redo and what is heard
+      // (play, the click, the version, the volume) reach the view; Esc closes the drawer rather
+      // than leaving.
       const panels = usePanels.getState();
       if (panels.details) {
         if (action.type === 'back') return panels.setDetails(false);
@@ -87,6 +102,12 @@ function useGridKeys(toggleMeter: () => void) {
           return pan(action.bars);
         case 'zoom':
           return zoom(action.factor);
+        case 'version':
+          return switchVersion();
+        case 'match':
+          return toggleMatch();
+        case 'volume':
+          return stepVolume(action.step);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -207,9 +228,13 @@ export function GridView() {
         <main className="flex min-w-0 flex-1 flex-col">
           {narrow && <FitStrip />}
           <StatusLine narrow={narrow} />
-          <div className="relative flex min-h-0 flex-1 flex-col">
-            <GridCanvas />
-            <CursorReadout />
+          <div className="flex min-h-0 flex-1">
+            <MeterStrip side="in" narrow={narrow} />
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+              <GridCanvas />
+              <CursorReadout />
+            </div>
+            <MeterStrip side="out" narrow={narrow} />
           </div>
           <GridToolbar meterOpen={meterOpen} setMeterOpen={setMeterOpen} />
           <DriftStrip />

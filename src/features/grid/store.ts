@@ -3,9 +3,12 @@ import {
   type Grid,
   type GridEdit,
   type GridFit,
+  type Listen,
+  type MeterFrame,
   type TrackEvent,
   type TrackOpened,
   gridCommit,
+  gridPlayerListen,
   gridRefit,
   playerPause,
   playerPlay,
@@ -17,6 +20,8 @@ import {
   trackOpen,
 } from '@/lib/ipc';
 import { useLibrary } from '@/state/library';
+import { useSettings } from '@/state/settings';
+import { NO_OVERS, type Overs, latched } from './meter/ballistics';
 import { NO_EDIT, type History, history, isEmpty, push, redo, undo } from './edit';
 
 /**
@@ -68,6 +73,12 @@ export interface TrackState {
   saveError: string | null;
   click: boolean;
   player: PlayerView;
+  /** The version heard: the user's choice at once, then what the player reports. */
+  listen: Listen;
+  /** The meter reading for the audio being heard; null while stopped and just after a seek. */
+  meter: MeterFrame | null;
+  /** IN went over 0 dBTP, OUT over the ceiling, since the track opened or the over was cleared. */
+  overs: Overs;
   /** The attacks bar 1 snaps to, in seconds (empty until loaded). */
   onsets: Float64Array;
   open(fileId: number): Promise<void>;
@@ -89,11 +100,20 @@ export interface TrackState {
   play(from?: number): void;
   pause(): void;
   seek(sample: number): void;
+  /** Plays the original or the processed version, level-matched or not. */
+  setListen(listen: Listen): void;
+  clearOver(side: keyof Overs): void;
   /** For tests and the event channel. */
   handle(event: TrackEvent): void;
 }
 
 const IDLE_PLAYER: PlayerView = { playing: false, position: 0, underruns: 0, error: null };
+/** What a newly opened track plays, as the engine starts it. */
+export const OPEN_LISTEN: Listen = { version: 'processed', matched: false };
+
+function sameListen(a: Listen, b: Listen): boolean {
+  return a.version === b.version && a.matched === b.matched;
+}
 
 /** The engine's open-track commands, one after another. */
 let queue: Promise<unknown> = Promise.resolve();
@@ -109,6 +129,32 @@ let refitSeq = 0;
 /** The newest save queued. */
 let saveSeq = 0;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * After a switch lands, how long a report may still show the version before: the player's
+ * reports run at 30 Hz, so one sent just before the switch can arrive just after it.
+ */
+export const LISTEN_GRACE_MS = 150;
+/**
+ * The newest switch the user made and no report has shown yet. Until a report shows it (or the
+ * grace after its command landed runs out), reports keep the user's choice on screen.
+ */
+let wanted: { listen: Listen; until: number } | null = null;
+
+/** Whether a report's `listen` replaces the one shown, and the wanted switch it settles. */
+function reportedListen(reported: Listen, now: number): boolean {
+  if (wanted) {
+    if (sameListen(reported, wanted.listen)) {
+      // Settled only once its command has landed: until then a matching report may predate an
+      // earlier switch still on its way (B, B), whose report could follow it.
+      if (wanted.until !== Infinity) wanted = null;
+      return true;
+    }
+    if (now <= wanted.until) return false;
+    // The player says otherwise past the grace: it is the authority.
+    wanted = null;
+  }
+  return true;
+}
 
 function message(e: unknown): string {
   if (typeof e === 'object' && e !== null && 'message' in e)
@@ -133,6 +179,9 @@ const CLOSED = {
   saveError: null,
   click: true,
   player: IDLE_PLAYER,
+  listen: OPEN_LISTEN,
+  meter: null,
+  overs: NO_OVERS,
   onsets: new Float64Array(0),
 } satisfies Partial<TrackState>;
 
@@ -220,6 +269,7 @@ export const useTrack = create<TrackState>()((set, get) => {
       flush();
       const token = ++session;
       refitSeq++;
+      wanted = null;
       set({ ...CLOSED, fileId, phase: 'opening' });
       try {
         const opened = await enqueue(() =>
@@ -251,6 +301,7 @@ export const useTrack = create<TrackState>()((set, get) => {
       flush();
       session++;
       refitSeq++;
+      wanted = null;
       set({ ...CLOSED });
       await enqueue(() => trackClose()).catch(() => {});
     },
@@ -315,6 +366,30 @@ export const useTrack = create<TrackState>()((set, get) => {
       playerCommand(() => playerSeek(Math.max(0, Math.round(sample))));
     },
 
+    setListen(listen) {
+      const { fileId, phase, listen: before } = get();
+      if (fileId === null || phase !== 'open' || sameListen(listen, before)) return;
+      set({ listen });
+      const token = session;
+      const want = { listen, until: Infinity };
+      wanted = want;
+      playerCommand(async () => {
+        try {
+          await gridPlayerListen(fileId, listen);
+          if (wanted === want) want.until = performance.now() + LISTEN_GRACE_MS;
+        } catch (e) {
+          if (wanted === want) wanted = null;
+          // Still what the user hears: the version before.
+          if (session === token && get().listen === listen) set({ listen: before });
+          throw e;
+        }
+      });
+    },
+
+    clearOver(side) {
+      if (get().overs[side]) set({ overs: { ...get().overs, [side]: false } });
+    },
+
     handle(event) {
       switch (event.type) {
         case 'analysing':
@@ -339,6 +414,13 @@ export const useTrack = create<TrackState>()((set, get) => {
               underruns: event.underruns,
               error: null,
             },
+            meter: event.meter,
+            overs: latched(get().overs, event.meter, useSettings.getState().ceiling),
+            // A report from before the newest switch never undoes it.
+            ...(reportedListen(event.listen, performance.now()) &&
+            !sameListen(event.listen, get().listen)
+              ? { listen: event.listen }
+              : {}),
           });
           break;
         case 'playerError':

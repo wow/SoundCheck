@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { Grid, TrackOpened } from '@/lib/ipc';
+import { watchPixelRatio } from '@/lib/media';
 import {
   OVERVIEW_H,
   RULER_H,
@@ -149,6 +150,7 @@ export function GridCanvas() {
     };
     const observer = new ResizeObserver(resize);
     observer.observe(el);
+    const unPixelRatio = watchPixelRatio(resize);
 
     // A newly opened track (the same file opened again too): fresh tiles, the view at beat zoom
     // with bar 1 near the left, and no pointer position left over from the track before.
@@ -314,6 +316,7 @@ export function GridCanvas() {
     overlay.addEventListener('pointerleave', onLeave);
     return () => {
       observer.disconnect();
+      unPixelRatio();
       unTrack();
       unView();
       useView.getState().setHover(null);
