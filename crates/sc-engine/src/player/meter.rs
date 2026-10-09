@@ -26,6 +26,16 @@
 //!
 //! A seek or a new track resets the meter: momentary loudness is then `None` until 400 ms of
 //! audio have been measured, as the window would otherwise hold silence that is not in the track.
+//! The reset also empties the filters, so before measuring again the meter is primed with the
+//! 100 ms of the track just before the new position ([`Metering::prime`]); they warm up the
+//! K-weighting filters and the true-peak interpolator without being measured. Unprimed, the
+//! interpolator (a 48-tap FIR, 12 taps per phase at 4x and 24 at 2x) would read the first frames
+//! after a seek against zeros that are not in the track, and on a bass note near full scale that
+//! step overshoots the track's true peak by up to about 1 dB: a false over. Primed, every point
+//! it reads is interpolated from the track's own frames, as in a continuous play, and the
+//! K-weighting filters enter the 400 ms window in the state a continuous play leaves them in, to
+//! about 1e-9 (their slowest poles, the 38 Hz high-pass, decay that far in 100 ms). At the start
+//! of the track there is nothing to prime with, as for the analysis, which starts from silence.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -276,11 +286,36 @@ impl Metering {
         });
     }
 
-    /// Starts over (a seek or a new track): the filters, the window and the history.
+    /// Starts over (a seek or a new track): the filters, the window and the history. Prime the
+    /// meter ([`Metering::prime`]) before measuring the first block after the new position.
     pub fn reset(&mut self) {
         self.meter.reset();
         self.measured = 0;
         self.meters.clear();
+    }
+
+    /// Frames before a new position that [`Metering::prime`] uses: 100 ms of the track, far more
+    /// than the true-peak interpolator holds (12 frames at 4x, 24 at 2x) and enough for the
+    /// K-weighting filters to settle.
+    #[must_use]
+    pub fn prime_frames(&self) -> usize {
+        // `window_frames` is four 100 ms blocks.
+        usize::try_from(self.window_frames / 4).unwrap_or(usize::MAX)
+    }
+
+    /// After a [`Metering::reset`], warms the filters with `preceding`: the frames of the track
+    /// that come just before the first block measured next (interleaved, whole frames, at unity
+    /// gain; empty at the start of the track). Only the last [`Metering::prime_frames`] are used.
+    /// They are not measured: no peak, no reading, and the 400 ms window stays empty, so
+    /// momentary loudness still waits for 400 ms of measured audio.
+    pub fn prime(&mut self, preceding: &[f32]) {
+        let frames = preceding.len() / self.channels;
+        let used = frames.min(self.prime_frames());
+        let tail = &preceding[(frames - used) * self.channels..frames * self.channels];
+        if !tail.is_empty() {
+            // Fails only for a length that is not whole frames, which `tail` always is.
+            let _ = self.meter.seed_frames_f32(tail);
+        }
     }
 }
 

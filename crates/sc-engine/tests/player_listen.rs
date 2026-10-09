@@ -2,9 +2,10 @@
 //! thread's part): switching versions is heard within one device buffer along a 10 ms ramp, level
 //! matching plays the processed version at the original level, the monitor volume scales what is
 //! heard by exactly its dB and changes no meter, OUT reads the planned gain above IN, and the meter
-//! frame for the heard position lies within one block of it, also after a seek; read at 30 Hz,
-//! the frames still hold the peak of every block in between, and a long stereo track held as mono
-//! says so.
+//! frame for the heard position lies within one block of it, also after a seek, which never reads
+//! above the track's true peak (the meter is primed with the frames before it); read at 30 Hz, the
+//! frames still hold the peak of every block in between, and a long stereo track held as mono says
+//! so.
 
 use std::path::Path;
 use std::sync::atomic::Ordering;
@@ -68,6 +69,7 @@ struct Rig {
     feeder: Feeder,
     callback: Callback,
     shared: Arc<Shared>,
+    meters: Arc<Meters>,
 }
 
 fn rig(track: Arc<Track>, planned: f64) -> Rig {
@@ -76,12 +78,21 @@ fn rig(track: Arc<Track>, planned: f64) -> Rig {
     // The device is stereo whatever the track's channels.
     let renderer = Renderer::new(track, RATE, 2).unwrap();
     let meters = Arc::new(Meters::new());
-    let mut feeder = Feeder::new(renderer, producer, Arc::clone(&shared), meters, RATE, 2).unwrap();
+    let mut feeder = Feeder::new(
+        renderer,
+        producer,
+        Arc::clone(&shared),
+        Arc::clone(&meters),
+        RATE,
+        2,
+    )
+    .unwrap();
     feeder.set_planned_gain(DbFs(planned));
     Rig {
         feeder,
         callback: Callback::new(consumer, Arc::clone(&shared), 2, RATE),
         shared,
+        meters,
     }
 }
 
@@ -291,6 +302,56 @@ fn a_seek_restarts_the_meters_at_the_new_position() {
     // 400 ms later the window is full again.
     let _ = r.play(80);
     assert!(r.heard_meter().1.unwrap().in_momentary.is_some());
+}
+
+/// A seek used to restart the true-peak interpolator from zeros, so the first frames after it
+/// were interpolated against silence that is not in the track: on a bass note near full scale
+/// that step overshot the track's true peak by up to about 1 dB (a -0.9 dBTP tone read about
+/// +0.1 dBTP). The meter is now primed with the frames before the seek position.
+#[test]
+fn regression_a_seek_never_reads_above_the_true_peak() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bass.wav");
+    // A 50 Hz sine with a sample on each crest (every 960 frames from frame 240), at -0.9 dBFS.
+    let amp = 10_f64.powf(-0.9 / 20.0);
+    #[allow(clippy::cast_possible_truncation)]
+    let bass = move |n: u32| {
+        let phase = 2.0 * std::f64::consts::PI * 50.0 * f64::from(n) / f64::from(RATE);
+        (amp * phase.sin() * 32_767.0).round() as i16
+    };
+    wav(&path, 3 * RATE, bass);
+    let buf = sc_io::read_all(&path).unwrap();
+    let offline = sc_analysis::loudness::measure(&buf).unwrap().true_peak.0;
+    let mut r = rig(track(&path), 0.0);
+    r.feeder.play();
+    let (mut seeks, mut overs) = (0, 0);
+    let (mut worst, mut lowest) = (f64::NEG_INFINITY, f64::INFINITY);
+    // Seeks from 64 frames before a crest up to the crest itself, on crests all over the track.
+    for crest in (240..2 * RATE).step_by(5 * 960) {
+        for before in [64, 32, 16, 8, 4, 2, 1, 0] {
+            r.feeder.seek(u64::from(crest - before));
+            // The first pump waits for the callback to drop the old audio; the second renders
+            // 150 ms, the crest included.
+            let _ = r.play(2);
+            let latest = r.meters.latest().expect("measured since the seek").position;
+            let peak = r.meters.since(latest, None).unwrap().in_peak.unwrap().0;
+            seeks += 1;
+            if peak > offline + 0.02 {
+                overs += 1;
+            }
+            worst = worst.max(peak - offline);
+            lowest = lowest.min(peak - offline);
+        }
+    }
+    eprintln!(
+        "{overs} of {seeks} seeks read above {offline:.3} dBTP by more than 0.02 dB; \
+         highest {worst:+.3} dB, lowest {lowest:+.3} dB"
+    );
+    assert_eq!(overs, 0, "worst {worst:+.3} dB above the analysis");
+    assert!(
+        lowest >= -0.02,
+        "the crest after the seek is still read: {lowest:+.3} dB"
+    );
 }
 
 #[test]
