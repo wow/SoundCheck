@@ -306,8 +306,8 @@ fn a_seek_restarts_the_meters_at_the_new_position() {
 
 /// A seek used to restart the true-peak interpolator from zeros, so the first frames after it
 /// were interpolated against silence that is not in the track: on a bass note near full scale
-/// that step overshot the track's true peak by up to about 0.7 dB, and a -0.9 dBTP master showed
-/// an over. The meter is now primed with the frames before the seek position.
+/// that step overshot the track's true peak by up to about 1 dB (a -0.9 dBTP tone read about
+/// +0.1 dBTP). The meter is now primed with the frames before the seek position.
 #[test]
 fn regression_a_seek_never_reads_above_the_true_peak() {
     let dir = tempfile::tempdir().unwrap();
