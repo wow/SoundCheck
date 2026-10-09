@@ -6,6 +6,11 @@
 //! tag and trailing `ID3v1` tag, and Vorbis comment fields, and returns them in file order with
 //! their bytes. Header details (`fmt `, `COMM`, STREAMINFO, frame walking) are in `inspect.rs`.
 //!
+//! Bytes after the last chunk that cannot hold another chunk header are one trailing blob up to
+//! the end of the file, whether the container size counts them or not (some taggers leave a
+//! stray zero byte or two inside the `FORM`); [`Parsed::stray_in_container`] says how many of
+//! them the container size covers, so a check can insist on 0 for a writer's output.
+//!
 //! What is hashed: a chunk's payload (the size field follows from it; the pad byte is reported
 //! with its value), an ID3 frame's header and body (so its flags count), an ID3 extended header,
 //! a FLAC block's payload (its header carries the last-block flag, which may legitimately move),
@@ -132,6 +137,9 @@ pub struct Parsed {
     pub blocks: Vec<Block>,
     /// `ID3v2` tags found in chunks, in file order.
     pub tags: Vec<Id3Tag>,
+    /// Bytes after the last chunk (fewer than a chunk header) that lie inside the declared
+    /// RIFF/FORM size; they start the trailing blob. Always 0 for FLAC.
+    pub stray_in_container: usize,
 }
 
 impl Parsed {
@@ -253,9 +261,11 @@ fn parse_riff(b: &[u8]) -> Result<Parsed, String> {
         },
         blocks: Vec::new(),
         tags: Vec::new(),
+        stray_in_container: 0,
     };
-    walk_chunks(b, 12, riff_end, data_size, false, &mut parsed)?;
-    push_blob(b, riff_end, b.len(), Kind::Trailing, &mut parsed);
+    let stop = walk_chunks(b, 12, riff_end, data_size, false, &mut parsed)?;
+    parsed.stray_in_container = riff_end - stop;
+    push_blob(b, stop, b.len(), Kind::Trailing, &mut parsed);
     Ok(parsed)
 }
 
@@ -273,9 +283,11 @@ fn parse_form(b: &[u8]) -> Result<Parsed, String> {
         container,
         blocks: Vec::new(),
         tags: Vec::new(),
+        stray_in_container: 0,
     };
-    walk_chunks(b, 12, form_end, None, true, &mut parsed)?;
-    push_blob(b, form_end, b.len(), Kind::Trailing, &mut parsed);
+    let stop = walk_chunks(b, 12, form_end, None, true, &mut parsed)?;
+    parsed.stray_in_container = form_end - stop;
+    push_blob(b, stop, b.len(), Kind::Trailing, &mut parsed);
     Ok(parsed)
 }
 
@@ -296,7 +308,8 @@ fn push_blob(b: &[u8], from: usize, to: usize, kind: Kind, parsed: &mut Parsed) 
     }
 }
 
-/// Walks chunks in `b[pos..end]`. `rf64_data` replaces a `data` size of 0xFFFFFFFF.
+/// Walks chunks in `b[pos..end]` and returns where the last one ends (pad byte included); fewer
+/// than 8 bytes may follow it. `rf64_data` replaces a `data` size of 0xFFFFFFFF.
 fn walk_chunks(
     b: &[u8],
     mut pos: usize,
@@ -304,7 +317,7 @@ fn walk_chunks(
     rf64_data: Option<u64>,
     big_endian: bool,
     parsed: &mut Parsed,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     while pos + 8 <= end {
         let id = fourcc(b, pos)?;
         let raw = if big_endian {
@@ -338,10 +351,7 @@ fn walk_chunks(
         }
         pos = payload_end + usize::from(pad.is_some());
     }
-    if pos != end {
-        return Err(format!("{} stray bytes inside the container", end - pos));
-    }
-    Ok(())
+    Ok(pos)
 }
 
 fn flac_block_name(ty: u8, payload: &[u8]) -> String {
@@ -370,6 +380,7 @@ fn parse_flac(b: &[u8], start: usize) -> Result<Parsed, String> {
         container: Container::Flac,
         blocks: Vec::new(),
         tags: Vec::new(),
+        stray_in_container: 0,
     };
     push_blob(b, 0, start, Kind::LeadingTag, &mut parsed);
     let mut pos = start + 4;

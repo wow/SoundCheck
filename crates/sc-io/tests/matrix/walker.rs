@@ -74,7 +74,7 @@ fn iff_fixtures() -> Vec<Fixture> {
 #[test]
 fn walker_lists_the_same_chunks_as_the_independent_parser() {
     let fixtures = iff_fixtures();
-    assert_eq!(fixtures.len(), 20, "WAV/RF64/AIFF/AIFF-C fixtures");
+    assert_eq!(fixtures.len(), 30, "WAV/RF64/AIFF/AIFF-C fixtures");
     let mut pads_missing = Vec::new();
     for fx in &fixtures {
         let t = header(fx).table;
@@ -86,17 +86,14 @@ fn walker_lists_the_same_chunks_as_the_independent_parser() {
             Container::Flac => unreachable!("filtered"),
         };
         assert_eq!(t.container, want, "{}", fx.name);
-        assert_eq!(
-            walker_listing(fx, &t),
-            parser_listing(&parsed(fx)),
-            "{}",
-            fx.name
-        );
+        let p = parsed(fx);
+        assert_eq!(walker_listing(fx, &t), parser_listing(&p), "{}", fx.name);
         assert!(!t.truncated, "{}", fx.name);
         assert_eq!(t.file_len, fx.bytes.len() as u64, "{}", fx.name);
+        // Stray bytes the container size counts lie between the last chunk and its end.
         assert_eq!(
             t.container_end(),
-            t.chunks.last().map_or(12, sc_io::iff::Chunk::end),
+            t.chunks.last().map_or(12, sc_io::iff::Chunk::end) + p.stray_in_container as u64,
             "{}",
             fx.name
         );
@@ -114,10 +111,13 @@ fn walker_lists_the_same_chunks_as_the_independent_parser() {
             }
         }
     }
-    // The only odd chunk written without its pad byte.
+    // The odd chunks written without their pad byte.
     assert_eq!(
         pads_missing,
-        [("wav24-mono-odd-data-no-pad-id3v1", "data".to_string())]
+        [
+            ("wav24-mono-odd-data-no-pad-id3v1", "data".to_string()),
+            ("aiff16-name-anno-id3v24-odd-unpadded", "ID3 ".to_string()),
+        ]
     );
 }
 
@@ -150,6 +150,39 @@ fn walker_handles_the_documented_quirks() {
 
     let pad = header(get("wav24-bwf-ixml-cue-smpl-id3v24")).table;
     assert_eq!(pad.find(b"xodd").expect("xodd").pad, Some(0x20));
+
+    // Bytes after the last chunk, inside or after the FORM, are trailing: (stray bytes, bytes
+    // the FORM size counts) per fixture.
+    for (name, stray, inside) in [
+        ("aiff16-id3v24-2-stray-in-form", 2, 2),
+        ("aiff16-comt-comm-id3v23-2-after-form", 2, 0),
+        ("aiff16-name-copyright-id3v23-1-stray-in-form", 1, 1),
+    ] {
+        let fx = get(name);
+        let t = header(fx).table;
+        let len = fx.bytes.len() as u64;
+        assert_eq!(t.trailing, Some(len - stray..len), "{name}");
+        assert!(
+            bytes_of(fx, &(len - stray..len)).iter().all(|b| *b == 0),
+            "{name}"
+        );
+        assert_eq!(t.container_end(), len - stray + inside, "{name}");
+        let id3 = t.chunks.last().expect("chunks");
+        assert_eq!(
+            (&id3.id, id3.pad, id3.end()),
+            (b"ID3 ", None, len - stray),
+            "{name}"
+        );
+    }
+    let unpadded = get("aiff16-name-anno-id3v24-odd-unpadded");
+    let t = header(unpadded).table;
+    let id3 = t.chunks.last().expect("chunks");
+    assert!(
+        id3.payload_len() % 2 == 1 && id3.pad_missing,
+        "odd ID3 chunk without its pad"
+    );
+    assert_eq!(t.container_end(), unpadded.bytes.len() as u64);
+    assert_eq!(t.trailing, None);
 }
 
 fn chunk<'p>(p: &'p Parsed, id: &str, fx: &Fixture) -> &'p Block {

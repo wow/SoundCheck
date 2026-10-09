@@ -25,6 +25,9 @@ mod cases_flac;
 #[path = "matrix/cases_iff.rs"]
 mod cases_iff;
 #[allow(dead_code)]
+#[path = "matrix/cases_real.rs"]
+mod cases_real;
+#[allow(dead_code)]
 #[path = "matrix/flac.rs"]
 mod flac;
 #[allow(dead_code)]

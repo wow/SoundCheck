@@ -7,7 +7,9 @@ use super::parse::Container;
 use super::pcm;
 use super::riff::{self, Chunk, RiffLayout, WavFormat};
 
-fn tag_chunk(id: [u8; 4], tag: id3::Tag) -> Chunk {
+/// A chunk holding an `ID3v2` tag, its frames listed after it.
+#[must_use]
+pub fn tag_chunk(id: [u8; 4], tag: id3::Tag) -> Chunk {
     Chunk {
         id,
         payload: tag.bytes,
@@ -29,11 +31,15 @@ fn odd_chunk() -> Chunk {
     Chunk::new(*b"xodd", b"odd\x00len".to_vec())
 }
 
-fn frames_u32(n: usize) -> u32 {
+/// A frame count as the 32-bit field the headers hold.
+#[must_use]
+pub fn frames_u32(n: usize) -> u32 {
     u32::try_from(n).expect("small fixtures")
 }
 
-fn wav(name: &'static str, src: pcm::Samples, rate: u32, ch: u16, chunks: &[Chunk]) -> Fixture {
+/// A RIFF/WAVE fixture from chunks in order.
+#[must_use]
+pub fn wav(name: &'static str, src: pcm::Samples, rate: u32, ch: u16, chunks: &[Chunk]) -> Fixture {
     let built = riff::build(chunks, &RiffLayout::default());
     finish(spec(name, Container::Wave, rate, ch, src), built)
 }

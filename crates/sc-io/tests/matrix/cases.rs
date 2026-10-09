@@ -1,6 +1,7 @@
 //! The fixture matrix: every container layout the file layer must rewrite without loss, with
 //! the expected fate of each block when SoundCheck applies gain, an optional head trim, `bext`
-//! loudness and tag edits. The fixtures themselves are in `cases_iff.rs` and `cases_flac.rs`.
+//! loudness and tag edits. The fixtures themselves are in `cases_iff.rs`, `cases_flac.rs` and
+//! `cases_real.rs` (chunk layouts and trailing-byte faults seen in DJ libraries).
 //!
 //! Expectation rules (one place, applied to every fixture):
 //! - Replaced: WAV `fmt ` and `data`, AIFF `COMM` and `SSND` (new header and audio; an `SSND`
@@ -21,14 +22,17 @@
 //! - Carried byte for byte, in order, with its pad byte value: everything else, including
 //!   chunks never seen before, opaque DJ data (Serato GEOB and `SERATO_*`, iXML, `APPL`),
 //!   ID3 extended headers, ID3 frames with any frame flags, Vorbis fields, an `ID3v2` tag in
-//!   front of a FLAC stream and bytes after the container or stream (`ID3v1`).
+//!   front of a FLAC stream and bytes after the container or stream (`ID3v1`). An odd chunk
+//!   whose pad byte the source left out gets a zero pad byte. Bytes after the last chunk that
+//!   cannot hold a chunk header are carried after the output's container end, also where the
+//!   source's container size counted them (stray zero bytes some taggers leave).
 //! - Tags (when edits are requested): an existing item with an edited label is replaced in
 //!   place (Vorbis names and ID3 `TXXX` descriptions compare case-insensitively), the other
 //!   edits are appended once after every carried item; a v2.3 extended header gets its
 //!   padding-size field updated. No tags are added (everything carried, reported as "tags not
 //!   added") to a file with two ID3 chunks (readers disagree on which one counts: lofty reads
-//!   the last), to a tag with tag-level unsynchronisation, or to one whose extended header
-//!   carries a CRC.
+//!   the last), to an `ID3v2`.2 tag, to a tag with tag-level unsynchronisation, or to one whose
+//!   extended header carries a CRC.
 //! - A float source whose peak after gain reaches full scale is refused, never clipped.
 
 use super::parse::{Container, Kind, Listed};
@@ -160,7 +164,9 @@ pub const BEXT_FIELDS: &[&str] = &[
 /// Fields a CUESHEET patch may change.
 pub const CUESHEET_FIELDS: &[&str] = &["track offset", "lead-out offset"];
 
-fn rule(float: bool, l: &Listed) -> Expect {
+/// The fate of block `l` in a file whose samples are float (`float`) or integers.
+#[must_use]
+pub fn rule(float: bool, l: &Listed) -> Expect {
     match (l.kind, l.id.as_str()) {
         (Kind::Chunk, "fmt " | "data" | "COMM" | "SSND")
         | (Kind::FlacBlock, "STREAMINFO" | "SEEKTABLE" | "VORBIS_COMMENT" | "PADDING")
@@ -256,6 +262,7 @@ pub fn matrix() -> Vec<Fixture> {
     let mut v = super::cases_iff::wav_fixtures();
     v.extend(super::cases_iff::aiff_fixtures());
     v.extend(super::cases_flac::flac());
+    v.extend(super::cases_real::fixtures());
     v
 }
 

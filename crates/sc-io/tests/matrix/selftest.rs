@@ -326,6 +326,49 @@ fn block_checks_reject_a_changed_chunk_a_changed_pad_byte_and_foreign_headers() 
     }
 }
 
+/// Bytes after the last chunk go after the output's container end, whole, and an odd last
+/// chunk gets its pad byte back: an output whose container size still counts the stray bytes,
+/// one that drops them, and one that leaves the pad out are rejected.
+#[test]
+fn trailing_checks_reject_stray_bytes_inside_the_container_and_a_missing_pad() {
+    for name in [
+        "aiff16-id3v24-2-stray-in-form",
+        "aiff16-comt-comm-id3v23-2-after-form",
+        "aiff16-name-copyright-id3v23-1-stray-in-form",
+    ] {
+        let inside = Options {
+            trailing_inside: true,
+            ..Options::default()
+        };
+        let why = (
+            "trailing bytes counted by the container",
+            "inside the container",
+        );
+        rejects(name, &IDENTITY, &[], inside, why);
+        let fx = fixture(name);
+        let (good, applied) =
+            oracle::write(&fx, &IDENTITY, &[], &Options::default()).expect("write");
+        let stray = parse(&fx.bytes)
+            .expect("parse")
+            .blocks
+            .last()
+            .expect("trailing")
+            .bytes
+            .len();
+        let dropped = &good[..good.len() - stray];
+        let result = check_output(&fx, dropped, &IDENTITY, &[], applied);
+        assert!(result.is_err_and(|e| e.contains("missing")), "{name}");
+    }
+    let fx = fixture("aiff16-name-anno-id3v24-odd-unpadded");
+    let (good, applied) = oracle::write(&fx, &IDENTITY, &[], &Options::default()).expect("write");
+    check_output(&fx, &good, &IDENTITY, &[], applied).expect("reference output");
+    let mut unpadded = good[..good.len() - 1].to_vec();
+    let size = u32::from_be_bytes(unpadded[4..8].try_into().expect("FORM header")) - 1;
+    unpadded[4..8].copy_from_slice(&size.to_be_bytes());
+    let result = check_output(&fx, &unpadded, &IDENTITY, &[], applied);
+    assert!(result.is_err_and(|e| e.contains("lacks its pad byte")));
+}
+
 #[test]
 fn flac_checks_reject_a_wrong_md5_a_stray_seek_point_and_a_changed_block() {
     let fx = fixture("flac16-all-blocks");

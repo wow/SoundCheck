@@ -57,7 +57,7 @@ Signed-off-by: Your Name <you@example.com>
 Every change ships with its tests, in the same commit:
 - Unit tests next to the code (`#[cfg(test)]`, `*.test.ts`), under 100 ms each, deterministic: no wall clock, no audio device, no network, no files outside the repo.
 - DSP and analysis changes add a golden or tolerance test (`crates/<name>/tests/golden_*.rs` against `tests/fixtures/golden/`) that states its tolerance and why, plus a criterion bench for hot loops. Goldens regenerate only with `UPDATE_GOLDEN=1 cargo test -p <crate>` and the numeric diff is reviewed in the PR.
-- File-layer changes extend the fixture matrix (per-block SHA-256 of every carried chunk, frame and block) and the `proptest` cases for the IFF walker, tag-block copier and MP3 frame walker.
+- File-layer changes extend the fixture matrix (per-block SHA-256 of every carried chunk, frame and block) and the `proptest` cases for the IFF walker, tag-block copier and MP3 frame walker. With a folder of real WAV/AIFF/FLAC files at hand, also run `SC_REAL_FIXTURES=<folder> cargo test -p sc-io --test matrix real_files -- --nocapture` (the folder is only read; it prints one line per file).
 - Loudness changes pass the EBU Tech 3341/3342 cases (`SC_EBU_TESTSET=1`, fetched by `scripts/fetch-ebu-testset.sh`); grid changes pass the synthetic click-track suite (4/4, 3/4, 6/8, 9/8, 7/8).
 - CLI changes add an `assert_cmd` test; engine changes test event order, cancellation and skip reasons with a null audio sink; UI changes use Vitest + Testing Library with mocked IPC.
 - Slow tests are `#[ignore]` behind an opt-in environment variable and run nightly. Never loosen a tolerance or add `#[ignore]` to get green. Bug fixes add a regression test named after the issue.

@@ -154,10 +154,22 @@ fn tags_are_not_added_to_files_readers_disagree_on_or_that_a_crc_protects() {
             "wav16-mono-two-id3-chunks-ext-headers" => Some("two ID3 tags"),
             "wav16-mono-id3v24-tag-unsync" => Some("tag-level unsynchronisation"),
             "wav16-mono-id3v24-ext-crc" => Some("extended header with a CRC"),
+            "aiff16-id3v22" => Some("ID3v2.2 tag"),
             _ => None,
         };
         assert_eq!(tags_not_added(&parsed), want, "{}", fx.name);
     }
+    // ID3v2.2: version 2, revision 0, no flags, syncsafe size, then `TT2` with a 24-bit size
+    // of 12 (encoding byte + "Matrix Tone").
+    let v22 = fixture("aiff16-id3v22");
+    let parsed = parse(&v22.bytes).expect("parse");
+    let tag = &parsed.find(Kind::Chunk, "ID3 ").expect("tag").bytes;
+    assert_eq!(tag[..6], *b"ID3\x02\x00\x00");
+    let size = tag[6..10]
+        .iter()
+        .fold(0_usize, |acc, b| (acc << 7) | usize::from(*b));
+    assert_eq!(size + 10, tag.len());
+    assert_eq!(tag[10..16], *b"TT2\x00\x00\x0c");
     // The CRC in the fixture is the CRC-32 of frames and padding, stored as 35-bit syncsafe.
     let fx = fixture("wav16-mono-id3v24-ext-crc");
     let parsed = parse(&fx.bytes).expect("parse");

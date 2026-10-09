@@ -2,8 +2,13 @@
 //! AIFF-C draft of 1991): `FORM` with `COMM` (80-bit IEEE 754 extended sample rate), `SSND`
 //! (offset 0, block size 0), `FVER`, `MARK`, text chunks, `APPL` and any other chunk, each
 //! followed by a pad byte when its length is odd. Sizes are big-endian.
+//!
+//! Layout options reproduce the trailing-byte faults seen in DJ libraries exported by common
+//! taggers, all after the last chunk: stray bytes inside the `FORM` (its size counts them),
+//! bytes after the `FORM` end, and an odd last chunk without its pad byte, which the `FORM`
+//! size then leaves out too.
 
-use super::parse::Listed;
+use super::parse::{Kind, Listed, sha256_hex};
 use super::riff::{Built, Chunk};
 
 /// Form type.
@@ -150,13 +155,33 @@ pub fn mark(markers: &[(u16, u32, &str)]) -> Chunk {
     Chunk::new(*b"MARK", p)
 }
 
+/// Options for [`build_with`] (all off by default).
+#[derive(Debug, Clone, Default)]
+pub struct AiffLayout {
+    /// Bytes after the last chunk inside the `FORM` (counted in its size).
+    pub stray_inside: Vec<u8>,
+    /// Bytes after the `FORM` end.
+    pub trailing: Vec<u8>,
+    /// Leave out the pad byte after an odd last chunk (and out of the `FORM` size).
+    pub omit_last_pad: bool,
+}
+
 /// Writes a `FORM` file from chunks in order.
 #[must_use]
 pub fn build(form: Form, chunks: &[Chunk]) -> Built {
+    build_with(form, chunks, &AiffLayout::default())
+}
+
+/// Writes a `FORM` file from chunks in order with the given layout. The bytes after the last
+/// chunk, inside and after the `FORM`, are listed as one trailing blob, as a reader that
+/// walks to the end of the file finds them.
+#[must_use]
+pub fn build_with(form: Form, chunks: &[Chunk], layout: &AiffLayout) -> Built {
     let mut body = Vec::new();
     let mut listing: Vec<Listed> = Vec::new();
-    for chunk in chunks {
-        let pad = chunk.payload.len() % 2 == 1;
+    for (i, chunk) in chunks.iter().enumerate() {
+        let last = i + 1 == chunks.len();
+        let pad = chunk.payload.len() % 2 == 1 && !(last && layout.omit_last_pad);
         body.extend_from_slice(&chunk.id);
         let len = u32::try_from(chunk.payload.len()).expect("fixtures stay small");
         body.extend_from_slice(&len.to_be_bytes());
@@ -167,6 +192,7 @@ pub fn build(form: Form, chunks: &[Chunk]) -> Built {
         listing.push(chunk.listed(pad));
         listing.extend(chunk.nested.iter().cloned());
     }
+    body.extend_from_slice(&layout.stray_inside);
     let mut bytes = b"FORM".to_vec();
     let size = u32::try_from(4 + body.len()).expect("fixtures stay small");
     bytes.extend_from_slice(&size.to_be_bytes());
@@ -175,5 +201,15 @@ pub fn build(form: Form, chunks: &[Chunk]) -> Built {
         Form::Aifc => b"AIFC",
     });
     bytes.extend_from_slice(&body);
+    bytes.extend_from_slice(&layout.trailing);
+    let after = [&layout.stray_inside[..], &layout.trailing[..]].concat();
+    if !after.is_empty() {
+        listing.push(Listed {
+            kind: Kind::Trailing,
+            id: "trailing".into(),
+            sha256: sha256_hex(&after),
+            pad: None,
+        });
+    }
     Built { bytes, listing }
 }
