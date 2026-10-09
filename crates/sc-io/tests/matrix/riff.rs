@@ -3,8 +3,10 @@
 //! iXML 1.5, the RIFF `cue `/`smpl`/`LIST INFO` chunks).
 //!
 //! Chunks are written in the given order with a pad byte after every odd-length payload, except
-//! where a layout option reproduces a quirk seen in real files: an odd `data` chunk without its
-//! pad byte (the RIFF size then ends at the last sample) and stray bytes after the RIFF end.
+//! where a layout option reproduces a quirk seen in real files: an odd `data` chunk or an odd
+//! last chunk without its pad byte (the RIFF size then ends at its last byte), stray bytes
+//! inside the RIFF after the last chunk or after the RIFF end, and a stale RIFF size that
+//! leaves the last chunk outside.
 
 use super::parse::{Kind, Listed, sha256_hex};
 use super::pcm::{Samples, bytes_le};
@@ -249,6 +251,12 @@ pub struct RiffLayout {
     pub omit_odd_data_pad: bool,
     /// Bytes appended after the RIFF end.
     pub trailing: Vec<u8>,
+    /// Bytes after the last chunk inside the RIFF (counted in its size).
+    pub stray_inside: Vec<u8>,
+    /// Leave out the pad byte after an odd last chunk (and out of the RIFF size).
+    pub omit_last_pad: bool,
+    /// A stale RIFF size that ends before the last chunk (as after appending it).
+    pub stale_last: bool,
 }
 
 fn size32(len: usize) -> [u8; 4] {
@@ -264,10 +272,13 @@ pub fn build(chunks: &[Chunk], layout: &RiffLayout) -> Built {
     let mut body = Vec::new();
     let mut listing = Vec::new();
     let mut data_len = 0_usize;
-    for chunk in chunks {
+    let mut last_start = 0_usize;
+    for (i, chunk) in chunks.iter().enumerate() {
         let is_data = &chunk.id == b"data";
+        let last = i + 1 == chunks.len();
+        last_start = body.len();
         let odd = chunk.payload.len() % 2 == 1;
-        let pad = odd && !(is_data && layout.omit_odd_data_pad);
+        let pad = odd && !(is_data && layout.omit_odd_data_pad) && !(last && layout.omit_last_pad);
         body.extend_from_slice(&chunk.id);
         if rf64 && is_data {
             body.extend_from_slice(&u32::MAX.to_le_bytes());
@@ -284,6 +295,16 @@ pub fn build(chunks: &[Chunk], layout: &RiffLayout) -> Built {
         listing.push(chunk.listed(pad));
         listing.extend(chunk.nested.iter().cloned());
     }
+    let counted = if layout.stale_last {
+        assert!(
+            layout.stray_inside.is_empty(),
+            "stray bytes go after the stale end"
+        );
+        last_start
+    } else {
+        body.extend_from_slice(&layout.stray_inside);
+        body.len()
+    };
     let mut bytes = Vec::with_capacity(body.len() + 64);
     if let Some(frames) = layout.rf64_frames {
         let mut ds64 = Vec::new();
@@ -302,16 +323,17 @@ pub fn build(chunks: &[Chunk], layout: &RiffLayout) -> Built {
         listing.insert(0, ds64.listed(false));
     } else {
         bytes.extend_from_slice(b"RIFF");
-        bytes.extend_from_slice(&size32(4 + body.len()));
+        bytes.extend_from_slice(&size32(4 + counted));
         bytes.extend_from_slice(b"WAVE");
     }
     bytes.extend_from_slice(&body);
-    if !layout.trailing.is_empty() {
-        bytes.extend_from_slice(&layout.trailing);
+    bytes.extend_from_slice(&layout.trailing);
+    let after = [&layout.stray_inside[..], &layout.trailing[..]].concat();
+    if !after.is_empty() {
         listing.push(Listed {
             kind: Kind::Trailing,
             id: "trailing".into(),
-            sha256: sha256_hex(&layout.trailing),
+            sha256: sha256_hex(&after),
             pad: None,
         });
     }

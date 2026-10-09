@@ -1,7 +1,8 @@
 //! Opt-in: the writers on real files, checked by the matrix's independent reader and rules.
 //!
-//! `SC_REAL_FIXTURES=<dir>` names a folder of WAV, AIFF and FLAC files (sub-folders and other
-//! files are skipped; the folder is only read). Each file is rendered into a temp folder through
+//! `SC_REAL_FIXTURES=<dir>` names a folder of WAV, AIFF and FLAC files (sub-folders, other
+//! files and names starting with `.`, such as the `._name` resource-fork files macOS writes on
+//! FAT and exFAT volumes, are skipped; the folder is only read). Each file is rendered into a temp folder through
 //! the write transaction, as `sc-cli apply --out <dir> --gain-db -1 --tag BPM=128.00` does
 //! (`txn::apply_to_folder`), and the output must pass every check of a matrix output
 //! (`check::check_output`): the same blocks in the same order, every chunk, metadata block, tag
@@ -10,9 +11,12 @@
 //! with the source's rate, channels and frame count, and the PCM within the matrix tolerances.
 //! Then a temp copy is changed in place (the output must be the same bytes) and undone, and
 //! must be byte-identical to the original with no sidecar left. Files the renderer refuses
-//! (a float source that would clip, a format that is not DJ-safe) are reported, not failed.
+//! (a float source that would clip, a format that is not DJ-safe) are reported, not failed; a
+//! panic while checking a file counts as that file's failure and the run goes on.
 //! One line per file goes to stderr (`cargo test -p sc-io --test matrix real -- --nocapture`).
 
+use std::any::Any;
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -58,12 +62,16 @@ fn bpm_edits(container: Container) -> Vec<TagEdit> {
     }
 }
 
-/// WAV, AIFF and FLAC files directly in `dir`, by name.
+/// WAV, AIFF and FLAC files directly in `dir`, by name, without hidden (`.`) files.
 fn audio_files(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.is_file())
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| !n.to_string_lossy().starts_with('.'))
+        })
         .filter(|p| {
             p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
                 ["wav", "wave", "aif", "aiff", "aifc", "flac"]
@@ -259,6 +267,15 @@ fn check_file(path: &Path, scratch: &Path) -> Result<Outcome, String> {
     )))
 }
 
+/// The message of a panic payload.
+fn panic_text(payload: &(dyn Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(ToString::to_string)
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "(no message)".into())
+}
+
 #[test]
 fn real_files_render_without_loss() {
     let Some(dir) = std::env::var_os(ENV).filter(|v| !v.is_empty()) else {
@@ -276,7 +293,11 @@ fn real_files_render_without_loss() {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         let scratch = tempfile::tempdir().expect("temp folder");
         let start = Instant::now();
-        let result = check_file(path, scratch.path());
+        let result =
+            std::panic::catch_unwind(AssertUnwindSafe(|| check_file(path, scratch.path())))
+                .unwrap_or_else(|payload| {
+                    Err(format!("panicked: {}", panic_text(payload.as_ref())))
+                });
         let secs = start.elapsed().as_secs_f64();
         let line = match result {
             Ok(Outcome::Passed(s)) => {

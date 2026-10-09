@@ -6,7 +6,8 @@
 //! Layout options reproduce the trailing-byte faults seen in DJ libraries exported by common
 //! taggers, all after the last chunk: stray bytes inside the `FORM` (its size counts them),
 //! bytes after the `FORM` end, and an odd last chunk without its pad byte, which the `FORM`
-//! size then leaves out too.
+//! size then leaves out too; and a writer that writes that pad byte (0) but leaves it out of
+//! the `FORM` size.
 
 use super::parse::{Kind, Listed, sha256_hex};
 use super::riff::{Built, Chunk};
@@ -164,6 +165,9 @@ pub struct AiffLayout {
     pub trailing: Vec<u8>,
     /// Leave out the pad byte after an odd last chunk (and out of the `FORM` size).
     pub omit_last_pad: bool,
+    /// Write the zero pad byte of an odd last chunk after the `FORM` end (not counted in its
+    /// size), before `trailing`.
+    pub pad_outside: bool,
 }
 
 /// Writes a `FORM` file from chunks in order.
@@ -181,7 +185,8 @@ pub fn build_with(form: Form, chunks: &[Chunk], layout: &AiffLayout) -> Built {
     let mut listing: Vec<Listed> = Vec::new();
     for (i, chunk) in chunks.iter().enumerate() {
         let last = i + 1 == chunks.len();
-        let pad = chunk.payload.len() % 2 == 1 && !(last && layout.omit_last_pad);
+        let odd = chunk.payload.len() % 2 == 1;
+        let pad = odd && !(last && (layout.omit_last_pad || layout.pad_outside));
         body.extend_from_slice(&chunk.id);
         let len = u32::try_from(chunk.payload.len()).expect("fixtures stay small");
         body.extend_from_slice(&len.to_be_bytes());
@@ -189,9 +194,15 @@ pub fn build_with(form: Form, chunks: &[Chunk], layout: &AiffLayout) -> Built {
         if pad {
             body.push(chunk.pad);
         }
-        listing.push(chunk.listed(pad));
+        let outside = odd && last && layout.pad_outside;
+        assert!(!outside || chunk.pad == 0, "a pad outside the FORM is 0");
+        listing.push(chunk.listed(pad || outside));
         listing.extend(chunk.nested.iter().cloned());
     }
+    assert!(
+        !layout.pad_outside || layout.stray_inside.is_empty(),
+        "stray bytes inside the FORM come before a pad outside it"
+    );
     body.extend_from_slice(&layout.stray_inside);
     let mut bytes = b"FORM".to_vec();
     let size = u32::try_from(4 + body.len()).expect("fixtures stay small");
@@ -201,6 +212,9 @@ pub fn build_with(form: Form, chunks: &[Chunk], layout: &AiffLayout) -> Built {
         Form::Aifc => b"AIFC",
     });
     bytes.extend_from_slice(&body);
+    if layout.pad_outside && chunks.last().is_some_and(|c| c.payload.len() % 2 == 1) {
+        bytes.push(0);
+    }
     bytes.extend_from_slice(&layout.trailing);
     let after = [&layout.stray_inside[..], &layout.trailing[..]].concat();
     if !after.is_empty() {

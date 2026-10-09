@@ -7,11 +7,14 @@
 //! a correct ID3 tag size: (a) two zero bytes inside the `FORM` (its size counts them), (b) two
 //! zero bytes after the `FORM` end, (c) an odd last chunk without its pad byte, which the `FORM`
 //! size leaves out too, (d) one stray zero byte after an even last chunk, inside the `FORM`.
+//! Two neighbours of (c): the zero pad byte written but left out of the `FORM` size, alone and
+//! followed by one more zero byte.
 //!
 //! WAV: no ID3, `LIST`/`INFO` only; `JUNK`, `fact`, `bext` and `acid` before `data`; a Pro Tools
 //! set (`minf`, `elm1`, `regn`, `umid`, `DGDA`); `cue `, `bext` and a second `LIST` after
-//! `data`; 48 kHz at 16 and 24 bits. Chunks nobody documents are filled with seeded bytes: they
-//! are only ever carried.
+//! `data`; 48 kHz at 16 and 24 bits; the same trailing faults as in AIFF (stray bytes inside the
+//! RIFF, an odd last chunk without its pad byte) and an `id3 ` chunk appended past a stale RIFF
+//! size. Chunks nobody documents are filled with seeded bytes: they are only ever carried.
 
 use super::aiff::{self, AiffLayout, Form};
 use super::cases::{FRAMES, Fixture, finish, spec};
@@ -19,7 +22,7 @@ use super::cases_iff::{frames_u32, tag_chunk, wav};
 use super::id3::{self, Version};
 use super::parse::Container;
 use super::pcm::{self, XorShift};
-use super::riff::{self, Chunk, WavFormat};
+use super::riff::{self, Chunk, RiffLayout, WavFormat};
 
 /// A tag with the common frame set whose total length has the requested parity (`odd`), so
 /// the chunk holding it does (or does not) need a pad byte.
@@ -257,6 +260,70 @@ fn wav16_after_data() -> Fixture {
     wav(name, src, 48_000, 2, &chunks)
 }
 
+/// The zero pad byte of an odd last `ID3 ` chunk written after the `FORM` end, not counted in
+/// its size; with `extra`, one more zero byte follows it (fault (c) with two zero bytes after
+/// the `FORM`).
+fn aiff_pad_after_form(name: &'static str, version: Version, extra: bool, seed: u64) -> Fixture {
+    let src = stereo16(seed);
+    let chunks = [
+        comm16(),
+        aiff::ssnd(&pcm::bytes_be(&src)),
+        tag_chunk(*b"ID3 ", tag_of_parity(version, false, 96, true)),
+    ];
+    let layout = AiffLayout {
+        pad_outside: true,
+        trailing: if extra { vec![0] } else { Vec::new() },
+        ..AiffLayout::default()
+    };
+    aiff_with(name, src, 44_100, &chunks, &layout)
+}
+
+fn wav_with(name: &'static str, seed: u64, after_data: Vec<Chunk>, layout: &RiffLayout) -> Fixture {
+    let src = stereo16(seed);
+    let mut chunks = vec![riff::fmt(WavFormat::Pcm, 2, 44_100, 16), riff::data(&src)];
+    chunks.extend(after_data);
+    let built = riff::build(&chunks, layout);
+    finish(spec(name, Container::Wave, 44_100, 2, src), built)
+}
+
+/// `fmt data LIST` and two zero bytes after the last chunk inside the RIFF.
+fn wav_stray_in_riff() -> Fixture {
+    let layout = RiffLayout {
+        stray_inside: vec![0, 0],
+        ..RiffLayout::default()
+    };
+    let list = vec![info(&[(b"INAM", "Matrix Tone")])];
+    wav_with("wav16-list-2-stray-in-riff", 42, list, &layout)
+}
+
+/// `fmt data LIST` and an odd chunk last without its pad byte, the RIFF size ending at its last
+/// byte.
+fn wav_odd_last_unpadded() -> Fixture {
+    let layout = RiffLayout {
+        omit_last_pad: true,
+        ..RiffLayout::default()
+    };
+    let after = vec![
+        info(&[(b"INAM", "Matrix Tone")]),
+        Chunk::new(*b"xodd", XorShift::new(43).bytes(13)),
+    ];
+    wav_with("wav16-odd-last-chunk-unpadded", 44, after, &layout)
+}
+
+/// `fmt data LIST` and an `id3 ` chunk (v2.3) appended after them without updating the RIFF
+/// size: the tag lies past the container end and is still edited.
+fn wav_id3_past_stale_size() -> Fixture {
+    let layout = RiffLayout {
+        stale_last: true,
+        ..RiffLayout::default()
+    };
+    let after = vec![
+        info(&[(b"INAM", "Matrix Tone")]),
+        tag_chunk(*b"id3 ", tag_of_parity(Version::V23, false, 64, true)),
+    ];
+    wav_with("wav16-id3-past-stale-riff-size", 45, after, &layout)
+}
+
 /// The fixtures of this module, in a fixed order.
 #[must_use]
 pub fn fixtures() -> Vec<Fixture> {
@@ -271,5 +338,10 @@ pub fn fixtures() -> Vec<Fixture> {
         wav24_acid(),
         wav24_pro_tools(),
         wav16_after_data(),
+        aiff_pad_after_form("aiff16-id3v23-pad-after-form", Version::V23, false, 46),
+        aiff_pad_after_form("aiff16-id3v24-pad-and-1-after-form", Version::V24, true, 47),
+        wav_stray_in_riff(),
+        wav_odd_last_unpadded(),
+        wav_id3_past_stale_size(),
     ]
 }

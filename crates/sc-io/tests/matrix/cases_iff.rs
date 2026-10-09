@@ -130,6 +130,7 @@ fn wav24_mono_odd_data() -> Fixture {
         rf64_frames: None,
         omit_odd_data_pad: true,
         trailing: riff::id3v1("Matrix Tone", "SoundCheck Ensemble"),
+        ..RiffLayout::default()
     };
     let built = riff::build(&chunks, &layout);
     let s = spec(

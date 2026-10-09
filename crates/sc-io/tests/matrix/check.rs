@@ -288,6 +288,18 @@ pub fn check_iff_header(fx: &Fixture, out: &Parsed, args: &ApplyArgs) -> Result<
             out.stray_in_container
         ));
     }
+    let last_end = out
+        .blocks
+        .iter()
+        .filter(|b| b.kind == Kind::Chunk)
+        .map(|b| b.offset + 8 + b.bytes.len() + usize::from(b.pad.is_some()))
+        .max();
+    if last_end != out.container_end {
+        return Err(format!(
+            "the container ends at {:?}, its last chunk (pad byte included) at {last_end:?}",
+            out.container_end
+        ));
+    }
     match fx.container {
         Container::Wave | Container::Rf64 => {
             if out.container != Container::Wave {

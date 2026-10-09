@@ -2312,6 +2312,322 @@
           "expect": "carried"
         }
       ]
+    },
+    {
+      "name": "aiff16-id3v23-pad-after-form",
+      "bytes": 80482,
+      "sha256": "ea40996b5c256d91cd82beaef28166694fddbe494c0ee8f3e251496c01f96b8b",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "COMM",
+          "sha256": "6d4164b24aabfcb9dc29803c092d83179b5f5cbbf426bdfbf355d5b3ea027b62",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "SSND",
+          "sha256": "c7f1c5abfda9c800df2745ca61797abb5ccc2e6b899c081fc224642343cbe957",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "ID3 ",
+          "sha256": "0f663e0a10b62b88f88d381fbb4130519a68d2ae138b9718c62512e420a4af13",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TIT2",
+          "sha256": "dbc53838a76b83266d4ca0fd954f5e38c1a1a9fc07d07cf3a85136fd8dd1cf26",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TPE1",
+          "sha256": "78c8972733b40574a10d80ec674e50a66e43c686fda8ca1b7d353b97977d4036",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TBPM",
+          "sha256": "2a09dc367cbde48a7ab12d4e1a26d3be32de235f26684a63e72473a2114662ed",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TKEY",
+          "sha256": "7db7eb995c17cfb1612babbc80c50bfd733deb7e861afeea4a5afd05e1e7a9d2",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "COMM",
+          "sha256": "d5fd64d8028c568086a1a4fe276ff92a97b8e8b69de5da60a4307f2a25822945",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:SOURCE",
+          "sha256": "9a9a182f31521a8e0a492c3c0696a43f6be83751a44259eca871e73d85c5870e",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "APIC",
+          "sha256": "2eb33133c2cf548b8ef05cbb9ad6d34ce6f1e2a926fe919139a0db6d3245807c",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "PRIV:WM/MediaClassPrimaryID",
+          "sha256": "01554ee1dda7b20db4cbf10a40cad080e2aae70940fdf9b5ac069c18928882ca",
+          "expect": "carried"
+        }
+      ]
+    },
+    {
+      "name": "aiff16-id3v24-pad-and-1-after-form",
+      "bytes": 80459,
+      "sha256": "3b31645699c9767ab2365c43f2771f9c61143ac0e5c0d947b3baa9c036c9bea1",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "COMM",
+          "sha256": "6d4164b24aabfcb9dc29803c092d83179b5f5cbbf426bdfbf355d5b3ea027b62",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "SSND",
+          "sha256": "5c623f7eea22ba4e9fa1ba07e4426b1f638073c0cdeac0fe1cd7604830442c48",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "ID3 ",
+          "sha256": "c0c622025ae8f1e4f9564a6308fd7dea6843766852016c14c1d5aabea8a09faf",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TIT2",
+          "sha256": "39f7d7d99bb2571346c59b74f4507ad5990a12863d28738d325ce46cc4902bc1",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TPE1",
+          "sha256": "7a7eaf4699cba0fa9267d19f758bb704d22465aa4cb85eb26b60bf17d03c78c5",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TBPM",
+          "sha256": "4b6d7837d358f88cae55c8781c48c52eaef939140ef56428fd06353559d9bbdf",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TKEY",
+          "sha256": "170a1d69d8c6b4dbb7d93812936d5c083414a37e08f8035a8e42ed8c1511f5aa",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "COMM",
+          "sha256": "9df97eacd27127db4f0670cb331924f980be7beb72c556582b831cd46d345a73",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:SOURCE",
+          "sha256": "eb4d84529352b82cdf0bdf7b46d9fcf5c22f88fcc41eaccff75e7b592be6c70b",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "APIC",
+          "sha256": "2eb33133c2cf548b8ef05cbb9ad6d34ce6f1e2a926fe919139a0db6d3245807c",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "PRIV:WM/MediaClassPrimaryID",
+          "sha256": "01554ee1dda7b20db4cbf10a40cad080e2aae70940fdf9b5ac069c18928882ca",
+          "expect": "carried"
+        },
+        {
+          "kind": "trailing",
+          "id": "trailing",
+          "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "expect": "carried"
+        }
+      ]
+    },
+    {
+      "name": "wav16-list-2-stray-in-riff",
+      "bytes": 80078,
+      "sha256": "0c6edb3bbf174f301b2cc85309475a51aa6d55e1e4008e540db21d78e5f21b58",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "3b9b8f3ae2f92cd966db8fa02134f6f6b7ac1db3a8a7734c053c17e45d14d12b",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "3a83ac1321306ae8b21e2fbf95155c5218c72af5790cec42ba6b52f9a3acf3da",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "LIST",
+          "sha256": "6488103028b6cb4edb33d87085610535623e1adfb2dbb32931dc449df7ec3a48",
+          "expect": "carried"
+        },
+        {
+          "kind": "trailing",
+          "id": "trailing",
+          "sha256": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+          "expect": "carried"
+        }
+      ]
+    },
+    {
+      "name": "wav16-odd-last-chunk-unpadded",
+      "bytes": 80097,
+      "sha256": "a41c31f9fbe9e3a51829f10c106584dc2b86a8cd1cc47e4082f87cddbb805d93",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "3b9b8f3ae2f92cd966db8fa02134f6f6b7ac1db3a8a7734c053c17e45d14d12b",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "157ce90f5e028e1ad62ce1ca4909bd4b840696c02289b8e448375c21039c2945",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "LIST",
+          "sha256": "6488103028b6cb4edb33d87085610535623e1adfb2dbb32931dc449df7ec3a48",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "xodd",
+          "sha256": "5187cb3a5dc4d8c700e0c8de7a762a1d60b06a852e7a2eb2deae44a93b7a62cb",
+          "expect": "carried"
+        }
+      ]
+    },
+    {
+      "name": "wav16-id3-past-stale-riff-size",
+      "bytes": 80472,
+      "sha256": "4223996d1d059f5dce2c6740a8b23698a1d0c115522a0bef50787be5b6fda52e",
+      "frames": 20000,
+      "sample_rate": 44100,
+      "channels": 2,
+      "bits": 16,
+      "blocks": [
+        {
+          "kind": "chunk",
+          "id": "fmt ",
+          "sha256": "3b9b8f3ae2f92cd966db8fa02134f6f6b7ac1db3a8a7734c053c17e45d14d12b",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "data",
+          "sha256": "bb8b8adc11089cfc3c745dba71a06f10df6b1a404b14dd505f64c87d40427dd8",
+          "expect": "replaced"
+        },
+        {
+          "kind": "chunk",
+          "id": "LIST",
+          "sha256": "6488103028b6cb4edb33d87085610535623e1adfb2dbb32931dc449df7ec3a48",
+          "expect": "carried"
+        },
+        {
+          "kind": "chunk",
+          "id": "id3 ",
+          "sha256": "d76a6a333b6adacb9f23aec842153606e76f25f350de240748959d905089fa79",
+          "pad": 0,
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TIT2",
+          "sha256": "dbc53838a76b83266d4ca0fd954f5e38c1a1a9fc07d07cf3a85136fd8dd1cf26",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TPE1",
+          "sha256": "78c8972733b40574a10d80ec674e50a66e43c686fda8ca1b7d353b97977d4036",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TBPM",
+          "sha256": "2a09dc367cbde48a7ab12d4e1a26d3be32de235f26684a63e72473a2114662ed",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TKEY",
+          "sha256": "7db7eb995c17cfb1612babbc80c50bfd733deb7e861afeea4a5afd05e1e7a9d2",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "COMM",
+          "sha256": "d5fd64d8028c568086a1a4fe276ff92a97b8e8b69de5da60a4307f2a25822945",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "TXXX:SOURCE",
+          "sha256": "9a9a182f31521a8e0a492c3c0696a43f6be83751a44259eca871e73d85c5870e",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "APIC",
+          "sha256": "2eb33133c2cf548b8ef05cbb9ad6d34ce6f1e2a926fe919139a0db6d3245807c",
+          "expect": "carried"
+        },
+        {
+          "kind": "id3-frame",
+          "id": "PRIV:WM/MediaClassPrimaryID",
+          "sha256": "01554ee1dda7b20db4cbf10a40cad080e2aae70940fdf9b5ac069c18928882ca",
+          "expect": "carried"
+        }
+      ]
     }
   ],
   "outputs": [
@@ -4566,6 +4882,381 @@
       "sha256": "bec408fca5289bee4f939350856e639a83255db9e2bb9edbf8e3a670396a57c2"
     },
     {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "87929810a01cccab7da988662aabfec89f477bc81868199f7203aa9df18efa94"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "87929810a01cccab7da988662aabfec89f477bc81868199f7203aa9df18efa94"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "1a6acdc56490f1aac7a1b4c55fbb5502ffbe77f177d76a63f0a69ea2377ff48f"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "1a6acdc56490f1aac7a1b4c55fbb5502ffbe77f177d76a63f0a69ea2377ff48f"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "f00881310542facd424a6c7261ca375ad5ff8b8850d2eeb094ca15c916d4b7c6"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "f00881310542facd424a6c7261ca375ad5ff8b8850d2eeb094ca15c916d4b7c6"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "d89537a2be6cb8bd9ab998891c7e3accda69d48cba7a8aa2b966a9873ce62ffc"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "d89537a2be6cb8bd9ab998891c7e3accda69d48cba7a8aa2b966a9873ce62ffc"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "e51f078e81db29e8ef318d6694f5367978ca9586c6879d5b23e0296a2293f7ca"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "e51f078e81db29e8ef318d6694f5367978ca9586c6879d5b23e0296a2293f7ca"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "75c1317ef04332366fbed2e7174d2f3647ba723348016654eb052836f4eb343c"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "75c1317ef04332366fbed2e7174d2f3647ba723348016654eb052836f4eb343c"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "87929810a01cccab7da988662aabfec89f477bc81868199f7203aa9df18efa94"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "bac4ece3354bc8395760fc8f5089ec3e98bfa6468bd74d87f6d7d4098e4ee913"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "f00881310542facd424a6c7261ca375ad5ff8b8850d2eeb094ca15c916d4b7c6"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "c3e36a3df85248367249af87a34a2e4eb78443534dd2555ffc031016ac2c2a92"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "c3e36a3df85248367249af87a34a2e4eb78443534dd2555ffc031016ac2c2a92"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "2ea2c1208b94c11aa837751ca67a72a447f78e73b2b702843a9351480182a3ae"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "2ea2c1208b94c11aa837751ca67a72a447f78e73b2b702843a9351480182a3ae"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "d303ec43dcd0652cc36ee61974aa1daff224019503d4b7bf4045ae39e3c348cf"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "d303ec43dcd0652cc36ee61974aa1daff224019503d4b7bf4045ae39e3c348cf"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "68a8fee56e2a0fcf5c96736f5137eaf35fa81e04923c8b93d0ab6868229a034a"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "68a8fee56e2a0fcf5c96736f5137eaf35fa81e04923c8b93d0ab6868229a034a"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "8c3e53020ad839c17db491987f88d568e4d8f3cd94ba7efc36c231d4e09bbaa8"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "8c3e53020ad839c17db491987f88d568e4d8f3cd94ba7efc36c231d4e09bbaa8"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "0434ade353ab0ca73298f7e573f726383e5d648ee0a0822558f8e8cefd8c3226"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "0434ade353ab0ca73298f7e573f726383e5d648ee0a0822558f8e8cefd8c3226"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "c3e36a3df85248367249af87a34a2e4eb78443534dd2555ffc031016ac2c2a92"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "531e22c3b0cd3e8443b9c16fed6a4981e2f19e477b45b358f8b58550750d4034"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "d303ec43dcd0652cc36ee61974aa1daff224019503d4b7bf4045ae39e3c348cf"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "37657e2dd93ccabbb66525ea9862bd67ba3541c5c89815a4a469630cf7dd6b42"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "37657e2dd93ccabbb66525ea9862bd67ba3541c5c89815a4a469630cf7dd6b42"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "8ed4c19e9ff8b7466a9dbabce8ce3f80d1ac7045f4a23f72d476992615205873"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "8ed4c19e9ff8b7466a9dbabce8ce3f80d1ac7045f4a23f72d476992615205873"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "26e199e5a8fdd25aa75ae3cde5fb926d926d3270133e675f87d3462b0ac2bef3"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "26e199e5a8fdd25aa75ae3cde5fb926d926d3270133e675f87d3462b0ac2bef3"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "b0a387f4302a995e5964d05850be93f640ccb1142bbe87d31f3ef605daf5cd3f"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "b0a387f4302a995e5964d05850be93f640ccb1142bbe87d31f3ef605daf5cd3f"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "49f99b1c73441f4d5b6444a68bfb7ed4e15d41a8de58e0a9a0f56e0b94b38f4a"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "49f99b1c73441f4d5b6444a68bfb7ed4e15d41a8de58e0a9a0f56e0b94b38f4a"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "2204404700b9c7fac64f9557582af2c0090710c3a9db3b19d5018f0ba0920a30"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "2204404700b9c7fac64f9557582af2c0090710c3a9db3b19d5018f0ba0920a30"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "37657e2dd93ccabbb66525ea9862bd67ba3541c5c89815a4a469630cf7dd6b42"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "159910705710a7120be118648180d391277524a07a0aff1544efcb391871c347"
+    },
+    {
+      "fixture": "wav16-list-2-stray-in-riff",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "26e199e5a8fdd25aa75ae3cde5fb926d926d3270133e675f87d3462b0ac2bef3"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "6ee89e3e1e121c46f0796c18ed3db93e5a795bd95980f9caf392fa7b32e6a120"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "6ee89e3e1e121c46f0796c18ed3db93e5a795bd95980f9caf392fa7b32e6a120"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "dab110923b84cf0e2ffd80644d6527425477159f9773cd8ac2d71c9e2077cb86"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "dab110923b84cf0e2ffd80644d6527425477159f9773cd8ac2d71c9e2077cb86"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "a96caa5313fd253cce567a03aebd38c9ed53aead19212586586b840573b20971"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "a96caa5313fd253cce567a03aebd38c9ed53aead19212586586b840573b20971"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "bac458797509364124149f5f98f929e1b87dd51d387cbdbbe3a1f9547a968d01"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "bac458797509364124149f5f98f929e1b87dd51d387cbdbbe3a1f9547a968d01"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "6a0ee1ba86c7894228f93e39c9aa705ef6e9f84bb2b8e8396a370d734b56ce8e"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "6a0ee1ba86c7894228f93e39c9aa705ef6e9f84bb2b8e8396a370d734b56ce8e"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "f375810534acc8b79176fe9552ce4b0f26f691227c75f7baf72e306fe5af4b80"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "f375810534acc8b79176fe9552ce4b0f26f691227c75f7baf72e306fe5af4b80"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "6ee89e3e1e121c46f0796c18ed3db93e5a795bd95980f9caf392fa7b32e6a120"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "5b1c64e85fe91bc9609742fcbab0c0ad878809631c9c7efc8f20696d848c6301"
+    },
+    {
+      "fixture": "wav16-odd-last-chunk-unpadded",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "a96caa5313fd253cce567a03aebd38c9ed53aead19212586586b840573b20971"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none",
+      "sha256": "840edaf053bb5e415cc3413473c952745681b87be6de4bf8798529c526667196"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness given",
+      "sha256": "840edaf053bb5e415cc3413473c952745681b87be6de4bf8798529c526667196"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness none",
+      "sha256": "0b60fa3b9819078a0c5442b68b26a8a5485601c7f6ebcf33d1c967d2cdb3a3de"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain +0.0 dB, trim 441, bits source, loudness given",
+      "sha256": "0b60fa3b9819078a0c5442b68b26a8a5485601c7f6ebcf33d1c967d2cdb3a3de"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness none",
+      "sha256": "2d9bbdc29fbca3c27c2b4e5b56653c52838fcee693a8e272110c73497a35f53b"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain -3.2 dB, trim 0, bits source, loudness given",
+      "sha256": "2d9bbdc29fbca3c27c2b4e5b56653c52838fcee693a8e272110c73497a35f53b"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness none",
+      "sha256": "b86ee407a6bdd46ca2f1cca17b0624775627d860fcd86bc778310a5722283ea2"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given",
+      "sha256": "b86ee407a6bdd46ca2f1cca17b0624775627d860fcd86bc778310a5722283ea2"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness none",
+      "sha256": "2800394a34f09aab38b7091a6bab9c3a9f76ae7c12f5ed8fb3458fd39d99d35b"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain +2.1 dB, trim 0, bits source, loudness given",
+      "sha256": "2800394a34f09aab38b7091a6bab9c3a9f76ae7c12f5ed8fb3458fd39d99d35b"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness none",
+      "sha256": "db79ad0a39dd6cb2a2cdd8da4186f91c6dc98bc7e77479e9d53826c96cc469bd"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain +2.1 dB, trim 441, bits source, loudness given",
+      "sha256": "db79ad0a39dd6cb2a2cdd8da4186f91c6dc98bc7e77479e9d53826c96cc469bd"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain +0.0 dB, trim 0, bits 16, loudness none",
+      "sha256": "840edaf053bb5e415cc3413473c952745681b87be6de4bf8798529c526667196"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain +0.0 dB, trim 0, bits 24, loudness none",
+      "sha256": "4f50002a525fea93f5b74fdf166a19d9aac96090f19430c096a627ac3f7ca1ce"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain -3.2 dB, trim 0, bits 16, loudness none",
+      "sha256": "2d9bbdc29fbca3c27c2b4e5b56653c52838fcee693a8e272110c73497a35f53b"
+    },
+    {
       "fixture": "wav16-info-id3v23-pad512",
       "row": "gain +0.0 dB, trim 0, bits source, loudness none, id3 edits",
       "sha256": "d79747df1b7e6e4e5205a5f6b79af44194328c16cd83e51a6e3878b6a388a44c"
@@ -4714,6 +5405,36 @@
       "fixture": "aiff16-id3v22",
       "row": "gain -3.2 dB, trim 441, bits source, loudness given, id3 edits",
       "sha256": "0e5d60c9a1331f36506e6b79ebc26b2e2d27b7660b73e6740e937732eef1dac7"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none, id3 edits",
+      "sha256": "537daf5a3115ef1be9a4a892bee79b52d09799b81a40aa4ce838f355e0e29dd5"
+    },
+    {
+      "fixture": "aiff16-id3v23-pad-after-form",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given, id3 edits",
+      "sha256": "7f0a35dcee05022fd100b057bd63d6a9d267b4fb8d497cf28efc4516647a0d9e"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none, id3 edits",
+      "sha256": "e44c313caaea0b0d29a63117602a1c6c4ec94bc5c6197806ac9c42b7893ba54a"
+    },
+    {
+      "fixture": "aiff16-id3v24-pad-and-1-after-form",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given, id3 edits",
+      "sha256": "8dceb3809b055213ecd9a8486d92c9be7f1b3daf43adbf60ce81820ca172b027"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain +0.0 dB, trim 0, bits source, loudness none, id3 edits",
+      "sha256": "c6cb251b55137818681f0a70e65c061e20c95d08189dde47069b5fcc140f02a9"
+    },
+    {
+      "fixture": "wav16-id3-past-stale-riff-size",
+      "row": "gain -3.2 dB, trim 441, bits source, loudness given, id3 edits",
+      "sha256": "8288af70d1028dcfd51fa58bc75efef5592f93783fa095bdd4eaf90a8b2a88b9"
     },
     {
       "fixture": "flac16-all-blocks",

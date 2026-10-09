@@ -6,10 +6,19 @@
 //! tag and trailing `ID3v1` tag, and Vorbis comment fields, and returns them in file order with
 //! their bytes. Header details (`fmt `, `COMM`, STREAMINFO, frame walking) are in `inspect.rs`.
 //!
-//! Bytes after the last chunk that cannot hold another chunk header are one trailing blob up to
-//! the end of the file, whether the container size counts them or not (some taggers leave a
-//! stray zero byte or two inside the `FORM`); [`Parsed::stray_in_container`] says how many of
-//! them the container size covers, so a check can insist on 0 for a writer's output.
+//! Container sizes are not trusted beyond these rules, each taken from what writers do:
+//! - An odd chunk that ends inside the container is followed by its pad byte, whatever its
+//!   value. One that ends exactly at the container end has a pad byte when the next byte in the
+//!   file is 0 (some writers leave the last pad byte out of the container size; no chunk id
+//!   starts with 0).
+//! - Past the declared container end (a stale size, for example after a chunk was appended)
+//!   the walk goes on while each header has a valid id (four printable ASCII characters, the
+//!   first not a space) and its chunk fits in the file; there a pad byte counts only when it is
+//!   0. A chunk that starts inside the container and runs past its end is an error.
+//! - Bytes after the last chunk are one trailing blob up to the end of the file, whether the
+//!   container size counts them or not (some taggers leave a stray zero byte or two inside the
+//!   `FORM`); [`Parsed::stray_in_container`] says how many of them the container size covers, so
+//!   a check can insist on 0 for a writer's output.
 //!
 //! What is hashed: a chunk's payload (the size field follows from it; the pad byte is reported
 //! with its value), an ID3 frame's header and body (so its flags count), an ID3 extended header,
@@ -140,6 +149,8 @@ pub struct Parsed {
     /// Bytes after the last chunk (fewer than a chunk header) that lie inside the declared
     /// RIFF/FORM size; they start the trailing blob. Always 0 for FLAC.
     pub stray_in_container: usize,
+    /// Byte offset of the declared RIFF/RF64/FORM end (`None` for FLAC).
+    pub container_end: Option<usize>,
 }
 
 impl Parsed {
@@ -262,9 +273,10 @@ fn parse_riff(b: &[u8]) -> Result<Parsed, String> {
         blocks: Vec::new(),
         tags: Vec::new(),
         stray_in_container: 0,
+        container_end: Some(riff_end),
     };
     let stop = walk_chunks(b, 12, riff_end, data_size, false, &mut parsed)?;
-    parsed.stray_in_container = riff_end - stop;
+    parsed.stray_in_container = riff_end.saturating_sub(stop);
     push_blob(b, stop, b.len(), Kind::Trailing, &mut parsed);
     Ok(parsed)
 }
@@ -284,9 +296,10 @@ fn parse_form(b: &[u8]) -> Result<Parsed, String> {
         blocks: Vec::new(),
         tags: Vec::new(),
         stray_in_container: 0,
+        container_end: Some(form_end),
     };
     let stop = walk_chunks(b, 12, form_end, None, true, &mut parsed)?;
-    parsed.stray_in_container = form_end - stop;
+    parsed.stray_in_container = form_end.saturating_sub(stop);
     push_blob(b, stop, b.len(), Kind::Trailing, &mut parsed);
     Ok(parsed)
 }
@@ -308,8 +321,15 @@ fn push_blob(b: &[u8], from: usize, to: usize, kind: Kind, parsed: &mut Parsed) 
     }
 }
 
-/// Walks chunks in `b[pos..end]` and returns where the last one ends (pad byte included); fewer
-/// than 8 bytes may follow it. `rf64_data` replaces a `data` size of 0xFFFFFFFF.
+/// Whether `id` may start a chunk past the container end: four printable ASCII characters, the
+/// first not a space (RIFF 1991 and AIFF 1.3 define ids that way).
+fn valid_id(id: &[u8]) -> bool {
+    id.len() == 4 && id[0] != b' ' && id.iter().all(|c| (0x20..=0x7E).contains(c))
+}
+
+/// Walks chunks from `pos` with the container ending at `end` (rules in the module doc) and
+/// returns where the last one ends, pad byte included. `rf64_data` replaces a `data` size of
+/// 0xFFFFFFFF.
 fn walk_chunks(
     b: &[u8],
     mut pos: usize,
@@ -318,7 +338,11 @@ fn walk_chunks(
     big_endian: bool,
     parsed: &mut Parsed,
 ) -> Result<usize, String> {
-    while pos + 8 <= end {
+    while pos + 8 <= b.len() {
+        let inside = pos + 8 <= end;
+        if !inside && (pos < end || !valid_id(&b[pos..pos + 4])) {
+            break;
+        }
         let id = fourcc(b, pos)?;
         let raw = if big_endian {
             be32(b, pos + 4)?
@@ -330,10 +354,19 @@ fn walk_chunks(
             _ => to_usize(u64::from(raw))?,
         };
         let payload_end = pos + 8 + size;
-        if payload_end > end {
+        if inside && payload_end > end {
             return Err(format!("chunk {id:?} at {pos} runs past the container end"));
         }
-        let pad = (size % 2 == 1 && payload_end < end).then(|| b[payload_end]);
+        if payload_end > b.len() {
+            break;
+        }
+        let pad = if size % 2 == 0 {
+            None
+        } else if payload_end < end {
+            Some(b[payload_end])
+        } else {
+            b.get(payload_end).copied().filter(|v| *v == 0)
+        };
         let index = parsed.blocks.len();
         let is_tag = id == "id3 " || id == "ID3 ";
         parsed.blocks.push(Block {
@@ -381,6 +414,7 @@ fn parse_flac(b: &[u8], start: usize) -> Result<Parsed, String> {
         blocks: Vec::new(),
         tags: Vec::new(),
         stray_in_container: 0,
+        container_end: None,
     };
     push_blob(b, 0, start, Kind::LeadingTag, &mut parsed);
     let mut pos = start + 4;

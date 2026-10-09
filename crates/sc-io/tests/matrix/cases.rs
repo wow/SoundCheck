@@ -23,9 +23,12 @@
 //!   chunks never seen before, opaque DJ data (Serato GEOB and `SERATO_*`, iXML, `APPL`),
 //!   ID3 extended headers, ID3 frames with any frame flags, Vorbis fields, an `ID3v2` tag in
 //!   front of a FLAC stream and bytes after the container or stream (`ID3v1`). An odd chunk
-//!   whose pad byte the source left out gets a zero pad byte. Bytes after the last chunk that
-//!   cannot hold a chunk header are carried after the output's container end, also where the
-//!   source's container size counted them (stray zero bytes some taggers leave).
+//!   whose pad byte the source left out gets a zero pad byte; a zero byte right after an odd
+//!   chunk that ends at the container end is that chunk's pad byte (some writers leave it out
+//!   of the size). Chunks past a stale container size are carried inside the output's
+//!   container. Bytes after the last chunk that cannot hold a chunk header are carried after
+//!   the output's container end, also where the source's container size counted them (stray
+//!   zero bytes some taggers leave). How the reader finds all of these is in `parse.rs`.
 //! - Tags (when edits are requested): an existing item with an edited label is replaced in
 //!   place (Vorbis names and ID3 `TXXX` descriptions compare case-insensitively), the other
 //!   edits are appended once after every carried item; a v2.3 extended header gets its
