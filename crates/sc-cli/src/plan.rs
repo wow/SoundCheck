@@ -128,7 +128,6 @@ pub fn plan_all(
                     .unwrap_or_default();
                 let codec = Codec::from_path(file);
                 let plan = decide(&report.record, codec, decide_settings, edit.confirmed);
-                counts.add(&plan);
                 let export = export.map(|s| {
                     // Read now, not when the file was added: a tag that failed to read then
                     // (Serato data not ruled out) is read again.
@@ -143,6 +142,9 @@ pub fn plan_all(
                 });
                 match export.transpose() {
                     Ok(export) => {
+                        // Counted only once planned: a file whose cut could not be read is
+                        // counted as failed, not also as analysed.
+                        counts.add(&plan);
                         let printed = Printed {
                             record: &report.record,
                             plan: &plan,

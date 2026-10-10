@@ -70,7 +70,8 @@ EXPORT PLAN (pure, under 1 us per row with DECIDE; `sc_engine::export::plan_expo
   bext (WAV) = the measurements moved by g; its JSON keys stay snake_case (`integrated_lufs_x100`, ...) inside the camelCase ExportPlan, as
   render requests persist them. The process job turns a Write into an apply_file request.
   Snapped cut: the render's head snap is not idempotent (snapping the snapped cut may move it further back), so the cut is snapped once,
-  before rendering: `sc_io::render::snap_head_cut(path, T) -> T'` (decodes only the frames up to T; the same choice as the render),
+  before rendering: `sc_io::render::snap_head_cut(path, T) -> T'` (decodes only the frames up to T, except a FLAC whose STREAMINFO declares no total,
+  which is decoded whole to count its frames; the same choice as the render),
   then `plan_snapped_cut(input, settings, plan, T')` re-plans trim_frames = T', expect_frames = frames - T', the Cut shown, the
   SOUNDCHECK `trim=`/`bar1=` and the Serato notice from T' (bar 1 lands in [lead, lead + 1 ms + 1 sample)) and sets trim_snapped_from_frames = T;
   `plan_export_snapped(path, input, settings)` does all three (`sc-cli plan --batch-mode` prints it). The render is then asked for

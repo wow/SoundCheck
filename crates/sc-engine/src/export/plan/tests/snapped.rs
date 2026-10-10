@@ -261,3 +261,62 @@ fn rendering_the_snapped_plan_puts_bar1_exactly_where_it_says() {
     .expect("rendered");
     assert_eq!(again.trim_frames, 12_921);
 }
+
+#[test]
+fn the_serato_in_place_skip_follows_the_cut_made() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("track.wav");
+    indexed_wav(&path, 60_000);
+    let decide_settings = DecideSettings::dj();
+    let outcomes = |anchor: u64, serato: SeratoPresence| {
+        let mut r = record(44_100, anchor);
+        r.frames = 60_000;
+        let plan = decide(&r, Codec::Wav, &decide_settings, false);
+        let source = ExportSource { serato, ..wav() };
+        let input = ExportInput {
+            record: &r,
+            plan: &plan,
+            decide: &decide_settings,
+            source: &source,
+        };
+        let snapped = crate::plan_export_snapped(&path, &input, &prepare()).expect("planned");
+        (plan_export(&input, &prepare()), snapped)
+    };
+    // Bar 1 at 251 samples: 30 frames are asked, and the snap moves the cut to the first
+    // frame (the quietest), so nothing is cut and no Serato cue point moves.
+    let (asked, made) = outcomes(251, SeratoPresence::Present);
+    assert!(
+        matches!(
+            asked,
+            ExportOutcome::Skip {
+                reason: ExportSkip::SeratoInPlaceCut { .. }
+            }
+        ),
+        "{asked:?}"
+    );
+    let plan = written(made);
+    assert_eq!(
+        (plan.trim_frames, plan.trim_snapped_from_frames),
+        (0, Some(30))
+    );
+    assert!(matches!(plan.cut, Cut::OnBar { .. }), "{:?}", plan.cut);
+    assert!(plan.notices.is_empty());
+    // A real cut is still refused, by the cut made: 12,965 frames.
+    for (serato, expect) in [
+        (
+            SeratoPresence::Present,
+            ExportSkip::SeratoInPlaceCut {
+                cut_s: SampleIndex(12_965).to_seconds(44_100),
+            },
+        ),
+        (
+            SeratoPresence::Unknown,
+            ExportSkip::SeratoUnknownInPlaceCut {
+                cut_s: SampleIndex(12_965).to_seconds(44_100),
+            },
+        ),
+    ] {
+        let (_, made) = outcomes(101_430, serato);
+        assert_eq!(made, ExportOutcome::Skip { reason: expect });
+    }
+}

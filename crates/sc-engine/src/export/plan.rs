@@ -92,9 +92,16 @@ pub struct ExportInput<'a> {
 /// leaves FLAC, sources it would requantise and files without a tag to the XML; with the XML
 /// off, what only the XML could carry is skipped; a Prepare cut in place of a file with Serato
 /// data, or whose tags could not be read to rule it out, is skipped (a cut copy of a file with
-/// Serato data gets a notice); everything else is written.
+/// Serato data gets a notice); everything else is written. That Serato skip is decided here
+/// from the cut asked of the renderer; [`crate::plan_export_snapped`] decides it from the cut
+/// made, so a cut that snaps back to the first frame (nothing cut) is not skipped.
 #[must_use]
 pub fn plan_export(input: &ExportInput<'_>, settings: &ExportSettings) -> ExportOutcome {
+    serato_gate(input, settings, plan_ungated(input, settings))
+}
+
+/// [`plan_export`] without the Serato in-place skip.
+pub(super) fn plan_ungated(input: &ExportInput<'_>, settings: &ExportSettings) -> ExportOutcome {
     let ExportInput { record, source, .. } = *input;
     let codec = source.codec;
     if matches!(codec, Codec::Mp3 | Codec::Aac) {
@@ -122,21 +129,29 @@ pub fn plan_export(input: &ExportInput<'_>, settings: &ExportSettings) -> Export
         return skip(ExportSkip::Silent);
     }
     let (cut, trim_frames) = head(record, input.plan, settings);
-    if trim_frames > 0 {
-        let cut_s = SampleIndex(trim_frames).to_seconds(sample_rate_hz);
-        match (source.serato, settings.place) {
-            (SeratoPresence::Present, Place::InPlace) => {
-                return skip(ExportSkip::SeratoInPlaceCut { cut_s });
-            }
-            (SeratoPresence::Unknown, Place::InPlace) => {
-                return skip(ExportSkip::SeratoUnknownInPlaceCut { cut_s });
-            }
-            (SeratoPresence::Present | SeratoPresence::Unknown, Place::Folder)
-            | (SeratoPresence::Absent, _) => {}
-        }
-    }
     ExportOutcome::Write {
         plan: write_plan(input, settings, cut, trim_frames, None),
+    }
+}
+
+/// `outcome` (a plan of `input`), or the skip of a cut in place of a file with Serato data, or
+/// whose tags could not be read to rule it out: its cue points are positions in the audio.
+pub(super) fn serato_gate(
+    input: &ExportInput<'_>,
+    settings: &ExportSettings,
+    outcome: ExportOutcome,
+) -> ExportOutcome {
+    let ExportOutcome::Write { plan } = &outcome else {
+        return outcome;
+    };
+    if plan.trim_frames == 0 || settings.place != Place::InPlace {
+        return outcome;
+    }
+    let cut_s = SampleIndex(plan.trim_frames).to_seconds(input.record.spec.sample_rate);
+    match input.source.serato {
+        SeratoPresence::Present => skip(ExportSkip::SeratoInPlaceCut { cut_s }),
+        SeratoPresence::Unknown => skip(ExportSkip::SeratoUnknownInPlaceCut { cut_s }),
+        SeratoPresence::Absent => outcome,
     }
 }
 

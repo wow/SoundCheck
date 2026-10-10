@@ -23,7 +23,9 @@ use crate::txn::{TagFamily, tag_family};
 
 /// The head cut a render of `path` makes when asked to cut `requested_frames` frames: the
 /// quietest frame at most 1 ms (rounded to whole frames) before it, never after it; 0 for 0.
-/// Only the frames up to the requested cut are decoded.
+/// Only the frames up to the requested cut are decoded, except for a FLAC file whose
+/// STREAMINFO declares no total: all its frames are decoded to count them (as the render does),
+/// since a cut must leave audio.
 ///
 /// # Errors
 /// [`Error::UnsupportedFormat`] for anything but WAV, RF64, AIFF, AIFF-C and FLAC, or a file
