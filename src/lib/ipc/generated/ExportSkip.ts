@@ -34,6 +34,10 @@ codec: Codec, } | { "type": "xmlGridNeedsReview",
 /**
  * The codec.
  */
+codec: Codec, } | { "type": "xmlNotOptedIn", 
+/**
+ * The codec.
+ */
 codec: Codec, } | { "type": "nothingToWrite", 
 /**
  * Why the file itself is not written.

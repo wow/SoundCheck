@@ -18,6 +18,8 @@ fn tracks() -> Vec<XmlTrack> {
             path: PathBuf::from(format!(
                 "/Users/dj/Müzik/Şarkılar & Co/{i:04} Deniz'in Parçası.aiff"
             )),
+            title: Some(format!("Gece Yarısı {i}")),
+            artist: Some("Ayşe & İlhan".into()),
             duration: Seconds(360.0),
             tempo: Tempo::of_bar1(
                 SampleIndex(221 + i),
@@ -25,7 +27,7 @@ fn tracks() -> Vec<XmlTrack> {
                 &Meter::four_four(),
                 44_100,
             )
-            .ok(),
+            .expect("4/4"),
         })
         .collect()
 }
@@ -52,7 +54,7 @@ fn bench(c: &mut Criterion) {
     g.throughput(Throughput::Elements(TRACKS));
     let t = tracks();
     g.bench_function("rekordbox xml, 1000 tracks", |b| {
-        b.iter(|| xml_bytes(std::hint::black_box(&t), "0.0.0"));
+        b.iter(|| xml_bytes(std::hint::black_box(&t), "0.0.0", "SoundCheck bench"));
     });
     let r = rows();
     g.bench_function("grid report, 1000 rows", |b| {

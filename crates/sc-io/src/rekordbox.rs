@@ -16,8 +16,12 @@
 //!   of the file, in seconds with three decimals (rekordbox keeps beat positions in whole
 //!   milliseconds), `Bpm` the written tempo (two decimals, [`Bpm::written`]), `Metro` `4/4`, and
 //!   `Battito` that beat's number in its bar (1 to 4), counted back from bar 1 by whole beats
-//!   at the written tempo. Only 4/4 grids get one ([`Tempo::of_bar1`]); how rekordbox reads
-//!   `Metro` for other meters is not established.
+//!   at the written tempo. Every track listed has one: a track without a grid is not listed,
+//!   since importing it could only change its information or clear rekordbox's own grid. Only
+//!   4/4 grids get one ([`Tempo::of_bar1`]); how rekordbox reads `Metro` for other meters is not
+//!   established.
+//! - **Replacing**: an existing file is replaced only when it starts like an XML SoundCheck
+//!   wrote ([`is_soundcheck_xml`]).
 //! - **Bytes**: UTF-8 without a byte-order mark, LF line ends, two-space indent, attributes in a
 //!   fixed order, numbers with a dot and a fixed number of decimals whatever the locale, the
 //!   five XML entities escaped and characters XML 1.0 does not allow replaced by U+FFFD. The

@@ -157,7 +157,7 @@ fn is_apple_double(p: &Path) -> bool {
         .is_some_and(|n| n.to_string_lossy().starts_with("._"))
 }
 
-/// On FAT32 (macOS 15 mounts it through FSKit) the folder lists a Turkish name decomposed,
+/// On FAT32 (macOS 15 mounts it through `FSKit`) the folder lists a Turkish name decomposed,
 /// while asking the open file for its path answers with whichever spelling first reached it
 /// since the mount. The rekordbox location is spelled from the listing: a path typed
 /// precomposed and one typed decomposed give the same bytes, the listing's.
@@ -182,10 +182,10 @@ fn rekordbox_locations_follow_the_listing_on_fat32() {
         .expect("listed");
     // The decomposed spelling reaches the file first, then the precomposed one, each through a
     // fresh speller (no listing shared between them).
-    let by_nfd = Speller::new().spell(&vol.mount.join(&nfd));
-    let by_nfc = Speller::new().spell(&vol.mount.join(nfc));
-    assert_eq!(location(&by_nfd), location(&by_nfc));
-    assert_eq!(by_nfc.file_name(), Some(listed.as_os_str()));
+    let decomposed = Speller::new().spell(&vol.mount.join(&nfd));
+    let precomposed = Speller::new().spell(&vol.mount.join(nfc));
+    assert_eq!(location(&decomposed), location(&precomposed));
+    assert_eq!(precomposed.file_name(), Some(listed.as_os_str()));
 }
 
 #[test]
