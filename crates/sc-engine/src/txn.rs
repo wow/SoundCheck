@@ -26,7 +26,8 @@ pub use tags::{Tag, check_tags, tag_edits};
 pub struct ApplyRequest {
     /// Gain applied to every sample, dB (finite; 0 keeps the samples bit for bit).
     pub gain_db: f64,
-    /// Frames removed from the start.
+    /// Frames to cut from the start; the render makes the cut up to 1 ms earlier at the
+    /// quietest frame and fades it in over 2 ms (the cut made is in the report's render).
     pub trim_frames: u64,
     /// Output bits per sample, 16 or 24; `None` keeps the source depth.
     pub bits: Option<u8>,

@@ -1,8 +1,8 @@
-//! The audio stage: the samples after the trim, through gain and requantisation
-//! ([`sc_dsp::Requantiser`]), encoded and written while a BLAKE3 hash of the written bytes is
-//! kept (the tee hash a verifier compares against). Memory is one block of
-//! [`crate::iff::BLOCK_FRAMES`] frames whatever the file length. A cancel flag is checked once
-//! per block.
+//! The audio stage: the samples after the trim (snapped back and faded in as [`super::head`]
+//! describes), through gain and requantisation ([`sc_dsp::Requantiser`]), encoded and written
+//! while a BLAKE3 hash of the written bytes is kept (the tee hash a verifier compares against).
+//! Memory is one block of [`crate::iff::BLOCK_FRAMES`] frames whatever the file length. A cancel
+//! flag is checked once per block.
 //!
 //! The dither seed is derived from the source and the request, never from the clock: BLAKE3
 //! over a domain label, the source's format chunk payload, its frame count, the first
@@ -15,8 +15,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use sc_core::{Error, Result};
-use sc_dsp::{Requantiser, SourceDepth};
+use sc_dsp::{FadeIn, Requantiser, SourceDepth};
 
+use super::head::{self, HeadSnap};
 use crate::iff::{AudioFormat, PcmReader, encode_samples};
 
 /// Frames hashed into the dither seed (about 1.4 s at 48 kHz).
@@ -107,6 +108,52 @@ pub(super) struct Peaks {
     pub max: f64,
     /// Smallest value, <= 0.
     pub min: f64,
+}
+
+/// The head cut actually made for a requested cut of `requested` frames (see
+/// [`super::head`]): `requested` itself when it is 0 or leaves no audio (refused later).
+///
+/// # Errors
+/// [`Error::Cancelled`]; reading errors.
+pub(super) fn snapped_trim<R: Read + Seek>(
+    src: R,
+    path: &Path,
+    format: &AudioFormat,
+    requested: u64,
+    cancel: &AtomicBool,
+) -> Result<u64> {
+    if requested == 0 || requested >= format.frames {
+        return Ok(requested);
+    }
+    let mut snap = HeadSnap::new(requested, format.sample_rate, format.channels);
+    let mut reader = PcmReader::new(src, format, path)?;
+    let mut block = Block::new(format);
+    while snap.wants_more() {
+        check_cancel(cancel)?;
+        if block.read(&mut reader)? == 0 {
+            break;
+        }
+        match &block {
+            Block::Int(v) => snap.push(v, head::int_magnitude),
+            Block::Float(v) => snap.push(v, head::float_magnitude),
+        }
+    }
+    Ok(snap.finish())
+}
+
+/// The fade-in of a render that cuts `trim_frames` (none without a cut).
+///
+/// # Errors
+/// [`Error::InvalidArgument`] for 0 channels.
+pub(super) fn head_fade(
+    trim_frames: u64,
+    sample_rate_hz: u32,
+    channels: u16,
+) -> Result<Option<FadeIn>> {
+    if trim_frames == 0 {
+        return Ok(None);
+    }
+    FadeIn::new(head::head_fade_frames(sample_rate_hz), channels).map(Some)
 }
 
 /// The signed peaks of the samples after the trim.
@@ -266,6 +313,9 @@ pub(super) fn write_audio<R: Read + Seek, W: Write>(
         }
     };
     let mut quant = Requantiser::new(source, job.bits, job.gain_db, job.seed)?;
+    if let Some(fade) = head_fade(job.trim_frames, format.sample_rate, format.channels)? {
+        quant.set_fade_in(fade);
+    }
     let mut out = vec![0_i32; crate::iff::BLOCK_FRAMES * channels];
     let mut bytes = Vec::with_capacity(out.len() * usize::from(job.bits / 8));
     let mut hasher = blake3::Hasher::new();

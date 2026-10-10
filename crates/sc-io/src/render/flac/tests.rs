@@ -151,17 +151,24 @@ fn gain_trim_and_tags_on_a_24_bit_source() {
     let out = std::fs::read(&run.output).expect("output");
     let got = pcm(&out);
     let g = sc_dsp::db_to_linear(-3.2);
-    let want: Vec<i32> = data[441 * 2..]
+    // The cut moves back to the quietest frame of the 48 frames (1 ms) before frame 441.
+    let t = report.trim_frames as usize;
+    let quietest = (441 - 48..=441)
+        .rev()
+        .min_by_key(|f| data[2 * f].abs().max(data[2 * f + 1].abs()))
+        .expect("a window");
+    assert_eq!((t, report.trim_requested_frames), (quietest, 441));
+    let want: Vec<i32> = data[t * 2..]
         .iter()
-        .map(|x| {
-            // Rounded half to even, as the requantiser does at 24 bits.
-            #[allow(clippy::cast_possible_truncation)]
-            let y = (f64::from(*x) * g).round_ties_even() as i32;
-            y
+        .enumerate()
+        .map(|(i, x)| {
+            // Faded over 96 frames, rounded half to even, as the requantiser does at 24 bits.
+            let w = sc_dsp::raised_cosine_in(i / 2, 96);
+            (f64::from(*x) * g * w).round_ties_even() as i32
         })
         .collect();
     assert_eq!(got, want);
-    assert_eq!((report.frames_out, report.bits_out), (8559, 24));
+    assert_eq!((report.frames_out, report.bits_out), (9000 - t as u64, 24));
     assert!(report.tags_added && !report.exact && !report.dithered);
     let summary = report.vorbis_edit.expect("edited");
     assert_eq!((summary.replaced, summary.appended), (1, 1));
@@ -414,4 +421,71 @@ fn stale_loudness_fields_are_reported_after_a_gain() {
         report.stale_loudness_tags.is_empty(),
         "no gain, nothing stale"
     );
+}
+
+/// A non-CD-DA CUESHEET: track 1 at 0 with index 01 at `index`, the lead-out at `total`.
+fn cuesheet(index: u64, total: u64) -> Vec<u8> {
+    let mut p = vec![0_u8; 396];
+    p[395] = 2;
+    p.extend_from_slice(&0_u64.to_be_bytes());
+    p.push(1);
+    p.extend_from_slice(&[0; 26]);
+    p.push(1);
+    p.extend_from_slice(&index.to_be_bytes());
+    p.extend_from_slice(&[1, 0, 0, 0]);
+    p.extend_from_slice(&total.to_be_bytes());
+    p.push(255);
+    p.extend_from_slice(&[0; 26]);
+    p.push(0);
+    p
+}
+
+#[test]
+fn positions_shift_by_actual_trim() {
+    // A 100 Hz sine, exactly 0 at frame 4392 (18 frames before the requested cut) and loud
+    // around it, with a silent frame 3 frames after the request.
+    let (requested, zero) = (4410_usize, 4392_usize);
+    let mut data: Vec<i32> = (0..9000)
+        .flat_map(|n| {
+            let t = (f64::from(n) - f64::from(u32::try_from(zero).expect("small"))) / 44_100.0;
+            let x = (20_000.0 * (std::f64::consts::TAU * 100.0 * t).sin()).round() as i32;
+            [x, -x]
+        })
+        .collect();
+    data[2 * (requested + 3)..2 * (requested + 4)].fill(0);
+    let (enc, info) = encode(&data, 44_100, 2, 16);
+    let src = file(&[], &info, &[(5, cuesheet(6000, 9000))], &enc, &[]);
+    let run = setup(&src);
+    let req = RenderRequest {
+        trim_frames: requested as u64,
+        ..RenderRequest::default()
+    };
+    let report = apply(&run, &req).expect("renders");
+    assert_eq!(
+        (report.trim_frames, report.trim_requested_frames),
+        (zero as u64, requested as u64)
+    );
+    let out = std::fs::read(&run.output).expect("output");
+    let l = layout_of(&out);
+    let sheet = l
+        .blocks
+        .iter()
+        .find(|b| b.block_type == 5)
+        .expect("CUESHEET");
+    let p = &out[sheet.payload.start as usize..sheet.payload.end as usize];
+    let be64 = |at: usize| u64::from_be_bytes(p[at..at + 8].try_into().expect("8 bytes"));
+    let new = (6000 - zero) as u64;
+    assert_eq!(
+        be64(396) + be64(396 + 36),
+        new,
+        "index 01 moved by the cut made"
+    );
+    assert_eq!(
+        be64(396 + 48),
+        (9000 - zero) as u64,
+        "the lead-out is the new total"
+    );
+    let got = pcm(&out);
+    assert_eq!(got[..2], [0, 0]);
+    assert_eq!(got.len(), 2 * (9000 - zero));
 }

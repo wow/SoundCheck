@@ -215,3 +215,46 @@ fn refusals_name_their_error_class() {
     };
     assert_eq!(kind(hot, &cut), None);
 }
+
+#[test]
+fn requested_cuts_snap_back_to_the_quietest_frame_within_1_ms() {
+    // (fixture, the cut a correct writer makes for a requested 441); at 44.1 kHz the window is
+    // the 44 frames before 441, at 48 kHz the 48.
+    for (name, want) in [
+        ("wav16-mono", 406_u64),
+        ("wav24-bwf-ixml-cue-smpl-id3v24", 413),
+        ("rf64-24-48k", 427),
+        ("aiff24-48k-mark", 427),
+        ("flac16-all-blocks", 409),
+        ("wav16-list-2-stray-in-riff", 397),
+    ] {
+        let fx = fixture(name);
+        let got = super::expect::actual_trim(&fx, &TRIM);
+        assert_eq!(got, want, "{name}");
+        // The rule, checked on the stored integers: no frame of the window is quieter, and no
+        // later one is as quiet.
+        let super::pcm::Samples::Int { data, .. } = &fx.source else {
+            panic!("{name}: integer fixture")
+        };
+        let ch = usize::from(fx.channels);
+        let loudest = |f: u64| {
+            let f = usize::try_from(f).expect("small");
+            data[f * ch..(f + 1) * ch]
+                .iter()
+                .map(|x| x.unsigned_abs())
+                .max()
+        };
+        let first = if fx.sample_rate == 48_000 { 393 } else { 397 };
+        for f in first..=441 {
+            assert!(loudest(f) >= loudest(got), "{name}: frame {f} is quieter");
+            if f > got {
+                assert!(loudest(f) > loudest(got), "{name}: frame {f} ties later");
+            }
+        }
+    }
+    // Nothing requested, nothing cut.
+    assert_eq!(
+        super::expect::actual_trim(&fixture("wav16-mono"), &IDENTITY),
+        0
+    );
+}

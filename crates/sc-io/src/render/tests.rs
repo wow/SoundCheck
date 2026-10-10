@@ -26,14 +26,15 @@ fn pcm16(frames: usize, channels: usize) -> (Vec<i32>, Vec<u8>) {
     (samples, bytes)
 }
 
-struct Run {
+/// A source file in a temporary folder and where its render goes.
+pub(super) struct Run {
     _dir: tempfile::TempDir,
     input: PathBuf,
     output: PathBuf,
 }
 
 impl Run {
-    fn new(bytes: &[u8], ext: &str) -> Self {
+    pub(super) fn new(bytes: &[u8], ext: &str) -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
         let input = dir.path().join(format!("in.{ext}"));
         let output = dir.path().join(format!("out.{ext}"));
@@ -45,11 +46,11 @@ impl Run {
         }
     }
 
-    fn apply(&self, req: &RenderRequest) -> Result<RenderReport> {
+    pub(super) fn apply(&self, req: &RenderRequest) -> Result<RenderReport> {
         apply_iff(&self.input, &self.output, req, &AtomicBool::new(false))
     }
 
-    fn out(&self) -> Vec<u8> {
+    pub(super) fn out(&self) -> Vec<u8> {
         std::fs::read(&self.output).expect("output written")
     }
 
@@ -149,11 +150,17 @@ fn extensible_source_gets_a_plain_header_and_its_chunks_keep_their_pads() {
     assert!(t.trailing.is_none() && !t.chunks.iter().any(|c| c.beyond_container));
     assert_eq!(report.count(BlockFate::Patched), 1);
     assert!(!report.exact && !report.dithered);
-    // The first output sample is input sample 10 (frame 5... of 2 channels: index 20) after gain.
+    // The magnitudes fall towards frame 10, so the cut stays there: the output starts with
+    // input sample 20 (frame 10 of 2 channels) after gain, faded in over 96 frames.
+    assert_eq!((report.trim_frames, report.trim_requested_frames), (10, 10));
     let (got, _) = read_ints(&out).expect("readable");
-    let g = 10_f64.powf(-3.2 / 20.0);
-    let want = (f64::from(samples[20]) * g).round_ties_even();
-    assert_eq!(f64::from(got[0]), want);
+    let g = sc_dsp::db_to_linear(-3.2);
+    for (i, y) in got.iter().enumerate() {
+        let w = sc_dsp::raised_cosine_in(i / 2, 96);
+        let want = (f64::from(samples[20 + i]) * g * w).round_ties_even();
+        assert_eq!(f64::from(*y), want, "sample {i}");
+    }
+    assert_eq!(got[0], 0, "faded in from silence");
 }
 
 #[test]

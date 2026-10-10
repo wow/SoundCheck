@@ -11,6 +11,7 @@ use super::id3;
 use super::inspect;
 use super::oracle::{self, Options, ideal_samples};
 use super::parse::{self, Container, Kind, parse};
+use super::pcm;
 use super::writers::{Written, bit_depth_rows, has_id3, run, tag_rows};
 
 fn reference(opts: Options) -> impl Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written {
@@ -285,7 +286,10 @@ fn tag_checks_reject_wrong_encoding_flags_duplicates_and_growth() {
     run(&reference(utf8), &v24, &IDENTITY, &id3).expect("UTF-8 in v2.4");
     // A writer that reports "tags added" for a file it must not edit is caught, and so is one
     // that edits the tag anyway (here: the reference writer told the tag is editable).
-    let wrong = Applied { tags_added: true };
+    let wrong = Applied {
+        tags_added: true,
+        trim_frames: 0,
+    };
     for name in [
         "wav16-mono-id3v24-tag-unsync",
         "wav16-mono-two-id3-chunks-ext-headers",
@@ -410,7 +414,10 @@ fn container_checks_reject_a_size_without_the_last_pad_or_chunk() {
 #[test]
 fn flac_checks_reject_a_wrong_md5_a_stray_seek_point_and_a_changed_block() {
     let fx = fixture("flac16-all-blocks");
-    let none = Applied { tags_added: false };
+    let none = Applied {
+        tags_added: false,
+        trim_frames: 0,
+    };
     check_output(&fx, &fx.bytes, &IDENTITY, &[], none).expect("the input is a valid output");
     let parsed = parse(&fx.bytes).expect("parse");
     let at = |id: &str| parsed.find(Kind::FlacBlock, id).expect("block").offset + 4;
@@ -492,4 +499,54 @@ fn flac_frame_numbers_round_trip_through_the_utf8_coding() {
             "decode {n:#x}"
         );
     }
+}
+
+#[test]
+fn pcm_checks_reject_a_cut_not_snapped_and_a_missing_fade() {
+    let name = "wav16-mono";
+    let fx = fixture(name);
+    let pcm::Samples::Int { data, .. } = &fx.source else {
+        panic!("integer fixture")
+    };
+    let cut = super::expect::actual_trim(&fx, &TRIM);
+    assert_ne!(
+        cut, 441,
+        "the fixture's quietest frame lies before the request"
+    );
+    let unfaded = Options {
+        samples: Some(data[usize::try_from(cut).expect("small")..].to_vec()),
+        ..Options::default()
+    };
+    rejects(
+        name,
+        &TRIM,
+        &[],
+        unfaded,
+        ("no fade after the cut", "sample 0 is"),
+    );
+    let unsnapped = Options {
+        samples: Some(data[441..].to_vec()),
+        ..Options::default()
+    };
+    rejects(
+        name,
+        &TRIM,
+        &[],
+        unsnapped,
+        (
+            "the requested cut, not snapped",
+            "data length does not match the frame count",
+        ),
+    );
+    // Cutting T' but reporting the requested T is caught too.
+    let want = super::expect::effective(&fx, &TRIM);
+    let (good, applied) = oracle::write(&fx, &TRIM, &[], &Options::default()).expect("written");
+    assert_eq!(applied.trim_frames, cut);
+    check_output(&fx, &good, &want, &[], applied).expect("the reference passes");
+    let claims_request = Applied {
+        trim_frames: 441,
+        ..applied
+    };
+    let err = check_output(&fx, &good, &want, &[], claims_request).expect_err("caught");
+    assert!(err.contains("reported trim_frames 441"), "{err}");
 }

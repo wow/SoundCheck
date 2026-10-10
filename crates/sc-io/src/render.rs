@@ -1,9 +1,13 @@
 //! Rendering a WAV, RF64, AIFF or AIFF-C file with a new level (and an optional head trim) into
 //! a DJ-safe file of the same family, losing nothing else.
 //!
-//! [`apply_iff`] streams `source -> trim -> gain -> requantise -> writer`, with memory bounded
-//! by one block of audio whatever the file length:
+//! [`apply_iff`] streams `source -> trim -> fade-in -> gain -> requantise -> writer`, with
+//! memory bounded by one block of audio whatever the file length:
 //!
+//! - **Head cut** ([`RenderRequest::trim_frames`]): moved earlier by up to 1 ms to the quietest
+//!   frame, never later, and the first 2 ms after it faded in (see [`head`]); every position
+//!   shift below uses the cut actually made, which [`RenderReport::trim_frames`] reports next to
+//!   the requested one.
 //! - **Container**: WAV and RF64 (EBU Tech 3306) become `RIFF`/`WAVE`; AIFF and AIFF-C become
 //!   `FORM`/`AIFF` (AIFF 1.3). The container size is recomputed; chunks a stale size left
 //!   outside the container are carried inside it.
@@ -54,6 +58,7 @@
 
 mod audio;
 mod flac;
+pub mod head;
 mod layout;
 pub mod patch;
 mod tag;
@@ -61,6 +66,7 @@ mod tag;
 pub(crate) use audio::check_cancel;
 pub use flac::apply_flac;
 pub(crate) use flac::{FlacCheck, render_flac_unverified};
+pub use head::{HEAD_FADE_MS, HEAD_SNAP_MAX_MS, head_fade_frames, head_snap_frames};
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
@@ -136,8 +142,14 @@ pub struct RenderReport {
     pub vorbis_edit: Option<crate::flac::vorbis::EditSummary>,
     /// Frames in the source.
     pub frames_in: u64,
-    /// Frames written.
+    /// Frames written: `frames_in - trim_frames`.
     pub frames_out: u64,
+    /// Frames cut from the start: the requested cut moved earlier by up to 1 ms to the
+    /// quietest frame (see [`head`]); 0 when none was requested. Positions in the output are
+    /// the source's minus this.
+    pub trim_frames: u64,
+    /// Frames the request asked to cut ([`RenderRequest::trim_frames`]).
+    pub trim_requested_frames: u64,
     /// Sample rate, Hz (unchanged).
     pub sample_rate_hz: u32,
     /// Channels (unchanged).
@@ -237,7 +249,9 @@ pub fn apply_iff(
     let mut src = File::open(input).map_err(|e| io_error(input, e))?;
     let header = iff::read_header(&mut src, input)?;
     let (table, format) = (&header.table, &header.format);
-    let target = target(input, table, format, req, tag_edits)?;
+    let mut target = target(input, table, format, req, tag_edits)?;
+    target.trim_frames = audio::snapped_trim(&mut src, input, format, req.trim_frames, cancel)?;
+    target.frames_out = format.frames - target.trim_frames;
     let layout = layout::plan(&mut src, input, table, format, &target)?;
     tracing::debug!(
         path = %input.display(),
@@ -247,7 +261,7 @@ pub fn apply_iff(
         "planned"
     );
     if format.encoding.is_float() || req.gain_db > 0.0 {
-        let peaks = audio::peaks_after_trim(&mut src, input, format, req.trim_frames, cancel)?;
+        let peaks = audio::peaks_after_trim(&mut src, input, format, target.trim_frames, cancel)?;
         check_full_scale(peaks, req.gain_db)?;
     }
     let stale_loudness_tags = if req.gain_db == 0.0 {
@@ -258,7 +272,7 @@ pub fn apply_iff(
     let format_payload = read_format_payload(&mut src, input, table, format)?;
     let seed_request = SeedRequest {
         gain_db: req.gain_db,
-        trim_frames: req.trim_frames,
+        trim_frames: target.trim_frames,
         bits: target.bits,
     };
     let seed = audio::dither_seed(
@@ -278,7 +292,7 @@ pub fn apply_iff(
         input,
         output,
         format,
-        trim_frames: req.trim_frames,
+        trim_frames: target.trim_frames,
         frames_out: target.frames_out,
         bits: target.bits,
         big_endian: target.container.is_big_endian(),
@@ -293,7 +307,8 @@ pub fn apply_iff(
         path = %input.display(),
         output = %output.display(),
         gain_db = req.gain_db,
-        trim_frames = req.trim_frames,
+        trim_frames = target.trim_frames,
+        trim_requested_frames = req.trim_frames,
         bits = target.bits,
         frames = target.frames_out,
         bytes = layout.total_bytes,
@@ -312,6 +327,8 @@ pub fn apply_iff(
         vorbis_edit: None,
         frames_in: format.frames,
         frames_out: target.frames_out,
+        trim_frames: target.trim_frames,
+        trim_requested_frames: req.trim_frames,
         sample_rate_hz: format.sample_rate,
         channels: format.channels,
         bits_out: target.bits,
@@ -435,6 +452,7 @@ fn target(
         bits,
         frames_out: format.frames - req.trim_frames,
         trim_frames: req.trim_frames,
+        trim_requested_frames: req.trim_frames,
         float_source,
         bext_update,
         tag_edits,

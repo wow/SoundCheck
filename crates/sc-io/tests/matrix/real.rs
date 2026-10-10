@@ -235,6 +235,7 @@ fn check_file(path: &Path, scratch: &Path) -> Result<Outcome, String> {
     let out = std::fs::read(&report.output).map_err(|e| e.to_string())?;
     let applied = Applied {
         tags_added: report.render.tags_added,
+        trim_frames: report.render.trim_frames,
     };
     check_output(&fx, &out, &ARGS, &edits, applied)?;
     let summary = describe(&fx, &input, &edits);
