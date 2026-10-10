@@ -1,7 +1,8 @@
 //! Unit tests of `crates/sc-io/src/render/snap.rs`: the snap a caller gets is the render's, a
 //! render of the snapped cut flagged as such is byte for byte the render of the original
 //! request on every container, the snap is not idempotent (so the flag matters), and a flagged
-//! cut outside the window is refused.
+//! cut outside the window is refused. Which frame the snap picks (strictly inside the window,
+//! ties, across a block boundary) on every container is in `tests/containers.rs`.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -12,6 +13,8 @@ use super::*;
 use crate::flac::test_build::{encode, file, vorbis};
 use crate::iff::test_build::{Form, comm, fmt_pcm, ssnd};
 use crate::render::{RenderReport, apply_flac, apply_iff};
+
+mod containers;
 
 const RATE: u32 = 44_100;
 const FRAMES: usize = 20_000;

@@ -62,9 +62,11 @@ EXPORT PLAN (pure, under 1 us per row with DECIDE; `sc_engine::export::plan_expo
   the XML, the sidecar and grid-check all use, fractional samples); F = the first bar line at or after the start: F before the lead -> Cut::OnBar{bar_line, bar1}
   (no cut, never added silence); else cut floor(F - lead) frames so F lands at the lead or under a sample after it (Cut::Cut); more than the bar's last beat ->
   Cut::NotCut{bar1, first_bar_line} (no music removed); a row that needs review (DECIDE's status; a grid the user confirmed needs none) ->
-  Cut::NeedsReview{bar1} (no cut, gain and tags still written); Library never cuts and expects the source's frame count; a cut copy of a file with
+  Cut::NeedsReview{bar1} (no cut; gain and loudness tags written, the grid not: no BPM tag and SOUNDCHECK `bpm=none;bar1=none`, in every mode,
+  so a disagreeing BPM tag survives and the row still needs review after re-analysis); Library never cuts and expects the source's frame count; a cut copy of a file with
   Serato data (ExportSource.serato from the probe's detection) carries its Serato tags unchanged, so the plan notes SeratoCuesShifted; in place it is skipped,
-  as is an in-place cut of a file whose tags could not be read (serato_unknown);
+  as is an in-place cut of a file whose tags could not be read (serato_unknown); plan_export_snapped decides that skip by the cut made (a cut that snaps
+  to the first frame cuts nothing and is not skipped);
   tags: BPM (2 decimals, at the meter's unit) when tbpm, REPLAYGAIN_TRACK_GAIN = -18 - (I + g) dB and _PEAK = 10^((TP + g)/20) unless grid only,
   SOUNDCHECK `v=1;app;mode;stat;target;gain;trim;rate;bpm;bar1;src` (grid only: `gain=none`, no stat/target; trim and bar1 in samples at rate);
   bext (WAV) = the measurements moved by g; its JSON keys stay snake_case (`integrated_lufs_x100`, ...) inside the camelCase ExportPlan, as
