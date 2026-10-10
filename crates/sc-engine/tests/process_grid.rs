@@ -173,7 +173,7 @@ fn an_unconfirmed_edit_keeps_its_overrides() {
     let record = analysed(&lib, &path);
     let range = common::with_grid().bpm_range;
     let edit = GridEdit {
-        bpm: Some(sc_core::Bpm(120.0)),
+        bpm: Some(sc_core::Bpm(120.01)),
         ..GridEdit::default()
     };
     let state = save_edit(&lib.edits(), &record, range, &edit, false).expect("saved");
@@ -196,7 +196,7 @@ fn an_unconfirmed_edit_keeps_its_overrides() {
     assert!(!carried.confirmed);
     // The typed tempo stays typed; nothing else is pinned.
     assert_eq!(carried.edit, edit);
-    assert_eq!(out.grid.as_ref().map(|g| g.bpm), Some(sc_core::Bpm(120.0)));
+    assert_eq!(out.grid.as_ref().map(|g| g.bpm), Some(sc_core::Bpm(120.01)));
 }
 
 #[test]

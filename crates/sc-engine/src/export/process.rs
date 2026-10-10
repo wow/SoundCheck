@@ -126,7 +126,7 @@ pub(crate) fn process_file(
     let saved = settings
         .edits
         .as_ref()
-        .and_then(|store| store.get(&record.path));
+        .and_then(|store| store.get(&record.path, &audio_of(&record)));
     let edit = settings
         .edits
         .as_ref()

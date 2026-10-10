@@ -195,13 +195,9 @@ fn solve(
 /// on the same audio and still gives a grid. A record without evidence (from an older cache
 /// entry) takes only an edit that leaves the analysis as it is.
 pub fn apply_saved(record: &mut AnalysisRecord, store: &EditStore) -> EditState {
-    let Some(saved) = store.get(&record.path) else {
+    let Some(saved) = store.get(&record.path, &audio_of(record)) else {
         return EditState::default();
     };
-    if saved.audio != audio_of(record) {
-        tracing::info!(file = %record.path, "grid edit made on other audio; not applied");
-        return EditState::default();
-    }
     let Ok(grid) = solve(record, saved.bpm_range, &saved.edit) else {
         return EditState::default();
     };
@@ -233,7 +229,7 @@ pub fn save_edit(
 ) -> Result<EditState> {
     edit.validate()?;
     if edit.is_empty() && !confirmed {
-        store.remove(&record.path)?;
+        store.remove(&record.path, &audio_of(record))?;
         return Ok(EditState::default());
     }
     let grid = solve(record, bpm_range, edit).map_err(|Unsolved| {

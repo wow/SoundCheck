@@ -4,7 +4,11 @@
 //! Edits are user work, so they live under Application Support, not with the analysis cache
 //! that macOS may purge: `~/Library/Application Support/app.soundcheck.desktop/grid-edits` on
 //! macOS (`SC_EDITS_DIR` overrides it). The file name is the BLAKE3 hash of the NFC-normalised
-//! path, as for the cache.
+//! path and the audio identity, so a path keeps one edit per version of its audio: exporting a
+//! file in place saves the edit of the new audio next to the original's, and putting the original
+//! back (undo) finds the original's edit again. Files written before edits were kept per audio
+//! are named by the path alone; they are still read, for the audio they were made on, and
+//! replaced by the next save of that audio.
 //!
 //! An edit belongs to the audio it was made on, identified by its decoded length, sample rate
 //! and integrated loudness: DJ apps rewrite tags and change the file's size and modification
@@ -100,24 +104,49 @@ impl EditStore {
         &self.dir
     }
 
-    /// The edit file for an NFC path.
+    /// The edit file of the audio `audio` at an NFC path.
     #[must_use]
-    pub fn entry_path(&self, nfc_path: &str) -> PathBuf {
+    pub fn entry_path(&self, nfc_path: &str, audio: &AudioIdentity) -> PathBuf {
+        let mut h = blake3::Hasher::new();
+        h.update(nfc_path.as_bytes());
+        h.update(&[0]);
+        h.update(&audio.frames.to_le_bytes());
+        h.update(&audio.sample_rate.to_le_bytes());
+        match audio.integrated {
+            Some(l) => h.update(&[1]).update(&l.0.to_bits().to_le_bytes()),
+            None => h.update(&[0]),
+        };
+        self.dir.join(format!("{}.json", h.finalize().to_hex()))
+    }
+
+    /// The edit file of an NFC path as named before edits were kept per audio.
+    #[must_use]
+    pub fn legacy_entry_path(&self, nfc_path: &str) -> PathBuf {
         let name = blake3::hash(nfc_path.as_bytes()).to_hex();
         self.dir.join(format!("{name}.json"))
     }
 
-    /// The edit saved for the file at `nfc_path`; a missing, unreadable or other-schema edit is
-    /// `None` (an unreadable one is logged, since it held user work).
+    /// The edit saved for the audio `audio` of the file at `nfc_path`; a missing, unreadable or
+    /// other-schema edit is `None` (an unreadable one is logged, since it held user work).
     #[must_use]
-    pub fn get(&self, nfc_path: &str) -> Option<SavedEdit> {
-        let path = self.entry_path(nfc_path);
-        let bytes = std::fs::read(&path).ok()?;
+    pub fn get(&self, nfc_path: &str, audio: &AudioIdentity) -> Option<SavedEdit> {
+        Self::read(&self.entry_path(nfc_path, audio), nfc_path, audio)
+            .or_else(|| Self::read(&self.legacy_entry_path(nfc_path), nfc_path, audio))
+    }
+
+    fn read(file: &Path, nfc_path: &str, audio: &AudioIdentity) -> Option<SavedEdit> {
+        let bytes = std::fs::read(file).ok()?;
         match serde_json::from_slice::<SavedEdit>(&bytes) {
-            Ok(saved) if saved.schema == EDIT_SCHEMA && saved.path == nfc_path => Some(saved),
+            Ok(saved)
+                if saved.schema == EDIT_SCHEMA
+                    && saved.path == nfc_path
+                    && saved.audio == *audio =>
+            {
+                Some(saved)
+            }
             Ok(_) => None,
             Err(e) => {
-                tracing::warn!(file = %path.display(), error = %e, "unreadable grid edit ignored");
+                tracing::warn!(file = %file.display(), error = %e, "unreadable grid edit ignored");
                 None
             }
         }
@@ -129,7 +158,7 @@ impl EditStore {
     /// # Errors
     /// [`Error::Io`] when the directory cannot be created or the file written.
     pub fn put(&self, saved: &SavedEdit) -> Result<()> {
-        let target = self.entry_path(&saved.path);
+        let target = self.entry_path(&saved.path, &saved.audio);
         let io = |source| Error::Io {
             path: target.clone(),
             source,
@@ -145,21 +174,38 @@ impl EditStore {
             let _ = std::fs::remove_file(&temp);
             return Err(io(e));
         }
-        Ok(())
+        self.remove_legacy(&saved.path, &saved.audio)
     }
 
-    /// Removes the edit of the file at `nfc_path` (the analysed grid applies again); a missing
-    /// edit is not an error.
+    /// Removes the edit of the audio `audio` of the file at `nfc_path` (the analysed grid applies
+    /// again); a missing edit is not an error. Edits of other audio at the path stay.
     ///
     /// # Errors
     /// [`Error::Io`] when the file exists but cannot be removed.
-    pub fn remove(&self, nfc_path: &str) -> Result<()> {
-        let path = self.entry_path(nfc_path);
-        match std::fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(source) => Err(Error::Io { path, source }),
+    pub fn remove(&self, nfc_path: &str, audio: &AudioIdentity) -> Result<()> {
+        remove_file(&self.entry_path(nfc_path, audio))?;
+        self.remove_legacy(nfc_path, audio)
+    }
+
+    /// Removes the file named by the path alone when it holds the edit of `audio`.
+    fn remove_legacy(&self, nfc_path: &str, audio: &AudioIdentity) -> Result<()> {
+        let legacy = self.legacy_entry_path(nfc_path);
+        if Self::read(&legacy, nfc_path, audio).is_some() {
+            remove_file(&legacy)?;
         }
+        Ok(())
+    }
+}
+
+/// Removes `path`; a missing file is not an error.
+fn remove_file(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(Error::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
     }
 }
 
