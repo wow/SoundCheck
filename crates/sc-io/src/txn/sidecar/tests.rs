@@ -228,10 +228,7 @@ fn other_schemas_and_other_json_do_not_read() {
         "not json".to_owned(),
     ] {
         std::fs::write(&path, &text).expect("written");
-        assert!(
-            matches!(read(&path), Err(Error::Corrupt { .. })),
-            "{text}"
-        );
+        assert!(matches!(read(&path), Err(Error::Corrupt { .. })), "{text}");
     }
     assert!(matches!(
         read(&dir.path().join("missing.json")),

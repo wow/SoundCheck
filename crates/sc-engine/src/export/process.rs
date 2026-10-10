@@ -168,7 +168,13 @@ pub(crate) fn process_file(
         export: Some(export),
     };
     let report = apply_file(path, &request, &settings.apply_options(), &analyzer.cancel)?;
-    let output = report.output.clone();
+    // The output as the caller spells it (the transaction reports the path the file system
+    // resolves), so the cache and the grid edits find it under the name the user knows.
+    let output = match (&settings.out_dir, report.output.file_name()) {
+        (Some(dir), Some(name)) => dir.join(name),
+        (Some(_), None) => report.output.clone(),
+        (None, _) => path.to_path_buf(),
+    };
     send(EngineEvent::Written {
         file_id,
         report: Box::new(report),
