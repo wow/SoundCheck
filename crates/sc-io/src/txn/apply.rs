@@ -231,6 +231,17 @@ fn plan<'a>(
             cause: ChangeCause::OtherChangeFirst,
         });
     }
+    if let Some(expected) = opts.expect_original_blake3
+        && hash_file(&c.src.path)?.1 != expected
+    {
+        return Err(Error::FileChanged {
+            path: c.src.path,
+            detail: "since SoundCheck planned it (another change wrote it in between); it was \
+                     left as it is"
+                .into(),
+            cause: ChangeCause::SincePlanned,
+        });
+    }
     let id = new_txn_id();
     let backup = (c.kind == TxnKind::InPlace).then(|| {
         let dest = backup_dest(journal.root(), &c.volume, &c.src.path);

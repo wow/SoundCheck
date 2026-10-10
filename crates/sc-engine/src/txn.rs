@@ -46,6 +46,9 @@ pub struct ApplyRequest {
     /// What the export asking for this write planned, for the sidecar; the transaction refuses
     /// an output whose frame count or cut is not the planned one. `None` for a plain change.
     pub export: Option<ExportRecord>,
+    /// BLAKE3 of the file as it was planned from: the write is refused (`FileChanged`, nothing
+    /// written) when the file no longer has it. `None` checks nothing.
+    pub source_blake3: Option<[u8; 32]>,
 }
 
 /// Where the processed file goes.
@@ -119,6 +122,7 @@ pub fn apply_file(
         keep_mtime: opts.keep_mtime,
         sidecar: opts.sidecar,
         export: req.export.clone(),
+        expect_original_blake3: req.source_blake3,
     };
     let flag = cancel.flag();
     let report = match &opts.place {

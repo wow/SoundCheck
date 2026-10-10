@@ -121,6 +121,10 @@ fn changed(cause: ChangeCause, detail: &str, action: Action) -> Refusal {
             why,
             "see sc-cli journal; if that change was yours, the file is done",
         ),
+        ChangeCause::SincePlanned => refusal(
+            why,
+            "run the export again: it measures and plans the file as it is now",
+        ),
         ChangeCause::SinceProcessed => refusal(
             why,
             "keep it as it is, or copy the original back from the backup by hand",

@@ -443,6 +443,7 @@ pub fn run_apply(args: ApplyArgs) -> anyhow::Result<usize> {
         loudness: None,
         tags: args.tags,
         export: None,
+        source_blake3: None,
     };
     let (place, action) = match args.out {
         Some(dir) => (Place::Folder(std::path::absolute(dir)?), Action::Copy),

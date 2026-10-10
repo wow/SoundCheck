@@ -136,6 +136,11 @@ pub struct TxnOptions {
     /// planned frame count and cut, else [`sc_core::Error::VerifyFailed`]). `None` for a plain
     /// render.
     pub export: Option<sc_core::export::ExportRecord>,
+    /// BLAKE3 of the original as the caller planned from it: the transaction refuses, before it
+    /// writes anything, a file whose bytes are no longer those
+    /// ([`sc_core::Error::FileChanged`], [`sc_core::ChangeCause::SincePlanned`]). `None` checks
+    /// nothing.
+    pub expect_original_blake3: Option<[u8; 32]>,
 }
 
 impl TxnOptions {
@@ -147,6 +152,7 @@ impl TxnOptions {
             keep_mtime: true,
             sidecar: true,
             export: None,
+            expect_original_blake3: None,
         }
     }
 }

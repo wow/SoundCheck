@@ -314,3 +314,39 @@ fn after_undo_the_cache_describes_the_original() {
     .0;
     assert!((cached - original).abs() < 1e-9, "{cached} vs {original}");
 }
+
+#[test]
+fn a_file_changed_since_it_was_planned_is_not_written() {
+    // As when another export wrote the file between this one's plan and its write.
+    let lib = Lib::new();
+    let path = common::tone_wav(&lib.music(), "a.wav", 3.0, 0.1);
+    let planned = hash(&path);
+    let other = common::tone_wav(&lib.music(), "b.wav", 3.0, 0.2);
+    std::fs::copy(&other, &path).expect("changed");
+    let now = hash(&path);
+    let request = ApplyRequest {
+        gain_db: -1.0,
+        source_blake3: Some(planned),
+        ..ApplyRequest::default()
+    };
+    let opts = ApplyOptions::in_place(lib.backups());
+    let err = apply_file(&path, &request, &opts, &CancelToken::new()).expect_err("refused");
+    assert!(
+        matches!(
+            err,
+            Error::FileChanged {
+                cause: sc_core::ChangeCause::SincePlanned,
+                ..
+            }
+        ),
+        "{err}"
+    );
+    assert_eq!(hash(&path), now);
+    assert_eq!(temps(lib.dir.path()), Vec::<PathBuf>::new());
+    // Planned from the bytes it holds, it is written.
+    let request = ApplyRequest {
+        source_blake3: Some(now),
+        ..request
+    };
+    apply_file(&path, &request, &opts, &CancelToken::new()).expect("written");
+}

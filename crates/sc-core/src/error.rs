@@ -184,6 +184,9 @@ pub enum ChangeCause {
     OtherChangeFirst,
     /// It was edited after SoundCheck processed it, so undoing would lose that edit.
     SinceProcessed,
+    /// It is no longer the file an export planned from (another change, perhaps another
+    /// SoundCheck export, wrote it in between), so the plan would apply to the wrong audio.
+    SincePlanned,
 }
 
 /// Why a file cannot be replaced in place. Each reason is something replacing the file would

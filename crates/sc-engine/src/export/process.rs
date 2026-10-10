@@ -166,6 +166,7 @@ pub(crate) fn process_file(
         loudness: plan.bext,
         tags: plan.tags.clone(),
         export: Some(export),
+        source_blake3: source.blake3,
     };
     let report = apply_file(path, &request, &settings.apply_options(), &analyzer.cancel)?;
     // The output as the caller spells it (the transaction reports the path the file system
