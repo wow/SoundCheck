@@ -259,3 +259,49 @@ fn paths_in_the_backup_root_are_recognised_even_before_it_exists() {
         "{refused:?}"
     );
 }
+
+/// Makes the journal read-only right before the rename (the backups sit next to `music/`).
+fn lock_the_journal(_temp: &Path, target: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let journal = target
+        .parent()
+        .and_then(Path::parent)
+        .expect("base")
+        .join("backups")
+        .join(crate::txn::JOURNAL_FILE);
+    std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(0o444)).expect("chmod");
+}
+
+#[test]
+fn a_journal_failure_after_the_rename_is_a_note_not_an_error() {
+    // (The superuser writes read-only files; the tests do not run as root.)
+    let s = scene();
+    let report = run(
+        &s,
+        Hooks {
+            before_rename: Some(lock_the_journal),
+            ..Hooks::default()
+        },
+    )
+    .expect("the file is replaced, so the change succeeded");
+    assert_ne!(std::fs::read(&s.path).expect("read"), s.bytes);
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|n| n.starts_with("journal not updated")),
+        "{:?}",
+        report.notes
+    );
+    // The entry stays for recovery, which completes it once the journal can be written.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let journal = s.backups.join(crate::txn::JOURNAL_FILE);
+        std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+    }
+    let recovered = recover(&s.backups).expect("recovery runs");
+    assert_eq!(recovered.recovered.len(), 1, "{recovered:?}");
+    let entries = journal_entries(&s.backups).expect("journal");
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(entries[0].state, State::Recovered | State::Done));
+}

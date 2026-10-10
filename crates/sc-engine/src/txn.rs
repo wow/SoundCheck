@@ -95,8 +95,9 @@ impl ApplyOptions {
 /// # Errors
 /// `InvalidArgument` for a tag [`check_tags`] refuses; the transaction's refusals and failures (see `sc_io::txn`): `RekordboxUsbExport`,
 /// `InPlaceRefused`, `NoSpace`, `UnsupportedFormat`, `NotDjSafe`, `WouldClip`,
-/// `VerifyFailed`, `FileChanged`, `AlreadyExists`, `Cancelled`, `Io`. On any error before the
-/// rename the original is untouched and nothing is left behind.
+/// `VerifyFailed`, `FileChanged`, `AlreadyExists`, `Cancelled`, `Io`. Every error comes before
+/// the original is replaced, which leaves it untouched and nothing behind; once it is replaced
+/// the call succeeds, with what could not be finished in the report's notes.
 pub fn apply_file(
     path: &Path,
     req: &ApplyRequest,

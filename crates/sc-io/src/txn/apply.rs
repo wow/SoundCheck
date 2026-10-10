@@ -125,10 +125,16 @@ pub(super) fn apply(
     }
     crash::point("rename");
     sync_dir(&plan.target_dir);
-    plan.journal.append(&Line::new(&plan.id, State::Renamed))?;
+    // From here on the file is replaced: nothing fails any more; what cannot be journaled is a
+    // note, and the entry is left for recovery to complete.
+    let renamed = plan
+        .journal
+        .append(&Line::new(&plan.id, State::Renamed))
+        .err()
+        .map(|e| journal_note(&e));
     crash::after(State::Renamed);
     timings.push((State::Renamed, t.elapsed()));
-    let report = finish(&plan, req, prepared, &mut timings)?;
+    let report = finish(&plan, req, prepared, &mut timings, renamed);
     drop(lock);
     Ok(report)
 }
@@ -477,6 +483,11 @@ fn rename_into_place(tx: &Transaction<'_>, plan: &Plan<'_>) -> Result<()> {
         TxnKind::ToFolder => rename_noreplace(&plan.temp, &plan.target),
         _ => std::fs::rename(&plan.temp, &plan.target).map_err(|e| io_err(&plan.target, e)),
     }
+}
+
+/// The note for a journal line that could not be written after the rename.
+pub(super) fn journal_note(error: &Error) -> String {
+    format!("journal not updated ({error}); the next recovery completes this change")
 }
 
 /// Settles a transaction `error` stopped (rolled back and `failed`, or left pending for

@@ -240,9 +240,9 @@ impl<'v> Transaction<'v> {
     /// # Errors
     /// The preflight refusals, the render's errors, [`Error::VerifyFailed`],
     /// [`Error::FileChanged`] when the file changed during processing, [`Error::Cancelled`],
-    /// [`Error::Io`]. On any error before the rename the file is untouched and nothing is left
-    /// behind; an error after it (journal not writable) leaves the transaction for
-    /// [`recover`].
+    /// [`Error::Io`]. Every error comes before the rename: the file is untouched and nothing is
+    /// left behind. Once the file is replaced the call succeeds; a journal line that could not
+    /// be written then is a note in the report, and the next [`recover`] completes the change.
     pub fn apply_in_place(
         &self,
         path: &Path,

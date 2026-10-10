@@ -14,6 +14,7 @@
 //!    cut), and the output is analysed afresh, which replaces its cache entry. A failure here
 //!    leaves the file written and becomes a note.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 
 use sc_core::analysis::{AnalysisRecord, AnalysisSettings, Grid};
@@ -111,7 +112,9 @@ pub struct ProcessDone {
 ///
 /// # Errors
 /// The analysis's, the planner's and the transaction's errors ([`Error::Cancelled`] when the
-/// batch is cancelled before the output replaces anything); on any error the file is as it was.
+/// batch is cancelled before the output replaces anything). Every error comes before the file
+/// is replaced, so on any error it is as it was; once it is replaced the result is
+/// [`EngineEvent::Done`], whatever happens after (a failure, even a panic, there is a note).
 pub(crate) fn process_file(
     analyzer: &mut Analyzer,
     file_id: u32,
@@ -186,7 +189,21 @@ pub(crate) fn process_file(
         grid: record.grid.as_ref(),
         trim: plan.trim_frames,
     };
-    let done = after_write(analyzer, &output, settings, &carry, record.duration);
+    let done = catch_unwind(AssertUnwindSafe(|| {
+        after_write(analyzer, &output, settings, &carry, record.duration)
+    }))
+    .unwrap_or_else(|_| ProcessDone {
+        output: output.clone(),
+        duration: record.duration,
+        analysis: None,
+        edit: EditState::default(),
+        edit_carried: false,
+        notes: vec![
+            "the steps after the write stopped unexpectedly (the file is written; it is \
+             analysed when next opened)"
+                .to_owned(),
+        ],
+    });
     Ok(EngineEvent::Done {
         file_id,
         done: Box::new(done),
