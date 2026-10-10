@@ -89,6 +89,9 @@ fn every_skip_has_three_lines() {
         ExportSkip::SeratoInPlaceCut {
             cut_s: Seconds(0.29),
         },
+        ExportSkip::SeratoUnknownInPlaceCut {
+            cut_s: Seconds(0.29),
+        },
         ExportSkip::NotDjSafeRate {
             sample_rate_hz: 96_000,
         },
@@ -116,22 +119,49 @@ fn every_skip_has_three_lines() {
 }
 
 #[test]
+fn unreadable_tags_say_serato_could_not_be_ruled_out() {
+    let t = text(&ExportOutcome::Skip {
+        reason: ExportSkip::SeratoUnknownInPlaceCut {
+            cut_s: Seconds(0.29),
+        },
+    });
+    assert!(
+        t.contains("why: its tags could not be read to rule out Serato data, and cutting 0.29 s"),
+        "{t}"
+    );
+    assert!(t.contains("what to do: export it to a folder"), "{t}");
+}
+
+#[test]
 fn on_bar_wording() {
-    let on_bar = |line: u64| {
+    let on_bar = |line: u64, bar1: u64| {
         text(&ExportOutcome::Write {
             plan: plan(Cut::OnBar {
                 bar_line: SampleIndex(line),
                 bar_line_s: SampleIndex(line).to_seconds(44_100),
+                bar1: SampleIndex(bar1),
+                bar1_s: SampleIndex(bar1).to_seconds(44_100),
             }),
         })
     };
     assert_eq!(
-        on_bar(0),
+        on_bar(0, 0),
         "  Export (prepare): Gain -2.0 dB, Starts on bar 1; tags BPM, SOUNDCHECK\n"
     );
-    let t = on_bar(132);
+    let t = on_bar(132, 132);
     assert!(
-        t.contains("Gain -2.0 dB, Starts on a bar line 0.003 s in;"),
+        t.contains("Gain -2.0 dB, Starts on bar 1, 0.003 s in;"),
+        "{t}"
+    );
+    // Bar 1 at 8.000 s at 120 BPM: the file starts on the bar line four bars before it.
+    let t = on_bar(0, 352_800);
+    assert!(
+        t.contains("Gain -2.0 dB, Starts on a bar line (bar 1 at 8.00 s);"),
+        "{t}"
+    );
+    let t = on_bar(132, 352_932);
+    assert!(
+        t.contains("Starts on a bar line 0.003 s in (bar 1 at 8.00 s);"),
         "{t}"
     );
 }

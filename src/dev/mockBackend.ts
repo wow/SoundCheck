@@ -88,6 +88,11 @@ function fileEntry(s: Synthetic, folder: string, fileId: number): FileEntry {
       artist: s.artist,
       album: null,
       djUnsafe: s.float ? 'float' : null,
+      serato: false,
+      seratoTags: [],
+      seratoUnknown: false,
+      soundcheck: null,
+      soundcheckUnreadable: null,
     },
   };
 }

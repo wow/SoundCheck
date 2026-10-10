@@ -1,4 +1,5 @@
-//! Unit tests of `crates/sc-engine/src/export/plan.rs`; the cut rule is in `tests/cut.rs`.
+//! Unit tests of `crates/sc-engine/src/export/plan.rs`; the cut rule is in `tests/cut.rs`, Serato
+//! data read from a file in `tests/serato.rs`.
 //! Sample counts are exact: at 44.1 kHz, 120 BPM in 4/4 has a 22,050-sample beat and an
 //! 88,200-sample bar, and a 5 ms lead is 220.5 samples; at 48 kHz they are 24,000, 96,000 and
 //! 240.
@@ -10,6 +11,7 @@ use sc_core::{AudioSpec, Bpm, Confidence, DbFs, Seconds, Verdict};
 use crate::decide;
 
 mod cut;
+mod serato;
 
 /// Four minutes at `rate` with S-P95 -9 and I -9 LUFS (a 2 dB cut at the DJ target of -11)
 /// and a true peak of -1 dBTP; a 4/4 grid at 120 BPM with bar 1 at `anchor`.
@@ -276,7 +278,7 @@ fn mp3_is_xml_only() {
 #[test]
 fn serato_blocks_in_place_cut() {
     let serato = ExportSource {
-        serato: true,
+        serato: SeratoPresence::Present,
         ..wav()
     };
     let r = record(44_100, 101_430);

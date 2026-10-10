@@ -21,7 +21,15 @@ barLine: SampleIndex,
 /**
  * `bar_line` in seconds.
  */
-barLineS: Seconds, } | { "type": "notCut", 
+barLineS: Seconds, 
+/**
+ * Bar 1 as shown (the grid's anchor); `bar_line` is bar 1 itself when they are equal.
+ */
+bar1: SampleIndex, 
+/**
+ * `bar1` in seconds.
+ */
+bar1S: Seconds, } | { "type": "notCut", 
 /**
  * Bar 1 as shown (the grid's anchor).
  */

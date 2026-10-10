@@ -296,17 +296,10 @@ fn seek_shapes<R: Read + Seek>(
     Ok((shapes, dropped))
 }
 
-/// Whether a Vorbis field name is one of the loudness tags a gain change makes stale:
-/// `REPLAYGAIN_*` (Replay Gain 2.0) and `R128_*` (EBU R 128 gains as Opus taggers write them).
-fn is_loudness_field(name: &[u8]) -> bool {
-    let starts = |prefix: &[u8]| {
-        name.len() >= prefix.len() && name[..prefix.len()].eq_ignore_ascii_case(prefix)
-    };
-    starts(b"REPLAYGAIN_") || starts(b"R128_")
-}
-
-/// The loudness fields of every Vorbis comment that no edit replaces, by name as written: after
-/// a gain change their values no longer describe the audio.
+/// The loudness fields of every Vorbis comment that no edit replaces, by name as written (see
+/// [`crate::tags::is_vorbis_loudness`]: `REPLAYGAIN_*`, `R128_*`, `ITUNNORM`,
+/// `SERATO_AUTOGAIN`, `SERATO_AUTOTAGS`): after a gain change their values no longer describe
+/// the audio.
 fn stale_loudness<R: Read + Seek>(
     src: &mut R,
     path: &Path,
@@ -324,7 +317,7 @@ fn stale_loudness<R: Read + Seek>(
         };
         for range in &index.fields {
             if let Some(name) = CommentIndex::name(&payload, range)
-                && is_loudness_field(name)
+                && crate::tags::is_vorbis_loudness(name)
                 && !edits.iter().any(|e| e.matches(name))
             {
                 stale.push(String::from_utf8_lossy(name).into_owned());

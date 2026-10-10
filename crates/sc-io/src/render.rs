@@ -50,8 +50,8 @@
 //! file cut short inside a chunk, a malformed chunk that must be rewritten
 //! ([`Error::Corrupt`]). A cancel flag, checked once per block, stops the render with
 //! [`Error::Cancelled`] and the partial output removed (as on any error or panic). After a gain
-//! change, ID3 `TXXX:REPLAYGAIN_*` and `RVA2` frames that no edit replaces are listed in
-//! [`RenderReport::stale_loudness_tags`]. The output is created new
+//! change, ID3 loudness frames that no edit replaces (`TXXX:REPLAYGAIN_*`, `RVA2`,
+//! `COMM:iTunNORM`, `GEOB:Serato Autotags`) are listed in [`RenderReport::stale_loudness_tags`]. The output is created new
 //! (`create_new`), so an existing file, the source included, is never overwritten; making the
 //! write atomic is the caller's job. I/O errors name the input when reading fails and the
 //! output when writing fails.
@@ -169,9 +169,10 @@ pub struct RenderReport {
     /// frames gives.
     pub pcm_hash: [u8; 32],
     /// Loudness tags the render leaves stale, by label as written: after a gain change, the
-    /// Replay Gain and R 128 items no tag edit replaces (Vorbis `REPLAYGAIN_*` and `R128_*`
-    /// fields; ID3 `TXXX:REPLAYGAIN_*` and `RVA2` frames). Empty without a gain change. They
-    /// are carried unchanged; the caller decides whether to edit them.
+    /// loudness items no tag edit replaces (Vorbis `REPLAYGAIN_*`, `R128_*`, `ITUNNORM`,
+    /// `SERATO_AUTOGAIN` and `SERATO_AUTOTAGS` fields; ID3 `TXXX:REPLAYGAIN_*`, `RVA2`,
+    /// `COMM:iTunNORM` and `GEOB:Serato Autotags` frames; see [`crate::tags`]). Empty without a
+    /// gain change. They are carried unchanged; the caller decides whether to edit them.
     pub stale_loudness_tags: Vec<String>,
     /// Every source chunk or metadata block in source order with its fate.
     pub blocks: Vec<BlockRecord>,

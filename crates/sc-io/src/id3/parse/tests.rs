@@ -2,7 +2,10 @@
 //! sizes, extended headers, footers, and every reason a tag is not editable.
 
 use super::*;
-use crate::id3::test_build::{ext_v23, ext_v24_update, frame, tag, tag_with_footer, text, txxx};
+use crate::id3::test_build::{
+    comm, comm_body, ext_v23, ext_v24_update, frame, geob, geob_body, tag, tag_with_footer, text,
+    txxx, unsynchronise,
+};
 
 #[test]
 fn syncsafe_integers_round_trip_and_reject_high_bits() {
@@ -256,4 +259,162 @@ fn syncsafe_sizes_stand_where_the_plain_reading_does_not_fit() {
     // v2.3 sizes are plain by definition.
     let t = tag(3, 0, &[], &[frame(3, *b"PRIV", [0, 0], &big)], 1024);
     assert!(parse_tag(&t).is_ok());
+}
+
+#[test]
+fn geob_heads_are_read_in_every_encoding() {
+    let object = [0x01, 0x01, 0xFF, 0x00, 0xE0];
+    for major in [3, 4] {
+        let utf8 = if major == 4 { 3 } else { 1 };
+        let frames = [
+            geob(major, "Serato Markers2", &object),
+            frame(
+                major,
+                *b"GEOB",
+                [0, 0],
+                &geob_body(
+                    1,
+                    "application/x",
+                    "Ünïcode.bin",
+                    "Sérato Ovërview",
+                    &object,
+                ),
+            ),
+            frame(
+                major,
+                *b"GEOB",
+                [0, 0],
+                &geob_body(utf8, "text/plain", "", "Notes ♫", b"x"),
+            ),
+        ];
+        let index = parse_tag(&tag(major, 0, &[], &frames, 16)).expect("parses");
+        let f = &index.frames;
+        assert_eq!(f[0].description.as_deref(), Some("Serato Markers2"));
+        assert_eq!(f[0].mime.as_deref(), Some("application/octet-stream"));
+        assert_eq!(f[0].file_name.as_deref(), Some(""));
+        assert_eq!((f[0].encoding, f[0].language), (Some(0), None));
+        assert!(f[0].is(b"GEOB", "serato markers2"));
+        assert!(!f[0].is(b"TXXX", "Serato Markers2"));
+        assert_eq!(f[1].description.as_deref(), Some("Sérato Ovërview"));
+        assert_eq!(f[1].file_name.as_deref(), Some("Ünïcode.bin"));
+        assert_eq!(f[1].mime.as_deref(), Some("application/x"));
+        assert_eq!(
+            (f[1].encoding, f[1].description_be.as_deref()),
+            (Some(1), None)
+        );
+        assert_eq!(f[2].description.as_deref(), Some("Notes ♫"), "v2.{major}");
+        assert_eq!(f[2].encoding, Some(utf8));
+    }
+}
+
+#[test]
+fn comm_heads_are_read_in_every_encoding() {
+    let no_bom: Vec<u8> = [&[1][..], b"eng", b"i\0T\0\0\0", b"x\0"].concat();
+    let frames = [
+        comm(3, 0, "iTunNORM", " 00000A2B 00000A2B"),
+        comm(3, 1, "Kommentar äöü", "text"),
+        frame(3, *b"COMM", [0, 0], &no_bom),
+        frame(
+            3,
+            *b"COMM",
+            [0, 0],
+            &comm_body(0, *b"deu", "", "plain comment"),
+        ),
+        frame(3, *b"COMM", [0, 0], b"\0en"),
+    ];
+    let index = parse_tag(&tag(3, 0, &[], &frames, 0)).expect("parses");
+    let f = &index.frames;
+    assert_eq!(f[0].description.as_deref(), Some("iTunNORM"));
+    assert_eq!(f[0].language, Some(*b"eng"));
+    assert!(f[0].is(b"COMM", "ITUNNORM"));
+    assert_eq!(f[1].description.as_deref(), Some("Kommentar äöü"));
+    assert_eq!(f[1].encoding, Some(1));
+    // UTF-16 without a byte-order mark: little-endian first, big-endian as the alternative.
+    assert_eq!(f[2].description.as_deref(), Some("iT"));
+    assert_eq!(f[2].description_be.as_deref(), Some("\u{6900}\u{5400}"));
+    assert_eq!(f[3].description.as_deref(), Some(""));
+    assert_eq!(f[3].language, Some(*b"deu"));
+    // Too short for a language: no head, the frame is still indexed.
+    assert_eq!((f[4].description.as_ref(), f[4].language), (None, None));
+    assert_eq!(f[4].mime, None);
+    // UTF-8 in v2.4.
+    let v24 = parse_tag(&tag(4, 0, &[], &[comm(4, 3, "Beschreibung ß", "x")], 0)).expect("v2.4");
+    assert_eq!(v24.frames[0].description.as_deref(), Some("Beschreibung ß"));
+}
+
+#[test]
+fn heads_are_read_behind_format_flags_and_unsynchronisation() {
+    let body = geob_body(
+        1,
+        "application/octet-stream",
+        "f",
+        "Serato Autotags",
+        &[0xFF, 0xE0],
+    );
+    // v2.4 frame-level unsynchronisation (0x02): the byte-order mark FF FE is stored FF 00 FE.
+    let unsynced = unsynchronise(&body);
+    assert_ne!(unsynced, body);
+    // v2.4 grouping and data-length indicator (0x41): one group byte, four length bytes.
+    let grouped = [&[7, 0, 0, 0, 9][..], &body].concat();
+    // v2.3 grouping (0x20): one group byte.
+    let grouped_v23 = [&[7][..], &body].concat();
+    let comm_unsynced = unsynchronise(&comm_body(1, *b"eng", "iTunNORM", "x"));
+    let v24 = tag(
+        4,
+        0,
+        &[],
+        &[
+            frame(4, *b"GEOB", [0, 0x02], &unsynced),
+            frame(4, *b"GEOB", [0, 0x41], &grouped),
+            frame(4, *b"COMM", [0, 0x02], &comm_unsynced),
+            frame(4, *b"GEOB", [0, 0x08], &body),
+        ],
+        0,
+    );
+    let index = parse_tag(&v24).expect("parses");
+    for f in &index.frames[..2] {
+        assert_eq!(f.description.as_deref(), Some("Serato Autotags"));
+        assert_eq!(f.file_name.as_deref(), Some("f"));
+    }
+    assert_eq!(index.frames[2].description.as_deref(), Some("iTunNORM"));
+    assert_eq!(index.frames[3].description, None, "compressed");
+    let v23 = tag(
+        3,
+        0,
+        &[],
+        &[
+            frame(3, *b"GEOB", [0, 0x20], &grouped_v23),
+            frame(3, *b"GEOB", [0, 0x40], &body),
+        ],
+        0,
+    );
+    let index = parse_tag(&v23).expect("parses");
+    assert_eq!(
+        index.frames[0].description.as_deref(),
+        Some("Serato Autotags")
+    );
+    assert_eq!(index.frames[1].description, None, "encrypted");
+}
+
+#[test]
+fn txxx_values_are_read_from_the_tag() {
+    let frames = [
+        txxx(3, 0, "SOUNDCHECK", "v=1;app=0.1.0"),
+        txxx(3, 1, "Wert", "Ünïcode"),
+        txxx(3, 0, "EMPTY", ""),
+        text(3, *b"TBPM", 0, "128"),
+    ];
+    let t = tag(3, 0, &[], &frames, 8);
+    let index = parse_tag(&t).expect("parses");
+    let value = |i: usize| index.txxx_value(&t, &index.frames[i]);
+    assert_eq!(value(0).as_deref(), Some("v=1;app=0.1.0"));
+    assert_eq!(value(1).as_deref(), Some("Ünïcode"));
+    assert_eq!(value(2).as_deref(), Some(""));
+    assert_eq!(value(3), None, "not a TXXX frame");
+    let v24 = tag(4, 0, &[], &[txxx(4, 3, "SOUNDCHECK", "v=1;é")], 0);
+    let index = parse_tag(&v24).expect("parses");
+    assert_eq!(
+        index.txxx_value(&v24, &index.frames[0]).as_deref(),
+        Some("v=1;é")
+    );
 }

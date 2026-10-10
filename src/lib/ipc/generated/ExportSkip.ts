@@ -10,6 +10,10 @@ export type ExportSkip = { "type": "seratoInPlaceCut",
 /**
  * The cut that was planned, seconds.
  */
+cutS: Seconds, } | { "type": "seratoUnknownInPlaceCut", 
+/**
+ * The cut that was planned, seconds.
+ */
 cutS: Seconds, } | { "type": "notDjSafeRate", 
 /**
  * The file's sample rate, Hz.

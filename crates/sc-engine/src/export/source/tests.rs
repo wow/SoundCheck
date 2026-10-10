@@ -55,7 +55,8 @@ fn reads_depth_float_and_the_tag_from_the_chunks() {
     );
     assert_eq!(tagged.codec, Codec::Wav);
     assert_eq!((tagged.bits_per_sample, tagged.float), (Some(24), false));
-    assert!(tagged.has_tag && !tagged.serato && tagged.blake3.is_none());
+    assert!(tagged.has_tag && tagged.blake3.is_none());
+    assert_eq!(tagged.serato, SeratoPresence::Absent);
 
     let bare = read(
         dir.path(),

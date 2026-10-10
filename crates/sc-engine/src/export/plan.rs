@@ -6,9 +6,9 @@
 //!   shortfall stays in the plan). Grid only applies none and keeps the source depth, so the
 //!   samples stay bit for bit.
 //! - **Prepare cut**: bar lines are extrapolated from bar 1 by whole bars (a bar is the meter's
-//!   pulse count times `60 * sample_rate / bpm` samples, at the BPM rounded to two decimals:
-//!   the tempo the tags and the XML carry, so a DJ app that lays its grid from the exported bar
-//!   line at that tempo meets bar 1). Let `B` be the first bar line at or after the start. When
+//!   pulse count times `60 * sample_rate / bpm` samples, at the written BPM ([`Bpm::written`],
+//!   two decimals): the tempo the tags and the XML carry, so a DJ app that lays its grid from
+//!   the exported bar line at that tempo meets bar 1). Let `B` be the first bar line at or after the start. When
 //!   `B` lies before the lead, the file already starts on a bar line and nothing is cut (no
 //!   silence is ever added). Otherwise `floor(B - lead)` frames are asked to be cut, so `B`
 //!   would land at the lead or less than one sample after it (never before); the renderer then
@@ -46,10 +46,24 @@ pub struct ExportSource {
     /// The file holds the one tag SoundCheck edits (WAV/AIFF: exactly one ID3 chunk); tags are
     /// never created. Only grid-only exports depend on it.
     pub has_tag: bool,
-    /// The file holds Serato data (its cue points are positions in the audio).
-    pub serato: bool,
+    /// Whether the file holds Serato data (its cue points are positions in the audio), as
+    /// [`sc_io::probe`] detects it.
+    pub serato: SeratoPresence,
     /// BLAKE3 of the source file, when known; the `SOUNDCHECK` record names it.
     pub blake3: Option<[u8; 32]>,
+}
+
+/// Whether a file holds Serato data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SeratoPresence {
+    /// None was found and every tag was read.
+    #[default]
+    Absent,
+    /// Serato data was found.
+    Present,
+    /// The file or one of its tags could not be read, so Serato data cannot be ruled out: a cut
+    /// in place is refused as if it held some.
+    Unknown,
 }
 
 /// One file to plan.
@@ -72,7 +86,8 @@ pub struct ExportInput<'a> {
 /// players refuse, more than two channels and silence are skipped; grid only needs a grid, and
 /// leaves FLAC, sources it would requantise and files without a tag to the XML; with the XML
 /// off, what only the XML could carry is skipped; a Prepare cut in place of a file with Serato
-/// data is skipped (a cut copy gets a notice); everything else is written.
+/// data, or whose tags could not be read to rule it out, is skipped (a cut copy of a file with
+/// Serato data gets a notice); everything else is written.
 #[must_use]
 pub fn plan_export(input: &ExportInput<'_>, settings: &ExportSettings) -> ExportOutcome {
     let ExportInput { record, source, .. } = *input;
@@ -104,11 +119,19 @@ pub fn plan_export(input: &ExportInput<'_>, settings: &ExportSettings) -> Export
     let (cut, trim_frames) = head(record, settings);
     let cut_s = SampleIndex(trim_frames).to_seconds(sample_rate_hz);
     let mut notices = Vec::new();
-    if source.serato && trim_frames > 0 {
-        if settings.place == Place::InPlace {
-            return skip(ExportSkip::SeratoInPlaceCut { cut_s });
+    if trim_frames > 0 {
+        match (source.serato, settings.place) {
+            (SeratoPresence::Present, Place::InPlace) => {
+                return skip(ExportSkip::SeratoInPlaceCut { cut_s });
+            }
+            (SeratoPresence::Present, Place::Folder) => {
+                notices.push(ExportNotice::SeratoCuesShifted { cut_s });
+            }
+            (SeratoPresence::Unknown, Place::InPlace) => {
+                return skip(ExportSkip::SeratoUnknownInPlaceCut { cut_s });
+            }
+            (SeratoPresence::Unknown, Place::Folder) | (SeratoPresence::Absent, _) => {}
         }
-        notices.push(ExportNotice::SeratoCuesShifted { cut_s });
     }
     let gain_db = if settings.grid_only {
         0.0
@@ -201,7 +224,7 @@ impl Bars {
     /// The bar lines of `grid` at `sample_rate`, at its BPM rounded to two decimals (the tempo
     /// written); `None` for a tempo that does not round to a positive number.
     pub(crate) fn of(grid: &Grid, sample_rate: u32) -> Option<Self> {
-        let pulse = 60.0 * f64::from(sample_rate) / written_bpm(grid.bpm);
+        let pulse = 60.0 * f64::from(sample_rate) / grid.bpm.written().0;
         let pulses: u32 = grid.meter.grouping.iter().map(|&g| u32::from(g)).sum();
         let last = grid.meter.grouping.last().copied().unwrap_or(1);
         let bar = pulse * f64::from(pulses.max(1));
@@ -220,11 +243,6 @@ impl Bars {
         let bars_back = ((self.anchor - pos) / self.bar).floor();
         self.anchor - bars_back * self.bar
     }
-}
-
-/// The BPM as the tags and the XML write it: rounded to two decimals.
-fn written_bpm(bpm: Bpm) -> f64 {
-    (bpm.0 * 100.0).round() / 100.0
 }
 
 /// `x` samples as whole frames, rounded down; negative and NaN give 0.
@@ -259,11 +277,14 @@ fn head(record: &AnalysisRecord, settings: &ExportSettings) -> (Cut, u64) {
     let lead = lead_samples(settings.lead_ms, rate);
     let first = bars.first_at_or_after(0.0);
     let first_line = SampleIndex(floor_frames(first.round()));
+    let anchor = record.grid.as_ref().map_or(first_line, |g| g.anchor);
     let trim = floor_frames(first - lead);
     if first < lead || trim == 0 {
         let cut = Cut::OnBar {
             bar_line: first_line,
             bar_line_s: first_line.to_seconds(rate),
+            bar1: anchor,
+            bar1_s: anchor.to_seconds(rate),
         };
         return (cut, 0);
     }
@@ -271,7 +292,6 @@ fn head(record: &AnalysisRecord, settings: &ExportSettings) -> (Cut, u64) {
     #[allow(clippy::cast_precision_loss)]
     let too_far = trim as f64 > bars.last_beat;
     if too_far || trim >= record.frames {
-        let anchor = record.grid.as_ref().map_or(first_line, |g| g.anchor);
         let cut = Cut::NotCut {
             bar1: anchor,
             bar1_s: anchor.to_seconds(rate),
@@ -309,7 +329,7 @@ fn tags(
     if settings.tbpm
         && let Some(bpm) = bpm
     {
-        tags.push(Tag::new(TAG_BPM, format!("{:.2}", written_bpm(bpm))));
+        tags.push(Tag::new(TAG_BPM, format!("{:.2}", bpm.written().0)));
     }
     if !settings.grid_only
         && let Some(integrated) = record.loudness.integrated
@@ -319,7 +339,7 @@ fn tags(
         tags.push(Tag::new(TAG_REPLAYGAIN_TRACK_PEAK, peak));
     }
     let soundcheck = SoundcheckRecord {
-        app: VERSION,
+        app: VERSION.to_owned(),
         mode: settings.batch_mode,
         gain: (!settings.grid_only).then_some(RecordGain {
             stat: input.decide.mode,
@@ -328,9 +348,13 @@ fn tags(
         }),
         trim_frames,
         sample_rate: record.spec.sample_rate,
-        bpm: bpm.map(|b| Bpm(written_bpm(b))),
+        bpm: bpm.map(Bpm::written),
         bar1,
-        source_blake3: input.source.blake3,
+        source_hash: input
+            .source
+            .blake3
+            .as_ref()
+            .map(SoundcheckRecord::hash_prefix),
     };
     tags.push(Tag::new(TAG_SOUNDCHECK, soundcheck.to_value()));
     tags

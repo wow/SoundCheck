@@ -16,6 +16,7 @@ pub use track::{
 };
 
 use crate::analysis::{AnalysisRecord, AnalysisSettings, Confidence, Reason, Verdict};
+use crate::export::SoundcheckRecord;
 use crate::plan::{Codec, Plan};
 use crate::units::{Bpm, DbTp, Lu, Lufs, Seconds};
 
@@ -97,6 +98,86 @@ pub struct FileInfo {
     pub album: Option<String>,
     /// The first way the format is not DJ-safe, if any.
     pub dj_unsafe: Option<DjUnsafe>,
+    /// The file holds Serato data (cue points, beat grid, auto gain, ...), whose positions are
+    /// stored in the audio's own time: cutting the start would move them. Same as
+    /// `!serato_tags.is_empty()`.
+    pub serato: bool,
+    /// The kinds of Serato data found, each once, in [`SeratoTag`] order.
+    pub serato_tags: Vec<SeratoTag>,
+    /// The file or one of its tags could not be read, so Serato data cannot be ruled out; an
+    /// in-place cut treats the file as holding it.
+    pub serato_unknown: bool,
+    /// What SoundCheck recorded when it last exported the file (its `SOUNDCHECK` tag), when the
+    /// tag is present and readable.
+    pub soundcheck: Option<SoundcheckRecord>,
+    /// Why a `SOUNDCHECK` tag that is present could not be read (a later format version, a
+    /// damaged value): the file was processed before, but what was done is not known.
+    pub soundcheck_unreadable: Option<String>,
+}
+
+/// A kind of Serato data in a file's tags: ID3 `GEOB` objects described `Serato <name>`
+/// (WAV, AIFF and MP3) or Vorbis comment fields named `SERATO_<NAME>` (FLAC), after the layout
+/// documented in Jan Holthuis' "serato-tags" notes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub enum SeratoTag {
+    /// Cue points, loops and flip markers (`Serato Markers_`, `Serato Markers2`,
+    /// `SERATO_MARKERS_V2`).
+    Markers,
+    /// The beat grid (`Serato BeatGrid`, `SERATO_BEATGRID`).
+    BeatGrid,
+    /// Tempo, auto gain and gain from Serato's analysis (`Serato Autotags`,
+    /// `SERATO_AUTOGAIN`): stale after a level change.
+    Autotags,
+    /// The waveform overview (`Serato Overview`, `SERATO_OVERVIEW`).
+    Overview,
+    /// The analysis version (`Serato Analysis`, `SERATO_ANALYSIS`).
+    Analysis,
+    /// MP3 decoder offsets (`Serato Offsets_`).
+    Offsets,
+    /// Anything else Serato stores (`Serato RelVolAd`, `Serato VidAssoc`, ...).
+    Other,
+}
+
+impl SeratoTag {
+    /// The kind of an ID3 `GEOB` description, when it is Serato's (`Serato ` and a name).
+    #[must_use]
+    pub fn from_geob_description(description: &str) -> Option<Self> {
+        let name = strip_prefix_ignore_case(description, "Serato ")?;
+        Some(match name {
+            "Markers_" | "Markers2" => Self::Markers,
+            "BeatGrid" => Self::BeatGrid,
+            "Autotags" => Self::Autotags,
+            "Overview" => Self::Overview,
+            "Analysis" => Self::Analysis,
+            "Offsets_" => Self::Offsets,
+            _ => Self::Other,
+        })
+    }
+
+    /// The kind of a Vorbis comment field name, when it is Serato's (`SERATO_` and a name, any
+    /// case).
+    #[must_use]
+    pub fn from_vorbis_name(name: &str) -> Option<Self> {
+        let rest = strip_prefix_ignore_case(name, "SERATO_")?.to_ascii_uppercase();
+        Some(match rest.as_str() {
+            "MARKERS" | "MARKERS_V2" | "MARKERS2" => Self::Markers,
+            "BEATGRID" => Self::BeatGrid,
+            "AUTOGAIN" | "AUTOTAGS" => Self::Autotags,
+            "OVERVIEW" => Self::Overview,
+            "ANALYSIS" => Self::Analysis,
+            "OFFSETS" => Self::Offsets,
+            _ => Self::Other,
+        })
+    }
+}
+
+/// `s` without `prefix` (compared ASCII case-insensitively), when it starts with it.
+fn strip_prefix_ignore_case<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = s.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &s[prefix.len()..])
 }
 
 /// A file the user added, with the id every later event uses.

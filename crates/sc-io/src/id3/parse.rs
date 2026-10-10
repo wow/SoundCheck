@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 
-use super::text::txxx_descriptions;
+use super::text::{FrameHead, frame_head, txxx_value};
 use super::{MAX_FRAMES, MAX_TAG_BYTES, NotEditable};
 
 /// Bytes of the tag header, of a frame header and of a v2.4 footer.
@@ -54,12 +54,59 @@ pub struct FrameRef {
     pub flags: [u8; 2],
     /// Header and body, byte offsets into the tag.
     pub range: Range<usize>,
-    /// The description of a `TXXX` frame, when it can be read (not compressed or encrypted,
-    /// a known text encoding; UTF-16 without a byte-order mark read little-endian).
+    /// The description of a `TXXX` frame, the short content description of a `COMM` frame or
+    /// the content description of a `GEOB` frame, when it can be read (not compressed or
+    /// encrypted, a known text encoding; UTF-16 without a byte-order mark read little-endian).
+    /// `None` for every other frame.
     pub description: Option<String>,
     /// The same description read big-endian, for UTF-16 without a byte-order mark (the
     /// writer's byte order is unknown, so both readings count).
     pub description_be: Option<String>,
+    /// The text encoding byte (0-3) of a `TXXX`, `COMM` or `GEOB` frame whose description is
+    /// read.
+    pub encoding: Option<u8>,
+    /// The language of a `COMM` frame (ISO 639-2, three bytes as stored, e.g. `eng`).
+    pub language: Option<[u8; 3]>,
+    /// The MIME type of a `GEOB` frame.
+    pub mime: Option<String>,
+    /// The file name of a `GEOB` frame.
+    pub file_name: Option<String>,
+}
+
+impl FrameRef {
+    fn new(id: [u8; 4], flags: [u8; 2], range: Range<usize>, head: Option<FrameHead>) -> Self {
+        let mut frame = Self {
+            id,
+            flags,
+            range,
+            description: None,
+            description_be: None,
+            encoding: None,
+            language: None,
+            mime: None,
+            file_name: None,
+        };
+        if let Some(h) = head {
+            frame.description = Some(h.description);
+            frame.description_be = h.description_be;
+            frame.encoding = Some(h.encoding);
+            frame.language = h.language;
+            frame.mime = h.mime;
+            frame.file_name = h.file_name;
+        }
+        frame
+    }
+
+    /// Whether this is a frame `id` whose description (either reading) equals `description`,
+    /// compared ASCII case-insensitively.
+    #[must_use]
+    pub fn is(&self, id: &[u8; 4], description: &str) -> bool {
+        let same = |d: &Option<String>| {
+            d.as_ref()
+                .is_some_and(|d| d.eq_ignore_ascii_case(description))
+        };
+        &self.id == id && (same(&self.description) || same(&self.description_be))
+    }
 }
 
 /// The layout of a tag.
@@ -81,6 +128,20 @@ pub struct TagIndex {
     pub footer: bool,
     /// End of the tag: header, size field and footer, bytes.
     pub end: usize,
+}
+
+impl TagIndex {
+    /// The value of the `TXXX` frame `frame` of `tag` (the bytes this index was parsed from):
+    /// the text after its description. `None` for another frame or one that cannot be read
+    /// (compressed, encrypted, an unknown text encoding).
+    #[must_use]
+    pub fn txxx_value(&self, tag: &[u8], frame: &FrameRef) -> Option<String> {
+        if &frame.id != b"TXXX" {
+            return None;
+        }
+        let body = tag.get(frame.range.start + HEADER_BYTES..frame.range.end)?;
+        txxx_value(self.major, frame.flags, body)
+    }
 }
 
 fn be32(b: &[u8], at: usize) -> Option<u32> {
@@ -297,19 +358,8 @@ fn walk_frames(
                 NotEditable::malformed(format!("the frame at byte {pos} runs past the tag"))
             })?;
         let flags = [bytes[pos + 8], bytes[pos + 9]];
-        let (description, description_be) = if &id == b"TXXX" {
-            txxx_descriptions(major, flags, &bytes[pos + HEADER_BYTES..end])
-                .map_or((None, None), |(d, be)| (Some(d), be))
-        } else {
-            (None, None)
-        };
-        frames.push(FrameRef {
-            id,
-            flags,
-            range: pos..end,
-            description,
-            description_be,
-        });
+        let head = frame_head(major, id, flags, &bytes[pos + HEADER_BYTES..end]);
+        frames.push(FrameRef::new(id, flags, pos..end, head));
         pos = end;
     }
     Ok((frames, pos))

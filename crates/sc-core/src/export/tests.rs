@@ -46,60 +46,6 @@ fn settings_outside_their_limits_are_rejected() {
 }
 
 #[test]
-fn soundcheck_record_value_format() {
-    let mut hash = [0xff_u8; 32];
-    hash[..8].copy_from_slice(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]);
-    let record = SoundcheckRecord {
-        app: "0.1.0",
-        mode: BatchMode::Prepare,
-        gain: Some(RecordGain {
-            stat: LoudnessMode::Dj,
-            target: Lufs(-11.0),
-            gain_db: -2.0,
-        }),
-        trim_frames: 13_009,
-        sample_rate: 44_100,
-        bpm: Some(Bpm(120.0)),
-        bar1: Some(SampleIndex(221)),
-        source_blake3: Some(hash),
-    };
-    assert_eq!(
-        record.to_value(),
-        "v=1;app=0.1.0;mode=prepare;stat=S-P95;target=-11.00;gain=-2.00;trim=13009;rate=44100;\
-         bpm=120.00;bar1=221;src=0011223344556677"
-    );
-    let at_target = SoundcheckRecord {
-        mode: BatchMode::Library,
-        gain: Some(RecordGain {
-            stat: LoudnessMode::Streaming,
-            target: Lufs(-14.0),
-            gain_db: -0.0,
-        }),
-        trim_frames: 0,
-        sample_rate: 48_000,
-        bpm: None,
-        bar1: None,
-        source_blake3: None,
-        ..record.clone()
-    };
-    assert_eq!(
-        at_target.to_value(),
-        "v=1;app=0.1.0;mode=library;stat=I;target=-14.00;gain=+0.00;trim=0;rate=48000"
-    );
-    // Grid only aligned no level: it never reads as "at target".
-    let grid_only = SoundcheckRecord {
-        gain: None,
-        trim_frames: 0,
-        source_blake3: None,
-        ..record
-    };
-    assert_eq!(
-        grid_only.to_value(),
-        "v=1;app=0.1.0;mode=prepare;gain=none;trim=0;rate=44100;bpm=120.00;bar1=221"
-    );
-}
-
-#[test]
 fn outcomes_serialise_as_tagged_unions() {
     let skip = ExportOutcome::Skip {
         reason: ExportSkip::NotDjSafeRate {

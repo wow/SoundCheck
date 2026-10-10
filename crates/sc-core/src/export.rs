@@ -10,14 +10,18 @@
 //! Tags use container-neutral names ([`Tag`]); Replay Gain 2.0 track values are relative to
 //! -18 LUFS (Replay Gain 2.0 specification, which measures with ITU-R BS.1770).
 
-use std::fmt::Write as _;
-
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::plan::{Codec, LoudnessMode};
+use crate::plan::Codec;
 use crate::render::{BextLoudness, Tag};
-use crate::units::{Bpm, Lufs, SampleIndex, Seconds};
+use crate::units::{Lufs, SampleIndex, Seconds};
+
+mod record;
+
+pub use record::{
+    MAX_RECORD_BYTES, RecordError, RecordGain, SOUNDCHECK_RECORD_VERSION, SoundcheckRecord,
+};
 
 /// The lead a Prepare cut leaves before bar 1, milliseconds, until it is calibrated against
 /// DJ apps' own analysis.
@@ -167,6 +171,10 @@ pub enum Cut {
         bar_line: SampleIndex,
         /// `bar_line` in seconds.
         bar_line_s: Seconds,
+        /// Bar 1 as shown (the grid's anchor); `bar_line` is bar 1 itself when they are equal.
+        bar1: SampleIndex,
+        /// `bar1` in seconds.
+        bar1_s: Seconds,
     },
     /// Prepare, but the first bar line lies more than one beat after the lead: cutting to it
     /// would remove music, so nothing is cut and the grid travels in tags and the XML.
@@ -278,6 +286,12 @@ pub enum ExportSkip {
         /// The cut that was planned, seconds.
         cut_s: Seconds,
     },
+    /// Prepare in place would cut a file whose tags could not be read, so Serato data (whose
+    /// cue points would move) cannot be ruled out. Export to a folder or use Library mode.
+    SeratoUnknownInPlaceCut {
+        /// The cut that was planned, seconds.
+        cut_s: Seconds,
+    },
     /// The sample rate is not one DJ players accept (44.1 or 48 kHz); converting it comes later.
     NotDjSafeRate {
         /// The file's sample rate, Hz.
@@ -328,90 +342,6 @@ pub enum ExportOutcome {
         /// Why.
         reason: ExportSkip,
     },
-}
-
-/// The level change a [`SoundcheckRecord`] records.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RecordGain {
-    /// The statistic the gain aligned.
-    pub stat: LoudnessMode,
-    /// The target it aligned to.
-    pub target: Lufs,
-    /// The gain applied, dB.
-    pub gain_db: f64,
-}
-
-/// The value of the `SOUNDCHECK` tag: what SoundCheck did to the file, as `key=value` pairs
-/// joined by `;`, in this order:
-/// `v=1;app=<version>;mode=prepare|library;stat=S-P95|I;target=<LUFS, 2 dp>;gain=<dB, signed,
-/// 2 dp>;trim=<frames>;rate=<Hz>;bpm=<2 dp>;bar1=<samples>;src=<16 hex digits>`.
-/// Grid only writes `gain=none` and no `stat` or `target` (no level was aligned). Positions are
-/// sample counts at `rate`, as everywhere else: `trim` in the source, `bar1` (the first bar line)
-/// in the exported audio. `bpm` and `bar1` are left out without a grid, `src` without a source
-/// hash.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SoundcheckRecord<'a> {
-    /// The SoundCheck version.
-    pub app: &'a str,
-    /// The batch mode.
-    pub mode: BatchMode,
-    /// The level change; `None` for grid only.
-    pub gain: Option<RecordGain>,
-    /// Frames removed from the start.
-    pub trim_frames: u64,
-    /// The sample rate, Hz.
-    pub sample_rate: u32,
-    /// The grid's tempo at the meter's unit.
-    pub bpm: Option<Bpm>,
-    /// The first bar line of the exported audio.
-    pub bar1: Option<SampleIndex>,
-    /// BLAKE3 of the source file; its first 8 bytes are written.
-    pub source_blake3: Option<[u8; 32]>,
-}
-
-/// The record's format version.
-pub const SOUNDCHECK_RECORD_VERSION: u32 = 1;
-
-impl SoundcheckRecord<'_> {
-    /// The tag value (see the type's documentation).
-    #[must_use]
-    pub fn to_value(&self) -> String {
-        let mut v = format!(
-            "v={SOUNDCHECK_RECORD_VERSION};app={};mode={}",
-            self.app,
-            self.mode.as_str()
-        );
-        // Writing into a String cannot fail.
-        match self.gain {
-            Some(g) => {
-                let stat = match g.stat {
-                    LoudnessMode::Dj => "S-P95",
-                    LoudnessMode::Streaming => "I",
-                };
-                let _ = write!(
-                    v,
-                    ";stat={stat};target={:.2};gain={:+.2}",
-                    positive_zero(g.target.0),
-                    positive_zero(g.gain_db)
-                );
-            }
-            None => v.push_str(";gain=none"),
-        }
-        let _ = write!(v, ";trim={};rate={}", self.trim_frames, self.sample_rate);
-        if let Some(bpm) = self.bpm {
-            let _ = write!(v, ";bpm={:.2}", bpm.0);
-        }
-        if let Some(bar1) = self.bar1 {
-            let _ = write!(v, ";bar1={}", bar1.0);
-        }
-        if let Some(hash) = self.source_blake3 {
-            v.push_str(";src=");
-            for b in &hash[..8] {
-                let _ = write!(v, "{b:02x}");
-            }
-        }
-        v
-    }
 }
 
 /// `x` with a negative zero made positive, so `-0.0` never prints as `-0.00`.

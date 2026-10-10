@@ -331,3 +331,34 @@ fn recovery_status_is_tagged_by_state() {
     let running = serde_json::to_value(RecoveryStatus::Running).unwrap();
     assert_eq!(running, serde_json::json!({ "state": "running" }));
 }
+
+#[test]
+fn serato_names_map_to_kinds() {
+    let geob = SeratoTag::from_geob_description;
+    assert_eq!(geob("Serato Markers2"), Some(SeratoTag::Markers));
+    assert_eq!(geob("Serato Markers_"), Some(SeratoTag::Markers));
+    assert_eq!(geob("Serato BeatGrid"), Some(SeratoTag::BeatGrid));
+    assert_eq!(geob("Serato Autotags"), Some(SeratoTag::Autotags));
+    assert_eq!(geob("Serato Overview"), Some(SeratoTag::Overview));
+    assert_eq!(geob("Serato Analysis"), Some(SeratoTag::Analysis));
+    assert_eq!(geob("Serato Offsets_"), Some(SeratoTag::Offsets));
+    assert_eq!(geob("Serato VidAssoc"), Some(SeratoTag::Other));
+    assert_eq!(geob("serato markers2"), Some(SeratoTag::Other));
+    assert_eq!(geob("Serato"), None);
+    assert_eq!(geob("Traktor4"), None);
+    assert_eq!(geob("Séra"), None);
+    let vorbis = SeratoTag::from_vorbis_name;
+    assert_eq!(vorbis("SERATO_MARKERS_V2"), Some(SeratoTag::Markers));
+    assert_eq!(vorbis("serato_beatgrid"), Some(SeratoTag::BeatGrid));
+    assert_eq!(vorbis("SERATO_AUTOGAIN"), Some(SeratoTag::Autotags));
+    assert_eq!(vorbis("SERATO_AUTOTAGS"), Some(SeratoTag::Autotags));
+    assert_eq!(vorbis("SERATO_RELVOL"), Some(SeratoTag::Other));
+    assert_eq!(vorbis("SERATOX"), None);
+    assert_eq!(vorbis("REPLAYGAIN_TRACK_GAIN"), None);
+    // The UI lists kinds in a fixed order.
+    assert!(SeratoTag::Markers < SeratoTag::BeatGrid && SeratoTag::Analysis < SeratoTag::Other);
+    assert_eq!(
+        serde_json::to_string(&SeratoTag::BeatGrid).expect("json"),
+        "\"beatGrid\""
+    );
+}

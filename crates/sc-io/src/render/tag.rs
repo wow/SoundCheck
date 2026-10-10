@@ -86,10 +86,11 @@ pub(super) fn edit_chunk<R: Read + Seek>(
     Ok(edited)
 }
 
-/// The loudness frames of the file's ID3 tags that no edit replaces, by label: `TXXX` frames
-/// whose description starts with `REPLAYGAIN_` (Replay Gain 2.0, any case) and `RVA2` frames.
-/// After a gain change their values no longer describe the audio. Tags larger than
-/// [`MAX_TAG_BYTES`] or that do not parse are not looked into.
+/// The loudness frames of the file's ID3 tags that no edit replaces, by label (see
+/// [`crate::tags::id3_loudness_label`]: `TXXX:REPLAYGAIN_*` (Replay Gain 2.0, any case), `RVA2`,
+/// `COMM:iTunNORM`, `GEOB:Serato Autotags`). After a gain change their values no longer
+/// describe the audio. Tags larger than [`MAX_TAG_BYTES`] or that do not parse are not looked
+/// into.
 ///
 /// # Errors
 /// [`Error::Io`] when reading fails.
@@ -116,16 +117,10 @@ pub(super) fn stale_loudness<R: Read + Seek>(
             continue;
         };
         for frame in &index.frames {
-            if &frame.id == b"RVA2" {
-                stale.push("RVA2".to_string());
-                continue;
-            }
-            let Some(desc) = frame.description.as_ref().filter(|_| &frame.id == b"TXXX") else {
-                continue;
-            };
-            let replaygain = desc.len() >= 11 && desc[..11].eq_ignore_ascii_case("REPLAYGAIN_");
-            if replaygain && !edits.iter().any(|e| e.matches(frame)) {
-                stale.push(format!("TXXX:{desc}"));
+            if let Some(label) = crate::tags::id3_loudness_label(frame)
+                && !edits.iter().any(|e| e.matches(frame))
+            {
+                stale.push(label);
             }
         }
     }
