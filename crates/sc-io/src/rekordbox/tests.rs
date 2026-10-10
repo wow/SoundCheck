@@ -132,24 +132,24 @@ fn review_grid_has_no_tempo() {
 
 /// A batch of two written by hand: a file tagged with a Turkish title and artist (`&` and `'`
 /// in them, NFC) under a folder with `&`, and an untagged file named with `<`, `>` and `"`,
-/// whose name falls back to the file name. Each `TRACK` has only `Name`, `Artist` (when
-/// tagged), `TotalTime`, `AverageBpm` and `Location`; the playlist is keyed by location.
+/// whose name falls back to the file name. Each `TRACK` has only `TrackID`, `Name`, `Artist`
+/// (when tagged), `TotalTime`, `AverageBpm` and `Location`; the playlist is keyed by `TrackID`.
 const EXPECTED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <DJ_PLAYLISTS Version="1.0.0">
   <PRODUCT Name="SoundCheck" Version="9.9.9-test" Company="SoundCheck"/>
   <COLLECTION Entries="2">
-    <TRACK Name="Deniz&apos;in Parçası" Artist="Ayşe &amp; İlhan" TotalTime="245" AverageBpm="128.00" Location="file://localhost/Music/%C5%9Eark%C4%B1%20%26%20Co/01.wav">
+    <TRACK TrackID="1" Name="Deniz&apos;in Parçası" Artist="Ayşe &amp; İlhan" TotalTime="245" AverageBpm="128.00" Location="file://localhost/Music/%C5%9Eark%C4%B1%20%26%20Co/01.wav">
       <TEMPO Inizio="0.005" Bpm="128.00" Metro="4/4" Battito="1"/>
     </TRACK>
-    <TRACK Name="b &lt;live&gt; &quot;1&quot;" TotalTime="60" AverageBpm="120.00" Location="file://localhost/Music/b%20%3Clive%3E%20%221%22.wav">
+    <TRACK TrackID="2" Name="b &lt;live&gt; &quot;1&quot;" TotalTime="60" AverageBpm="120.00" Location="file://localhost/Music/b%20%3Clive%3E%20%221%22.wav">
       <TEMPO Inizio="0.065" Bpm="120.00" Metro="4/4" Battito="1"/>
     </TRACK>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
-      <NODE Name="SoundCheck 2026-10-11 14.05.33" Type="1" KeyType="1" Entries="2">
-        <TRACK Key="file://localhost/Music/%C5%9Eark%C4%B1%20%26%20Co/01.wav"/>
-        <TRACK Key="file://localhost/Music/b%20%3Clive%3E%20%221%22.wav"/>
+      <NODE Name="SoundCheck 2026-10-11 14.05.33" Type="1" KeyType="0" Entries="2">
+        <TRACK Key="1"/>
+        <TRACK Key="2"/>
       </NODE>
     </NODE>
   </PLAYLISTS>
@@ -180,8 +180,8 @@ fn escapes() {
     assert!(text.contains("Name=\"a\u{FFFD}b\""), "{text}");
     assert!(text.contains("Artist=\"x\u{FFFD}\""), "{text}");
     assert!(text.contains("/m/a%01b.wav"), "{text}");
-    // Only the five attributes SoundCheck means to set.
-    assert!(!EXPECTED.contains("TrackID") && !EXPECTED.contains("Genre"));
+    // Only the XML's key and the five attributes SoundCheck means to set.
+    assert!(!EXPECTED.contains("Genre") && !EXPECTED.contains("Album"));
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn deterministic_bytes() {
     assert!(empty.contains(r#"<COLLECTION Entries="0"/>"#), "{empty}");
     assert!(
         empty.contains(
-            r#"<NODE Name="SoundCheck 2026-10-11 14.05.33" Type="1" KeyType="1" Entries="0"/>"#
+            r#"<NODE Name="SoundCheck 2026-10-11 14.05.33" Type="1" KeyType="0" Entries="0"/>"#
         ),
         "{empty}"
     );
@@ -277,6 +277,25 @@ fn speller_drops_dots_and_keeps_what_it_cannot_list() {
     assert!(speller.spell(Path::new("rel.wav")).is_absolute());
 }
 
+/// One listing per folder per batch: 1,500 files in one folder are spelled with one read of it
+/// and a map lookup each (about 0.1 s in a debug build, where folding the whole folder per file
+/// took seconds).
+#[test]
+fn speller_reads_a_big_folder_once() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let names: Vec<String> = (0..1_500).map(|i| format!("Şarkı {i:04}.wav")).collect();
+    for n in &names {
+        std::fs::write(dir.path().join(n), b"").expect("write");
+    }
+    let mut speller = Speller::new();
+    let base = speller.spell(dir.path());
+    for n in &names {
+        assert_eq!(speller.spell(&dir.path().join(n)), base.join(n));
+    }
+    // The folder was listed once, however many of its files were spelled.
+    assert_eq!(speller.listed_folders(), base.ancestors().count());
+}
+
 #[test]
 fn parse_back() {
     use quick_xml::events::Event;
@@ -325,8 +344,8 @@ fn parse_back() {
         }
         buf.clear();
     }
-    // The playlist lists every track, keyed by its location.
-    assert_eq!(keys, locations);
+    // The playlist lists every track, keyed by its TrackID.
+    assert_eq!(keys, ["1", "2", "3"]);
     let paths: Vec<PathBuf> = locations
         .iter()
         .map(|l| decode_location(l).expect("a file location"))

@@ -131,6 +131,18 @@ const HEAD_BYTES: usize = 512;
 /// [`Error::AlreadyExists`] naming `path` when something not ours is there; [`Error::Io`] as
 /// [`write_file`].
 pub fn write_artefact(path: &Path, bytes: &[u8], is_ours: fn(&[u8]) -> bool) -> Result<()> {
+    check_replaceable(path, is_ours)?;
+    write_file(path, bytes)
+}
+
+/// Whether an artefact may be written at `path`: nothing is there, or a file whose first bytes
+/// `is_ours` accepts. Callers check before a batch starts, so a foreign file there refuses the
+/// batch before anything is exported; [`write_artefact`] checks again.
+///
+/// # Errors
+/// [`Error::AlreadyExists`] naming `path` when something not ours is there; [`Error::Io`] when
+/// it cannot be read.
+pub fn check_replaceable(path: &Path, is_ours: fn(&[u8]) -> bool) -> Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) => {
             let ours = meta.is_file() && {
@@ -141,16 +153,17 @@ pub fn write_artefact(path: &Path, bytes: &[u8], is_ours: fn(&[u8]) -> bool) -> 
                     .map_err(|e| io_err(path, e))?;
                 is_ours(&head)
             };
-            if !ours {
-                return Err(Error::AlreadyExists {
+            if ours {
+                Ok(())
+            } else {
+                Err(Error::AlreadyExists {
                     path: path.to_path_buf(),
-                });
+                })
             }
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(io_err(path, e)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(io_err(path, e)),
     }
-    write_file(path, bytes)
 }
 
 /// A number no other call in this process got.

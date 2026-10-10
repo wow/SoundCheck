@@ -176,6 +176,10 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
     let decide = decide_settings(args.mode, args.target, args.ceiling, &args.analysis);
     decide.validate()?;
     let export = args.export_settings()?;
+    // Refused before anything is exported: the batch could not write its XML or report.
+    if export.xml && refuse_foreign_artefact(args.out.as_deref()) {
+        return Ok(1);
+    }
     let root = args.backup.resolve()?;
     let cache = Cache::open(Cache::default_dir()?);
     let recovered = recover_first(&root, &cache);
@@ -264,6 +268,52 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
         print_artefacts(&written, &playlist, export.batch_mode, args.json);
     }
     Ok(c.failed)
+}
+
+/// Whether an artefact name in the `--out` folder is taken by a file SoundCheck did not write;
+/// if so, the refusal is printed in three lines.
+fn refuse_foreign_artefact(out: Option<&Path>) -> bool {
+    let Some((path, why)) = out.and_then(foreign_artefact) else {
+        return false;
+    };
+    eprintln!(
+        "{}: not written\n  why: {why}\n  what to do: export into another folder, move that \
+         file away, or pass --no-xml",
+        path.display()
+    );
+    true
+}
+
+/// Recognises a file SoundCheck wrote from its first bytes.
+type IsOurs = fn(&[u8]) -> bool;
+
+/// An artefact name in the `--out` folder taken by a file SoundCheck did not write, and why it
+/// blocks the batch.
+fn foreign_artefact(out: &Path) -> Option<(PathBuf, String)> {
+    use sc_io::artefacts::check_replaceable;
+    let checks: [(&str, IsOurs); 2] = [
+        (
+            sc_io::rekordbox::XML_FILE_NAME,
+            sc_io::rekordbox::is_soundcheck_xml,
+        ),
+        (
+            sc_io::report::REPORT_FILE_NAME,
+            sc_io::report::is_soundcheck_report,
+        ),
+    ];
+    checks.into_iter().find_map(|(name, is_ours)| {
+        let path = out.join(name);
+        check_replaceable(&path, is_ours).err().map(|e| {
+            let why = match e {
+                Error::AlreadyExists { .. } => format!(
+                    "the batch writes its {name} here, and a file SoundCheck did not write is \
+                     already there; it is never replaced"
+                ),
+                other => format!("it could not be read to check it: {other}"),
+            };
+            (path, why)
+        })
+    })
 }
 
 /// Where the batch's artefacts go: the `--out` folder (created if no copy was written), else a

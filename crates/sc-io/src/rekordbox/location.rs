@@ -57,11 +57,19 @@ pub fn decode_location(uri: &str) -> Option<PathBuf> {
     Some(PathBuf::from(decoded.into_owned()))
 }
 
-/// Spells paths as their folders list their names, reading each folder once.
+/// Spells paths as their folders list their names, reading and folding each folder once (a
+/// folder of thousands of tracks costs one listing per batch, and each name a map lookup).
 #[derive(Debug, Default)]
 pub struct Speller {
-    /// Each folder's entry names, sorted; `None` when it could not be listed.
-    listings: BTreeMap<PathBuf, Option<Vec<OsString>>>,
+    /// Each folder's listing; `None` when it could not be listed.
+    listings: BTreeMap<PathBuf, Option<Listing>>,
+}
+
+/// A folder's entry names, sorted by their bytes, and grouped by their folded form.
+#[derive(Debug)]
+struct Listing {
+    names: Vec<OsString>,
+    by_fold: BTreeMap<String, Vec<usize>>,
 }
 
 impl Speller {
@@ -97,25 +105,33 @@ impl Speller {
         out
     }
 
+    /// Folders read so far.
+    #[must_use]
+    pub fn listed_folders(&self) -> usize {
+        self.listings.len()
+    }
+
     #[cfg(unix)]
     fn listed_name(&mut self, dir: &Path, name: &OsStr) -> Option<OsString> {
         use std::os::unix::fs::MetadataExt;
         let ino = std::fs::symlink_metadata(dir.join(name)).ok()?.ino();
-        let names = self
+        let listing = self
             .listings
             .entry(dir.to_path_buf())
             .or_insert_with(|| list(dir))
             .as_ref()?;
-        let want = fold(name);
         let same_file =
             |n: &&OsString| std::fs::symlink_metadata(dir.join(n)).is_ok_and(|m| m.ino() == ino);
         // Names equal but for normalisation and case first; then any name of that file, for a
         // volume whose case rules differ from Unicode's simple ones (Turkish dotless `ı`).
-        names
-            .iter()
-            .filter(|n| fold(n) == want)
+        listing
+            .by_fold
+            .get(&fold(name))
+            .into_iter()
+            .flatten()
+            .map(|&i| &listing.names[i])
             .find(same_file)
-            .or_else(|| names.iter().find(same_file))
+            .or_else(|| listing.names.iter().find(same_file))
             .cloned()
     }
 
@@ -125,15 +141,19 @@ impl Speller {
     }
 }
 
-/// The names in `dir`, sorted by their bytes.
+/// The names in `dir`, sorted by their bytes, with their folded forms.
 #[cfg(unix)]
-fn list(dir: &Path) -> Option<Vec<OsString>> {
+fn list(dir: &Path) -> Option<Listing> {
     let mut names: Vec<OsString> = std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok().map(|e| e.file_name()))
         .collect();
     names.sort();
-    Some(names)
+    let mut by_fold: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, n) in names.iter().enumerate() {
+        by_fold.entry(fold(n)).or_default().push(i);
+    }
+    Some(Listing { names, by_fold })
 }
 
 /// `name` compared ignoring Unicode normalisation (NFC) and case.

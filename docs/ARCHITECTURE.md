@@ -149,7 +149,7 @@ RENDER (streamed)
              -> write_artefacts(dir, rows, XmlSelect::Batch (Prepare rows; Library rows only with a confirmed grid) | All (sc-cli xml: no opt-in) | Off, playlist)
              -> sc_io::rekordbox (soundcheck-rekordbox.xml: only tracks with a TEMPO; Name/Artist from the tags, TotalTime, AverageBpm, Location = each name as its
              folder lists it (Speller, by inode), percent-encoded; one 4/4 TEMPO from bar 1, first beat >= 0 with its Battito; review grids, no grid and other
-             meters are left out; a per-batch playlist keyed by location) + sc_io::report (grid-report.csv), each replacing atomically only a file SoundCheck
+             meters are left out; a per-batch playlist keyed by TrackID, KeyType 0) + sc_io::report (grid-report.csv), each replacing atomically only a file SoundCheck
              wrote (sc_io::artefacts::write_artefact); in place they go to a new
              `~/Music/SoundCheck/exports/<local date time>/` (sc_io::artefacts, SC_EXPORTS_ROOT); per-file grid-check comes next
 ```

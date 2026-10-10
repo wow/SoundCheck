@@ -2,16 +2,19 @@
 //! "XML file format for playlists sharing" (rekordbox `xml_format_list`): `DJ_PLAYLISTS`
 //! version 1.0.0 with a `PRODUCT`, a `COLLECTION` of `TRACK`s and a `PLAYLISTS` tree whose root
 //! holds one playlist of every track, named per batch (`SoundCheck 2026-10-11 14.05.33`: rekordbox
-//! replaces a playlist of the same name on import), its tracks keyed by `Location` (`KeyType` 1).
+//! replaces a playlist of the same name on import), its tracks keyed by `TrackID` (`KeyType` 0,
+//! as rekordbox's own exports key them).
 //! The format calls the tree essential and the collection's tracks outside any playlist
 //! unnecessary.
 //!
-//! - **`TRACK`** carries only what SoundCheck means to set, since importing a track from the XML
+//! - **`TRACK`** has `TrackID` (1, 2, ... in the order listed: the XML's own key, which the
+//!   playlist refers to; rekordbox matches an existing track by its location and keeps its own
+//!   id) and otherwise only what SoundCheck means to set, since importing a track from the XML
 //!   into rekordbox's collection overwrites the track's information with the XML's: `Name` and
 //!   `Artist` from the file's own tags (the title, else the file name without its extension; no
 //!   `Artist` without an artist tag), `TotalTime` (whole seconds, as the format asks),
-//!   `AverageBpm` (two decimals) and `Location` ([`location`]). Nothing else: no `TrackID`, no
-//!   album, genre, rating or comments.
+//!   `AverageBpm` (two decimals) and `Location` ([`location`]). Nothing else: no album, genre,
+//!   rating or comments.
 //! - **`TEMPO`** (one per track: a static grid): `Inizio` is the first beat at or after the start
 //!   of the file, in seconds with three decimals (rekordbox keeps beat positions in whole
 //!   milliseconds), `Bpm` the written tempo (two decimals, [`Bpm::written`]), `Metro` `4/4`, and
@@ -186,8 +189,8 @@ pub fn write_xml(
                 collection.write_empty()?;
             } else {
                 collection.write_inner_content(|w| {
-                    for track in tracks {
-                        write_track(w, track)?;
+                    for (i, track) in tracks.iter().enumerate() {
+                        write_track(w, i + 1, track)?;
                     }
                     Ok(())
                 })?;
@@ -198,7 +201,8 @@ pub fn write_xml(
 }
 
 /// One `TRACK` of the collection.
-fn write_track<W: Write>(w: &mut Writer<W>, track: &XmlTrack) -> std::io::Result<()> {
+fn write_track<W: Write>(w: &mut Writer<W>, id: usize, track: &XmlTrack) -> std::io::Result<()> {
+    let id = id.to_string();
     let stem = track
         .path
         .file_stem()
@@ -211,6 +215,7 @@ fn write_track<W: Write>(w: &mut Writer<W>, track: &XmlTrack) -> std::io::Result
     let bpm = format!("{:.2}", tempo.bpm.0);
     let location = location(&track.path);
     w.create_element("TRACK")
+        .with_attribute(("TrackID", id.as_str()))
         .with_attribute(("Name", name.as_str()))
         .with_attributes(artist.as_deref().map(|a| ("Artist", a)))
         .with_attributes([
@@ -235,7 +240,7 @@ fn write_track<W: Write>(w: &mut Writer<W>, track: &XmlTrack) -> std::io::Result
 }
 
 /// The playlist tree: the root folder holding one playlist, `name`, of every track, keyed by
-/// its `Location`.
+/// its `TrackID`.
 fn write_playlists<W: Write>(
     w: &mut Writer<W>,
     tracks: &[XmlTrack],
@@ -249,7 +254,7 @@ fn write_playlists<W: Write>(
                 let playlist = w.create_element("NODE").with_attributes([
                     ("Name", name),
                     ("Type", "1"),
-                    ("KeyType", "1"),
+                    ("KeyType", "0"),
                     ("Entries", entries.as_str()),
                 ]);
                 if tracks.is_empty() {
@@ -257,8 +262,8 @@ fn write_playlists<W: Write>(
                     return Ok(());
                 }
                 playlist.write_inner_content(|w| {
-                    for track in tracks {
-                        let key = location(&track.path);
+                    for id in 1..=tracks.len() {
+                        let key = id.to_string();
                         w.create_element("TRACK")
                             .with_attribute(("Key", key.as_str()))
                             .write_empty()?;

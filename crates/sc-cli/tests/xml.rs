@@ -284,7 +284,7 @@ fn xml_reads_an_export_back_from_its_sidecar() {
     let location = sc_io::rekordbox::location(&wav);
     assert!(
         xml.contains(&format!(
-            "<TRACK Name=\"Gece Yarısı\" Artist=\"Ayşe &amp; İlhan\" TotalTime=\"5\" \
+            "<TRACK TrackID=\"1\" Name=\"Gece Yarısı\" Artist=\"Ayşe &amp; İlhan\" TotalTime=\"5\" \
              AverageBpm=\"120.00\" Location=\"{location}\">\n      \
              <TEMPO Inizio=\"0.005\" Bpm=\"120.00\" Metro=\"4/4\" Battito=\"1\"/>"
         )),
@@ -425,10 +425,67 @@ fn prepare_xml_puts_bar_1_at_the_lead() {
     let copy = sc_io::rekordbox::location(&out.join("click.wav"));
     assert!(
         xml.contains(&format!(
-            "<TRACK Name=\"click\" TotalTime=\"32\" AverageBpm=\"120.00\" Location=\"{copy}\">"
+            "<TRACK TrackID=\"1\" Name=\"click\" TotalTime=\"32\" AverageBpm=\"120.00\" Location=\"{copy}\">"
         )),
         "{xml}"
     );
     let csv = read(&out.join("grid-report.csv"));
     assert!(csv.contains(",120.00,0.00"), "{csv}");
+}
+
+#[test]
+fn process_out_refuses_a_foreign_artefact_before_exporting() {
+    let lib = Library::new();
+    let wav = tone(&lib, "a.wav");
+    let original = std::fs::read(&wav).expect("read");
+    let out = lib.base.join("out");
+    std::fs::create_dir(&out).expect("folder");
+    for (name, foreign) in [
+        (
+            "soundcheck-rekordbox.xml",
+            "<?xml version=\"1.0\"?>\n<mine/>\n",
+        ),
+        ("grid-report.csv", "my,own,columns\n"),
+    ] {
+        let path = out.join(name);
+        std::fs::write(&path, foreign).expect("write");
+        let run = sc_cli(
+            &lib,
+            &[
+                "process",
+                arg(&wav),
+                "--batch-mode",
+                "prepare",
+                "--out",
+                arg(&out),
+                "--no-grid",
+            ],
+        );
+        assert_eq!(run.code, Some(2), "{}", run.text());
+        let lines: Vec<&str> = run.stderr.lines().collect();
+        assert_eq!(lines.len(), 3, "{}", run.text());
+        assert_eq!(lines[0], format!("{}: not written", path.display()));
+        assert!(lines[1].starts_with("  why: ") && lines[2].starts_with("  what to do: "));
+        // Nothing was exported, and the foreign file is as it was.
+        assert!(!out.join("a.wav").exists(), "{}", run.text());
+        assert_eq!(read(&path), foreign);
+        assert_eq!(std::fs::read(&wav).expect("read"), original);
+        std::fs::remove_file(&path).expect("remove");
+    }
+    // `--no-xml` writes neither, so a foreign file there does not matter.
+    std::fs::write(out.join("grid-report.csv"), "my,own,columns\n").expect("write");
+    let run = sc_cli(
+        &lib,
+        &[
+            "process",
+            arg(&wav),
+            "--batch-mode",
+            "prepare",
+            "--out",
+            arg(&out),
+            "--no-grid",
+            "--no-xml",
+        ],
+    );
+    assert!(run.ok, "{}", run.text());
 }
