@@ -43,8 +43,9 @@ fn a_file_without_a_resource_fork_carries_none() {
     );
 }
 
-/// The system stamps a new file with its own `com.apple.provenance` and ignores a write of
-/// another value, so it is not carried and no note says it differs; other attributes still are.
+/// The system stamps a new file with the writer's `com.apple.provenance` (when it has one) and
+/// ignores a write of another value, so it is not carried and no note says it differs; other
+/// attributes still are.
 #[test]
 fn provenance_is_left_to_the_system_without_a_note() {
     let dir = tempfile::tempdir().expect("temp dir");

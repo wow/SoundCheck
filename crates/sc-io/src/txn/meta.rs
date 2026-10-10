@@ -22,10 +22,11 @@
 //! one already there (`setxattr(2)` at position 0 overwrites the start only), so [`restore`]
 //! removes a fork that differs before writing it.
 //!
-//! `com.apple.provenance` (macOS 13 and later) is not carried: the system stamps every new file
-//! with the writing process's value and ignores a write of another one, so the original's value
-//! can never be restored and comparing it would only report a difference nobody can fix. The
-//! backup, a system copy of the original, keeps it.
+//! `com.apple.provenance` (macOS 13 and later) is not carried: the system stamps a new file with
+//! the writing process's value when that process has one, and ignores a write of another value,
+//! so the original's value can never be restored and comparing it would only report a
+//! difference nobody can fix. A backup cloned on the same volume keeps it; one copied from
+//! another volume may get the copying process's value instead.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{FileTimes, Metadata, OpenOptions};
@@ -347,8 +348,8 @@ pub(crate) fn restore(path: &Path, meta: &FileMeta, keep_mtime: bool) -> Result<
     Ok(notes)
 }
 
-/// Whether the system sets the attribute `name` on every new file and ignores writes of another
-/// value (`com.apple.provenance`), so it is not carried (see the module documentation).
+/// Whether the system sets the attribute `name` itself and ignores writes of another value
+/// (`com.apple.provenance`), so it is not carried (see the module documentation).
 fn is_system_managed(name: &OsStr) -> bool {
     name == "com.apple.provenance"
 }
