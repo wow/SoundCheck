@@ -189,7 +189,12 @@ fn a_confirmed_start_fit_survives_the_edit_store() {
     let saved = save_edit(&store, &track, RANGE, &start, true).expect("saved");
     assert!(saved.confirmed && saved.edited);
     assert_eq!(saved.fit, GridFit::Start);
-    assert_eq!(store.get(&track.path).map(|s| s.edit), Some(start));
+    assert_eq!(
+        store
+            .get(&track.path, &sc_engine::edits::audio_of(&track))
+            .map(|s| s.edit),
+        Some(start)
+    );
 
     let mut reopened = track.clone();
     let state = apply_saved(&mut reopened, &store);

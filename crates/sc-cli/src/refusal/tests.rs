@@ -187,6 +187,16 @@ fn the_advice_fits_the_cause() {
         explain(&first, Action::Change).what_to_do,
         "see sc-cli journal; if that change was yours, the file is done"
     );
+    let planned = Error::FileChanged {
+        path: path(),
+        detail: "since SoundCheck planned it; it was left as it is".into(),
+        cause: ChangeCause::SincePlanned,
+    };
+    assert!(
+        explain(&planned, Action::Change)
+            .what_to_do
+            .starts_with("run the export again")
+    );
     let clip = explain(
         &Error::WouldClip {
             needed_db: 3.0,

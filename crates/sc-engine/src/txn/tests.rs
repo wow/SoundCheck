@@ -103,7 +103,7 @@ fn a_cancelled_apply_changes_nothing() {
 #[test]
 fn recovery_at_start_never_fails() {
     let s = scene();
-    let none = recover_at_start(&s.base.join("no backups yet"));
+    let none = recover_at_start(&s.base.join("no backups yet"), None);
     assert_eq!(
         none,
         RecoveryStatus::Finished {
@@ -113,7 +113,7 @@ fn recovery_at_start_never_fails() {
     );
     // A journal that cannot be read (a folder in its place) is reported, not fatal.
     std::fs::create_dir_all(s.backups.join(sc_io::txn::JOURNAL_FILE)).expect("folder");
-    let unreadable = recover_at_start(&s.backups);
+    let unreadable = recover_at_start(&s.backups, None);
     assert!(
         matches!(unreadable, RecoveryStatus::Failed { .. }),
         "{unreadable:?}"
@@ -126,11 +126,11 @@ fn undo_puts_the_original_back() {
     let before = std::fs::read(&s.file).expect("read");
     let opts = ApplyOptions::in_place(&s.backups);
     apply_file(&s.file, &gain(-2.0), &opts, &CancelToken::new()).expect("applied");
-    let r = undo_file(&s.file, &s.backups).expect("undone");
+    let r = undo_file(&s.file, &s.backups, None).expect("undone");
     assert_eq!(r.path, s.file);
     assert_eq!(std::fs::read(&s.file).expect("restored"), before);
     assert!(matches!(
-        undo_file(&s.file, &s.backups),
+        undo_file(&s.file, &s.backups, None),
         Err(Error::NothingToUndo { .. })
     ));
 }
@@ -154,4 +154,75 @@ fn neutral_tags_reach_the_id3_chunk_and_bad_ones_change_nothing() {
     };
     let r = apply_file(&s.file, &good, &opts, &CancelToken::new()).expect("applied");
     assert!(!r.render.tags_added && r.render.tags_not_added.is_some());
+}
+
+/// Puts a placeholder cache entry for `file`; returns its path.
+fn cached(cache: &Cache, file: &Path) -> PathBuf {
+    let entry = cache.entry_path(&sc_io::cache::nfc(file));
+    std::fs::create_dir_all(cache.dir()).expect("cache dir");
+    std::fs::write(&entry, b"{}").expect("entry");
+    entry
+}
+
+#[test]
+fn apply_removes_the_cache_entry_even_when_it_fails_after_the_render() {
+    let s = scene();
+    let cache = Cache::open(s.base.join("cache"));
+    let entry = cached(&cache, &s.file);
+    let before = std::fs::read(&s.file).expect("read");
+    // A plan made from other bytes: refused after the render, before the rename.
+    let req = ApplyRequest {
+        source_blake3: Some([0; 32]),
+        ..gain(-1.0)
+    };
+    let opts = ApplyOptions {
+        cache: Some(cache.clone()),
+        ..ApplyOptions::in_place(&s.backups)
+    };
+    let err = apply_file(&s.file, &req, &opts, &CancelToken::new()).expect_err("refused");
+    assert!(matches!(err, Error::FileChanged { .. }), "{err}");
+    assert_eq!(std::fs::read(&s.file).expect("read"), before);
+    assert!(!entry.exists(), "the entry is removed whatever the outcome");
+
+    // A change that succeeds, and its undo, remove it too.
+    let entry = cached(&cache, &s.file);
+    apply_file(&s.file, &gain(-1.0), &opts, &CancelToken::new()).expect("applied");
+    assert!(!entry.exists());
+    let entry = cached(&cache, &s.file);
+    undo_file(&s.file, &s.backups, Some(&cache)).expect("undone");
+    assert!(!entry.exists());
+
+    // To a folder, the copy's entry goes and the source's stays.
+    let out = s.base.join("out");
+    let source_entry = cached(&cache, &s.file);
+    let copy_entry = cached(&cache, &out.join("Track.wav"));
+    let to_folder = ApplyOptions {
+        place: Place::Folder(out),
+        ..opts
+    };
+    apply_file(&s.file, &gain(-1.0), &to_folder, &CancelToken::new()).expect("copied");
+    assert!(source_entry.exists());
+    assert!(!copy_entry.exists());
+}
+
+#[test]
+fn recovery_removes_the_entries_of_the_files_it_ended() {
+    let s = scene();
+    let cache = Cache::open(s.base.join("cache"));
+    let entry = cached(&cache, &s.file);
+    let other = cached(&cache, &s.base.join("music/Other.wav"));
+    let report = RecoveryReport {
+        recovered: vec![sc_io::txn::Recovered {
+            txn: "t-1".into(),
+            kind: sc_io::txn::TxnKind::InPlace,
+            path: s.file.clone(),
+            reached: sc_io::txn::State::Renamed,
+            outcome: Outcome::Completed,
+            notes: Vec::new(),
+        }],
+        pending: Vec::new(),
+    };
+    forget_recovered(Some(&cache), &report);
+    assert!(!entry.exists());
+    assert!(other.exists(), "files recovery did not touch keep theirs");
 }

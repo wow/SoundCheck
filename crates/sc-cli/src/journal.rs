@@ -329,6 +329,8 @@ pub const EXIT_PENDING: i32 = 3;
 pub fn run_recover(args: &RecoverArgs) -> anyhow::Result<bool> {
     let root = args.backup.resolve()?;
     let report = txn::recover(&root)?;
+    let cache = sc_io::cache::Cache::open(sc_io::cache::Cache::default_dir()?);
+    sc_engine::forget_recovered(Some(&cache), &report);
     let mut out = std::io::stdout().lock();
     if args.json {
         let doc = RecoveryDoc {

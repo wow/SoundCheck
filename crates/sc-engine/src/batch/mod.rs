@@ -3,10 +3,15 @@
 //! calling thread, which forwards them to `on_event`, so the callback never runs concurrently
 //! and needs no locking.
 //!
-//! Every file gets exactly one terminal event (analysed, failed or cancelled), preceded by
-//! `Started` and progress at most every 100 ms. A batch summary follows at most every 500 ms and
-//! once more at the end. A failing file never stops the batch; a missing model stops it before
-//! any file. Records do not depend on the worker count.
+//! A batch either analyses its files ([`Task::Analyze`]) or exports them ([`Task::Process`]:
+//! analysis, plan, write, the output's own analysis; see [`crate::export::process`]). An export
+//! waits for the start-up recovery before it touches any file.
+//!
+//! Every file gets exactly one terminal event (analysed, written and done, skipped by the
+//! export, failed or cancelled), preceded by `Started` and progress at most every 100 ms; an
+//! export sends `Processing` and `Written` before `Done`. A batch summary follows at most every
+//! 500 ms and once more at the end. A failing file never stops the batch; a missing model or
+//! invalid export settings stop it before any file. Records do not depend on the worker count.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
@@ -15,12 +20,16 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 use sc_core::analysis::AnalysisSettings;
-use sc_core::{Error, Result};
+use sc_core::export::{ExportOutcome, ExportPlan};
+use sc_core::{Error, Result, Seconds};
 use sc_io::cache::Cache;
+use sc_io::txn::TxnReport;
 
 use crate::analyze::{AnalyzeReport, Analyzer, Progress, Timings};
 use crate::cancel::CancelToken;
 use crate::edits::EditState;
+use crate::export::process::process_file;
+use crate::export::{ProcessDone, ProcessSettings};
 
 /// Shortest gap between two progress events of one file.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -52,6 +61,18 @@ pub struct BatchSettings {
     pub workers: usize,
     /// The cache to consult and fill; `None` bypasses it.
     pub cache: Option<Cache>,
+    /// What the batch does with each file.
+    pub task: Task,
+}
+
+/// What a batch does with each file.
+#[derive(Debug, Clone, Default)]
+pub enum Task {
+    /// Analyse it ([`EngineEvent::Analysed`]).
+    #[default]
+    Analyze,
+    /// Export it ([`EngineEvent::Done`] or [`EngineEvent::ExportSkipped`]).
+    Process(Box<ProcessSettings>),
 }
 
 /// What a batch reports, in the order it happens.
@@ -86,10 +107,41 @@ pub enum EngineEvent {
         /// Why.
         error: Error,
     },
-    /// Terminal: the batch was cancelled before or while this file ran.
+    /// Terminal: the batch was cancelled before or while this file ran; an export of it never
+    /// replaced anything.
     Cancelled {
         /// The file.
         file_id: u32,
+    },
+    /// Export: the file is analysed and planned, and its write starts.
+    Processing {
+        /// The file.
+        file_id: u32,
+        /// What is written, planned from the cut the renderer makes.
+        plan: Box<ExportPlan>,
+    },
+    /// Export: the output is written and verified (in place, the original backed up first).
+    Written {
+        /// The file.
+        file_id: u32,
+        /// What the transaction did.
+        report: Box<TxnReport>,
+    },
+    /// Terminal (export): the file is not written: skipped, or left to the rekordbox XML.
+    ExportSkipped {
+        /// The file.
+        file_id: u32,
+        /// Why ([`ExportOutcome::Skip`] or [`ExportOutcome::XmlOnly`]).
+        outcome: Box<ExportOutcome>,
+        /// Its playing time.
+        duration: Seconds,
+    },
+    /// Terminal (export): written, then the grid edit carried over and the output analysed.
+    Done {
+        /// The file.
+        file_id: u32,
+        /// What became of the written file.
+        done: Box<ProcessDone>,
     },
     /// Where the whole batch stands.
     Batch(BatchProgress),
@@ -113,6 +165,10 @@ pub struct BatchProgress {
 pub struct BatchSummary {
     /// Files analysed (fresh or cached).
     pub analysed: usize,
+    /// Files an export wrote.
+    pub written: usize,
+    /// Files an export did not write (skipped, or left to the rekordbox XML).
+    pub not_written: usize,
     /// Files that failed.
     pub failed: usize,
     /// Files cancelled.
@@ -136,18 +192,23 @@ pub fn default_workers() -> usize {
 /// A worker's message: the file's index in the batch and what happened.
 type Message = (usize, EngineEvent);
 
-/// Analyses `files` on `settings.workers` threads, calling `on_event` from the calling thread.
+/// Runs `settings.task` on `files` with `settings.workers` threads, calling `on_event` from the
+/// calling thread. An export first waits for the start-up recovery
+/// ([`ProcessSettings::recovery`]); a cancel while it waits cancels every file.
 ///
 /// # Errors
 /// Only errors that stop the batch before any file: [`Error::ModelUnavailable`] or
-/// [`Error::Internal`] while loading the beat model. Per-file errors arrive as
-/// [`EngineEvent::Failed`].
+/// [`Error::Internal`] while loading the beat model, [`Error::InvalidArgument`] for export
+/// settings out of their limits. Per-file errors arrive as [`EngineEvent::Failed`].
 pub fn run_batch(
     files: &[BatchFile],
     settings: &BatchSettings,
     cancel: &CancelToken,
     on_event: &mut dyn FnMut(EngineEvent),
 ) -> Result<BatchSummary> {
+    if let Task::Process(process) = &settings.task {
+        process.validate()?;
+    }
     let workers = settings.workers.clamp(1, files.len().max(1));
     let analyzers = (0..workers)
         .map(|_| {
@@ -161,13 +222,20 @@ pub fn run_batch(
     let started = Instant::now();
     let next = AtomicUsize::new(0);
     let mut state = Coordinator::new(files);
+    // No file is touched while recovery may still repair it; a cancel meanwhile leaves every
+    // file to the loop below.
+    let gate_open = match &settings.task {
+        Task::Process(process) => process.recovery.wait(cancel).is_ok(),
+        Task::Analyze => true,
+    };
 
     std::thread::scope(|scope| {
         let (tx, rx) = mpsc::channel::<Message>();
-        for analyzer in analyzers {
+        for analyzer in analyzers.into_iter().filter(|_| gate_open) {
             let tx = tx.clone();
             let next = &next;
-            scope.spawn(move || work(analyzer, files, next, &tx));
+            let task = &settings.task;
+            scope.spawn(move || work(analyzer, task, files, next, &tx));
         }
         drop(tx);
         let mut last_summary = Instant::now();
@@ -208,6 +276,7 @@ pub fn run_batch(
 /// One worker: takes the next file until none are left or the batch is cancelled.
 fn work(
     mut analyzer: Analyzer,
+    task: &Task,
     files: &[BatchFile],
     next: &AtomicUsize,
     tx: &mpsc::Sender<Message>,
@@ -222,20 +291,38 @@ fn work(
         // A send fails only when the batch has returned; nothing is left to report to.
         let _ = tx.send((index, EngineEvent::Started { file_id }));
         let progress = throttled_progress(index, file_id, tx.clone());
-        let outcome = catch_unwind(AssertUnwindSafe(|| {
-            analyzer.analyze_with(&file.path, &mut Timings::default(), Some(&progress))
+        let outcome = catch_unwind(AssertUnwindSafe(|| match task {
+            Task::Analyze => analyzer
+                .analyze_with(&file.path, &mut Timings::default(), Some(&progress))
+                .map(|report| EngineEvent::Analysed {
+                    file_id,
+                    report: Box::new(report),
+                    edit: EditState::default(),
+                }),
+            Task::Process(settings) => {
+                let emit = |event| {
+                    let _ = tx.send((index, event));
+                };
+                process_file(
+                    &mut analyzer,
+                    file_id,
+                    &file.path,
+                    settings,
+                    Some(&progress),
+                    &emit,
+                )
+            }
         }));
         let event = match outcome {
-            Ok(Ok(report)) => EngineEvent::Analysed {
-                file_id,
-                report: Box::new(report),
-                edit: EditState::default(),
-            },
+            Ok(Ok(event)) => event,
             Ok(Err(Error::Cancelled)) => EngineEvent::Cancelled { file_id },
             Ok(Err(error)) => EngineEvent::Failed { file_id, error },
             Err(_) => EngineEvent::Failed {
                 file_id,
-                error: Error::Internal("the analysis of this file crashed".into()),
+                error: Error::Internal(match task {
+                    Task::Analyze => "the analysis of this file crashed".into(),
+                    Task::Process(_) => "the export of this file crashed".into(),
+                }),
             },
         };
         let _ = tx.send((index, event));
@@ -288,12 +375,31 @@ impl Coordinator {
                 self.summary.cancelled += 1;
                 true
             }
-            _ => false,
+            EngineEvent::Done { done, .. } => {
+                self.summary.written += 1;
+                self.audio_done += done.duration.0;
+                true
+            }
+            EngineEvent::ExportSkipped { duration, .. } => {
+                self.summary.not_written += 1;
+                self.audio_done += duration.0;
+                true
+            }
+            EngineEvent::Started { .. }
+            | EngineEvent::Progress { .. }
+            | EngineEvent::Processing { .. }
+            | EngineEvent::Written { .. }
+            | EngineEvent::Batch(_) => false,
         };
         if terminal {
             self.terminal[index] = true;
         }
         on_event(event);
+    }
+
+    /// Files that ended with their audio measured: analysed, written or not written.
+    fn finished(&self) -> usize {
+        self.summary.analysed + self.summary.written + self.summary.not_written
     }
 
     fn progress(&self, elapsed: Duration) -> BatchProgress {
@@ -306,7 +412,7 @@ impl Coordinator {
             // Remaining audio from the hints; files without one count as the average so far.
             // File counts are far below 2^52.
             #[allow(clippy::cast_precision_loss)]
-            let average = self.audio_done / self.summary.analysed.max(1) as f64;
+            let average = self.audio_done / self.finished().max(1) as f64;
             let remaining: f64 = self
                 .terminal
                 .iter()

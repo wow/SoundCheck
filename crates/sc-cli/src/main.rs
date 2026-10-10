@@ -8,6 +8,7 @@ mod export_plan;
 mod journal;
 mod labels;
 mod plan;
+mod process;
 mod refusal;
 mod report;
 mod vocab;
@@ -24,7 +25,7 @@ use sc_core::plan::DecideSettings;
 use sc_core::{Bpm, DbTp, Error, Lufs};
 use sc_engine::{
     AnalyzeReport, Analyzer, BatchFile, BatchSettings, CancelToken, EngineEvent, REPORT_SCHEMA,
-    Timings, default_workers, run_batch,
+    Task, Timings, default_workers, run_batch,
 };
 use sc_io::cache::Cache;
 use sc_io::edits::EditStore;
@@ -153,6 +154,11 @@ enum Command {
         #[command(flatten)]
         analysis: AnalysisArgs,
     },
+    /// Export files as the app's Export button does: analyse (the cache is used), plan as `plan
+    /// --batch-mode` does, write the gain, the Prepare cut and the tags, verified, losing nothing
+    /// else; in place after backing up the original (default), or as copies with --out. Runs
+    /// crash recovery first. The grid edits saved in the app are applied and carried over.
+    Process(process::ProcessArgs),
     /// Change files' level (and optionally cut their start), verified, losing nothing else: in
     /// place after backing up the original (default), or as copies with --out. Runs crash
     /// recovery first. WAV, AIFF and FLAC.
@@ -220,6 +226,7 @@ fn main() -> anyhow::Result<()> {
                 analysis: settings(&analysis),
                 workers: jobs.unwrap_or_else(default_workers),
                 cache,
+                task: Task::Analyze,
             };
             let failed = analyze_all(&settings, &files, json, evidence)?;
             if failed > 0 {
@@ -273,6 +280,7 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Command::Process(args) => exit_with_failures(process::run_process(&args)),
         Command::Apply(args) => exit_with_failures(apply::run_apply(args)),
         Command::Undo(args) => exit_with_failures(apply::run_undo(&args)),
         Command::Journal(args) => exit_with_failures(journal::run_journal(&args)),
@@ -292,6 +300,7 @@ fn cached_batch(analysis: &AnalysisArgs, jobs: Option<usize>) -> anyhow::Result<
         analysis: settings(analysis),
         workers: jobs.unwrap_or_else(default_workers),
         cache: Some(Cache::open(Cache::default_dir()?)),
+        task: Task::Analyze,
     })
 }
 

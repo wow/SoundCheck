@@ -125,10 +125,16 @@ pub(super) fn apply(
     }
     crash::point("rename");
     sync_dir(&plan.target_dir);
-    plan.journal.append(&Line::new(&plan.id, State::Renamed))?;
+    // From here on the file is replaced: nothing fails any more; what cannot be journaled is a
+    // note, and the entry is left for recovery to complete.
+    let renamed = plan
+        .journal
+        .append(&Line::new(&plan.id, State::Renamed))
+        .err()
+        .map(|e| journal_note(&e));
     crash::after(State::Renamed);
     timings.push((State::Renamed, t.elapsed()));
-    let report = finish(&plan, req, prepared, &mut timings)?;
+    let report = finish(&plan, req, prepared, &mut timings, renamed);
     drop(lock);
     Ok(report)
 }
@@ -299,6 +305,7 @@ fn before_rename(
             (report, Check::Flac(check))
         }
     };
+    check_planned(plan, &report)?;
     sync_path(&plan.temp)?;
     plan.journal
         .append(&Line::new(&plan.id, State::TempWritten))?;
@@ -326,6 +333,7 @@ fn before_rename(
     line.record = Some(Record {
         request: req.clone(),
         render: RenderSummary::of(&report),
+        export: plan.opts.export.clone(),
     });
     let folder_original = if plan.kind == TxnKind::ToFolder {
         let original = hash_file(&plan.src.path)?;
@@ -351,6 +359,7 @@ fn before_rename(
         (None, Some(original)) => (original, None, Vec::new()),
         (None, None) => return Err(Error::Internal("no original hash".into())),
     };
+    check_planned_original(plan, &original.1)?;
     check_cancel(cancel)?;
     Ok(Prepared {
         report,
@@ -359,6 +368,43 @@ fn before_rename(
         backup,
         backup_notes,
     })
+}
+
+/// For an export, [`Error::VerifyFailed`] unless the render cut what the export planned and
+/// wrote the frame count it expects (Library: the source's; Prepare: the source's minus the
+/// cut), so nothing of another length replaces anything.
+fn check_planned(plan: &Plan<'_>, report: &RenderReport) -> Result<()> {
+    let Some(export) = &plan.opts.export else {
+        return Ok(());
+    };
+    let planned = &export.plan;
+    if report.frames_out != planned.expect_frames || report.trim_frames != planned.trim_frames {
+        return Err(Error::VerifyFailed {
+            path: plan.target.clone(),
+            detail: format!(
+                "{} frames written after a {}-frame cut; the export planned {} after {}",
+                report.frames_out, report.trim_frames, planned.expect_frames, planned.trim_frames
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// [`Error::FileChanged`] ([`ChangeCause::SincePlanned`]) unless the original hashes to what
+/// the caller planned from ([`TxnOptions::expect_original_blake3`]). Compared with the hash the
+/// backup copy (in place) or the copy's check (to a folder) has just read, so it costs no extra
+/// read; a mismatch wastes the render but still refuses before the rename.
+fn check_planned_original(plan: &Plan<'_>, original: &[u8; 32]) -> Result<()> {
+    match plan.opts.expect_original_blake3 {
+        Some(expected) if expected != *original => Err(Error::FileChanged {
+            path: plan.src.path.clone(),
+            detail: "since SoundCheck planned it (another change wrote it in between); it was \
+                     left as it is"
+                .into(),
+            cause: ChangeCause::SincePlanned,
+        }),
+        _ => Ok(()),
+    }
 }
 
 /// Copies the original to its backup temp with the system's copy (data, extended attributes,
@@ -444,6 +490,11 @@ fn rename_into_place(tx: &Transaction<'_>, plan: &Plan<'_>) -> Result<()> {
         TxnKind::ToFolder => rename_noreplace(&plan.temp, &plan.target),
         _ => std::fs::rename(&plan.temp, &plan.target).map_err(|e| io_err(&plan.target, e)),
     }
+}
+
+/// The note for a journal line that could not be written after the rename.
+pub(super) fn journal_note(error: &Error) -> String {
+    format!("journal not updated ({error}); the next recovery completes this change")
 }
 
 /// Settles a transaction `error` stopped (rolled back and `failed`, or left pending for

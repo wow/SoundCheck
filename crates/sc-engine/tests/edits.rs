@@ -14,7 +14,7 @@ use sc_core::ipc::{JobEvent, JobStage, RowAnalysis};
 use sc_core::plan::{DecideSettings, Plan, ReviewReason};
 use sc_core::{Bpm, SampleIndex};
 use sc_engine::{
-    Analyzer, BatchSettings, CancelToken, EditState, Session, collect_audio_files, probe_all,
+    Analyzer, BatchSettings, CancelToken, EditState, Session, Task, collect_audio_files, probe_all,
     run_job, save_edit,
 };
 use sc_io::cache::Cache;
@@ -67,6 +67,7 @@ fn row_and_plan(
         analysis,
         workers: 1,
         cache: Some(cache.clone()),
+        task: Task::Analyze,
     };
     let mut events = Vec::new();
     run_job(
@@ -186,7 +187,11 @@ fn a_saved_edit_and_its_confirmation_reach_the_row_and_its_plan() {
     )
     .unwrap();
     assert_eq!(state, EditState::default());
-    assert!(f.store.get(&f.analysed.path).is_none());
+    assert!(
+        f.store
+            .get(&f.analysed.path, &sc_engine::edits::audio_of(&f.analysed))
+            .is_none()
+    );
 }
 
 #[test]
@@ -239,7 +244,10 @@ fn a_confirmation_counts_only_for_the_grid_that_was_confirmed() {
     let Some(f) = fixture() else { return };
     save(&f.store, &f.analysed, &GridEdit::default(), true);
     // The pinned grid no longer matches what the edit gives (as after a new beat model).
-    let mut saved = f.store.get(&f.analysed.path).unwrap();
+    let mut saved = f
+        .store
+        .get(&f.analysed.path, &sc_engine::edits::audio_of(&f.analysed))
+        .unwrap();
     let pin = saved.grid.as_mut().unwrap();
     pin.anchor = SampleIndex(pin.anchor.0 + 441);
     f.store.put(&saved).unwrap();

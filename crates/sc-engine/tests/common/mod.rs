@@ -2,6 +2,8 @@
 
 #![allow(dead_code)] // each test binary uses a subset
 
+pub mod export;
+
 use std::path::{Path, PathBuf};
 
 use sc_core::analysis::{AnalysisSettings, Model};

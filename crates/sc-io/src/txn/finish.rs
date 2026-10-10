@@ -3,32 +3,37 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use sc_core::{RenderRequest, Result};
+use sc_core::RenderRequest;
 
 use super::TxnReport;
-use super::apply::{Plan, Prepared};
+use super::apply::{Plan, Prepared, journal_note};
 use super::crash;
 use super::fsx::hex;
 use super::journal::{Entry, Line, State};
 use super::meta::{FileMeta, restore};
 use super::sidecar::{self, Record, RenderSummary};
 
-/// Metadata, sidecar, done: the file is in place, so nothing here undoes it; a failure leaves
-/// the transaction for [`super::recover`].
+/// Metadata, sidecar, done: the file is in place, so nothing here undoes it or fails; what goes
+/// wrong is a note (`late`: the rename's own journal line), and a journal line that cannot be
+/// written leaves the transaction for [`super::recover`].
 pub(super) fn finish(
     plan: &Plan<'_>,
     req: &RenderRequest,
     prepared: Prepared,
     timings: &mut Vec<(State, Duration)>,
-) -> Result<TxnReport> {
+    late: Option<String>,
+) -> TxnReport {
     let t = Instant::now();
     let restored = metadata_step(&plan.target, &plan.meta, plan.opts.keep_mtime);
     let mut line = Line::new(&plan.id, State::MetadataDone);
     line.notes.clone_from(&restored);
     // The backup's notes are on its own journal line.
     let mut notes = prepared.backup_notes.clone();
+    notes.extend(late);
     notes.extend(restored);
-    plan.journal.append(&line)?;
+    if let Err(e) = plan.journal.append(&line) {
+        notes.push(journal_note(&e));
+    }
     crash::after(State::MetadataDone);
     timings.push((State::MetadataDone, t.elapsed()));
 
@@ -48,7 +53,9 @@ pub(super) fn finish(
         None
     };
     notes.extend(line.notes.iter().cloned());
-    plan.journal.append(&line)?;
+    if let Err(e) = plan.journal.append(&line) {
+        notes.push(journal_note(&e));
+    }
     timings.push((State::Done, t.elapsed()));
     tracing::info!(
         path = %plan.src.path.display(),
@@ -59,7 +66,7 @@ pub(super) fn finish(
         trim_frames = req.trim_frames,
         "processed"
     );
-    Ok(TxnReport {
+    TxnReport {
         txn: plan.id.clone(),
         kind: plan.kind,
         source: plan.src.path.clone(),
@@ -72,7 +79,7 @@ pub(super) fn finish(
         output_bytes: prepared.output.0,
         notes,
         timings: std::mem::take(timings),
-    })
+    }
 }
 
 /// Restores `meta` onto `target`; what could not be restored becomes notes.
@@ -112,6 +119,7 @@ pub(super) fn entry_of(plan: &Plan<'_>, req: &RenderRequest, p: &Prepared) -> En
         record: Some(Record {
             request: req.clone(),
             render: RenderSummary::of(&p.report),
+            export: plan.opts.export.clone(),
         }),
         outcome: None,
         error: None,

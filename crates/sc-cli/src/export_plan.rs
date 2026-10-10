@@ -36,7 +36,7 @@ pub struct ExportArgs {
     no_xml: bool,
 }
 
-fn parse_lead_ms(text: &str) -> Result<f64, String> {
+pub(crate) fn parse_lead_ms(text: &str) -> Result<f64, String> {
     let ms: f64 = text
         .parse()
         .map_err(|e| format!("{text:?} is not a number: {e}"))?;
@@ -87,6 +87,9 @@ pub fn write_outcome(
             for notice in &plan.notices {
                 writeln!(out, "    note: {}", notice_text(*notice))?;
             }
+            if plan.grid_withheld {
+                writeln!(out, "    note: {GRID_WITHHELD}")?;
+            }
             Ok(())
         }
         ExportOutcome::XmlOnly { reason } => {
@@ -101,8 +104,12 @@ pub fn write_outcome(
     }
 }
 
+/// The note on a written file whose grid needs review and was not confirmed.
+pub const GRID_WITHHELD: &str =
+    "its BPM and bar 1 are not written, because the grid needs review (confirm it in the app)";
+
 /// `Gain -2.0 dB, Cut 0.29 s; tags BPM, ...`.
-fn write_text(plan: &ExportPlan) -> String {
+pub(crate) fn write_text(plan: &ExportPlan) -> String {
     let gain = if plan.gain_db.abs() < sc_core::plan::NEGLIGIBLE_DB {
         "No gain".to_owned()
     } else {
@@ -157,7 +164,7 @@ fn write_text(plan: &ExportPlan) -> String {
     format!("{head}{depth}; tags {}", names.join(", "))
 }
 
-fn notice_text(notice: ExportNotice) -> String {
+pub(crate) fn notice_text(notice: ExportNotice) -> String {
     match notice {
         ExportNotice::SeratoCuesShifted { cut_s } => format!(
             "the copy keeps its Serato cue points and beat grid as they are, so in Serato they sit \
@@ -167,7 +174,7 @@ fn notice_text(notice: ExportNotice) -> String {
     }
 }
 
-fn xml_only_text(reason: XmlOnlyReason) -> String {
+pub(crate) fn xml_only_text(reason: XmlOnlyReason) -> String {
     match reason {
         XmlOnlyReason::Mp3OrAac { codec } => {
             format!("{} (file writes arrive later)", codec.label())
@@ -187,7 +194,7 @@ fn xml_only_text(reason: XmlOnlyReason) -> String {
 }
 
 /// Why a file is skipped, and what to do.
-fn skip_text(reason: ExportSkip) -> (String, String) {
+pub(crate) fn skip_text(reason: ExportSkip) -> (String, String) {
     match reason {
         ExportSkip::SeratoInPlaceCut { cut_s } => (
             format!(
@@ -240,6 +247,12 @@ fn skip_text(reason: ExportSkip) -> (String, String) {
         ExportSkip::NoGrid => (
             "grid only, and no beats were found, so there is no grid to write".to_owned(),
             "set the grid in the app, or export without --grid-only".to_owned(),
+        ),
+        ExportSkip::GridNeedsReview => (
+            "grid only, and its grid needs review, so it is not written and there is nothing \
+             else to write"
+                .to_owned(),
+            "check and confirm the grid in the app, or export without --grid-only".to_owned(),
         ),
     }
 }

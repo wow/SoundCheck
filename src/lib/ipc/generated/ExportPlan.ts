@@ -51,4 +51,11 @@ cut: Cut,
 /**
  * What the user should know about the written file.
  */
-notices: Array<ExportNotice>, };
+notices: Array<ExportNotice>, 
+/**
+ * The file has a grid, but it needs review and the user has not confirmed it, so the
+ * export writes neither its tempo nor its bar 1 (no `BPM` tag; the `SOUNDCHECK` record
+ * says `bpm=none;bar1=none`) and does not cut to it. Absent (false) in plans from before
+ * it was recorded.
+ */
+gridWithheld: boolean, };

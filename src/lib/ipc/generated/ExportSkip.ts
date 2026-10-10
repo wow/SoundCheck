@@ -26,7 +26,7 @@ channels: number, } | { "type": "unsupported",
 /**
  * The codec.
  */
-codec: Codec, } | { "type": "silent" } | { "type": "noGrid" } | { "type": "nothingToWrite", 
+codec: Codec, } | { "type": "silent" } | { "type": "noGrid" } | { "type": "gridNeedsReview" } | { "type": "nothingToWrite", 
 /**
  * Why the file itself is not written.
  */

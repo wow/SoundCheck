@@ -13,6 +13,7 @@ use sc_engine::txn::check_tags;
 use sc_engine::{
     ApplyOptions, ApplyRequest, CancelToken, Place, Tag, apply_file, check_inputs, undo_file,
 };
+use sc_io::cache::Cache;
 use sc_io::txn::sidecar::{BlockCounts, RenderSummary};
 use sc_io::txn::{SidecarAfterUndo, TxnKind, TxnReport, UndoReport, hex};
 use serde::Serialize;
@@ -369,7 +370,12 @@ fn applied_doc<'a>(
 }
 
 /// Prints a refusal: three lines on stderr, and the JSON document on stdout with `--json`.
-fn print_failed(file: &Path, err: Error, action: Action, json: bool) -> anyhow::Result<()> {
+pub(crate) fn print_failed(
+    file: &Path,
+    err: Error,
+    action: Action,
+    json: bool,
+) -> anyhow::Result<()> {
     let why = refusal::explain(&err, action);
     refusal::write(&mut std::io::stderr().lock(), file, action, &why)?;
     if json {
@@ -387,9 +393,11 @@ fn print_failed(file: &Path, err: Error, action: Action, json: bool) -> anyhow::
     Ok(())
 }
 
-/// Runs recovery before a command that writes, saying on stderr what it found.
-pub fn recover_first(root: &Path) {
-    match sc_engine::recover_at_start(root) {
+/// Runs recovery before a command that writes, saying on stderr what it found; returns it.
+#[must_use]
+pub fn recover_first(root: &Path, cache: &Cache) -> RecoveryStatus {
+    let status = sc_engine::recover_at_start(root, Some(cache));
+    match &status {
         RecoveryStatus::Finished { recovered, pending } => {
             if !recovered.is_empty() {
                 eprintln!(
@@ -409,6 +417,7 @@ pub fn recover_first(root: &Path) {
         }
         RecoveryStatus::Running | RecoveryStatus::Skipped { .. } => {}
     }
+    status
 }
 
 /// Stops the run before any file when the tags are not valid (exit code 2).
@@ -426,7 +435,8 @@ fn check_tags_or_exit(tags: &[Tag]) {
 pub fn run_apply(args: ApplyArgs) -> anyhow::Result<usize> {
     check_tags_or_exit(&args.tags);
     let root = args.backup.resolve()?;
-    recover_first(&root);
+    let cache = Cache::open(Cache::default_dir()?);
+    let _ = recover_first(&root, &cache);
     let req = ApplyRequest {
         gain_db: args.gain_db,
         trim_frames: args.trim_samples,
@@ -434,6 +444,8 @@ pub fn run_apply(args: ApplyArgs) -> anyhow::Result<usize> {
         bits: args.bits,
         loudness: None,
         tags: args.tags,
+        export: None,
+        source_blake3: None,
     };
     let (place, action) = match args.out {
         Some(dir) => (Place::Folder(std::path::absolute(dir)?), Action::Copy),
@@ -446,6 +458,7 @@ pub fn run_apply(args: ApplyArgs) -> anyhow::Result<usize> {
         backup_root: root,
         keep_mtime: !args.no_keep_mtime,
         sidecar: !args.no_sidecar,
+        cache: Some(cache),
     };
     let cancel = CancelToken::new();
     let mut failed = 0;
@@ -529,14 +542,15 @@ fn undone_doc<'a>(file: &Path, r: &'a UndoReport, total: Duration) -> UndoneDoc<
 /// When the backup root cannot be named or the output cannot be written.
 pub fn run_undo(args: &UndoArgs) -> anyhow::Result<usize> {
     let root = args.backup.resolve()?;
-    recover_first(&root);
+    let cache = Cache::open(Cache::default_dir()?);
+    let _ = recover_first(&root, &cache);
     let refused = check_inputs(&args.files, &Place::InPlace);
     let mut failed = 0;
     for (file, refusal) in args.files.iter().zip(refused) {
         let started = Instant::now();
         let result = match refusal {
             Some(err) => Err(err),
-            None => undo_file(file, &root),
+            None => undo_file(file, &root, Some(&cache)),
         };
         match result {
             Ok(report) => {

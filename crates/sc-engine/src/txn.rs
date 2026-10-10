@@ -7,17 +7,21 @@
 //! back the transactions a crash interrupted; the app shell calls it once at start and the CLI
 //! before every command that writes.
 
+mod gate;
 mod inputs;
 mod tags;
 
 use std::path::{Path, PathBuf};
 
+use sc_core::export::ExportRecord;
 use sc_core::ipc::{PendingChange, RecoveredChange, RecoveryOutcome, RecoveryStatus};
 use sc_core::{BextLoudness, RenderRequest, Result};
+use sc_io::cache::Cache;
 use sc_io::txn::{self, Outcome, RecoveryReport, TxnOptions, TxnReport, UndoReport};
 
 use crate::CancelToken;
 
+pub use gate::{RecoveryGate, RecoveryGuard};
 pub use inputs::check_inputs;
 pub use tags::{Tag, check_tags, tag_edits};
 
@@ -40,6 +44,12 @@ pub struct ApplyRequest {
     pub loudness: Option<BextLoudness>,
     /// Tag items by their neutral names (see [`tags`]), mapped to the file's container.
     pub tags: Vec<Tag>,
+    /// What the export asking for this write planned, for the sidecar; the transaction refuses
+    /// an output whose frame count or cut is not the planned one. `None` for a plain change.
+    pub export: Option<ExportRecord>,
+    /// BLAKE3 of the file as it was planned from: the write is refused (`FileChanged`, nothing
+    /// written) when the file no longer has it. `None` checks nothing.
+    pub source_blake3: Option<[u8; 32]>,
 }
 
 /// Where the processed file goes.
@@ -64,6 +74,9 @@ pub struct ApplyOptions {
     pub keep_mtime: bool,
     /// Write `<file>.soundcheck.json` next to the output.
     pub sidecar: bool,
+    /// The analysis cache whose entry for the file written is removed before and after the
+    /// change (see [`forget_cached`]); `None` touches no cache.
+    pub cache: Option<Cache>,
 }
 
 impl ApplyOptions {
@@ -75,8 +88,25 @@ impl ApplyOptions {
             backup_root: backup_root.into(),
             keep_mtime: true,
             sidecar: true,
+            cache: None,
         }
     }
+}
+
+/// Removes the cache entry of the file at `path`, so no analysis of what it held before a
+/// change is served for what it holds after it. Needed beyond the cache key's own checks: on
+/// FAT and exFAT a file written at the same length with its modification time kept can get the
+/// old file's inode back after a remount, and its change time equals its modification time.
+///
+/// # Errors
+/// [`sc_core::Error::Io`] when the entry exists but cannot be removed.
+pub fn forget_cached(cache: Option<&Cache>, path: &Path) -> Result<()> {
+    if let Some(cache) = cache
+        && cache.remove(path)?
+    {
+        tracing::debug!(path = %path.display(), stage = "cache", "cached analysis removed");
+    }
+    Ok(())
 }
 
 /// Renders `path` with `req` and writes it as `opts` says, verified, through one journaled
@@ -86,8 +116,9 @@ impl ApplyOptions {
 /// # Errors
 /// `InvalidArgument` for a tag [`check_tags`] refuses; the transaction's refusals and failures (see `sc_io::txn`): `RekordboxUsbExport`,
 /// `InPlaceRefused`, `NoSpace`, `UnsupportedFormat`, `NotDjSafe`, `WouldClip`,
-/// `VerifyFailed`, `FileChanged`, `AlreadyExists`, `Cancelled`, `Io`. On any error before the
-/// rename the original is untouched and nothing is left behind.
+/// `VerifyFailed`, `FileChanged`, `AlreadyExists`, `Cancelled`, `Io`. Every error comes before
+/// the original is replaced, which leaves it untouched and nothing behind; once it is replaced
+/// the call succeeds, with what could not be finished in the report's notes.
 pub fn apply_file(
     path: &Path,
     req: &ApplyRequest,
@@ -108,16 +139,32 @@ pub fn apply_file(
         loudness: req.loudness,
         tag_edits,
     };
+    // The file the change writes: the source in place, the copy's path in a folder.
+    let target = match (&opts.place, path.file_name()) {
+        (Place::Folder(dir), Some(name)) => dir.join(name),
+        _ => path.to_path_buf(),
+    };
+    forget_cached(opts.cache.as_ref(), &target)?;
     let txn_opts = TxnOptions {
         backup_root: opts.backup_root.clone(),
         keep_mtime: opts.keep_mtime,
         sidecar: opts.sidecar,
+        export: req.export.clone(),
+        expect_original_blake3: req.source_blake3,
     };
     let flag = cancel.flag();
-    let report = match &opts.place {
+    let mut report = match &opts.place {
         Place::InPlace => txn::apply_in_place(path, &render, &txn_opts, &flag),
         Place::Folder(dir) => txn::apply_to_folder(path, dir, &render, &txn_opts, &flag),
     };
+    // Again whatever the outcome: an analysis may have run meanwhile.
+    if let Err(e) = forget_cached(opts.cache.as_ref(), &target) {
+        tracing::warn!(path = %target.display(), error = %e, "cached analysis not removed");
+        if let Ok(r) = &mut report {
+            r.notes
+                .push(format!("the cached analysis was not removed: {e}"));
+        }
+    }
     match &report {
         Ok(r) => tracing::info!(
             path = %path.display(),
@@ -136,9 +183,19 @@ pub fn apply_file(
 ///
 /// # Errors
 /// `NothingToUndo`, `FileChanged` when the file is no longer what SoundCheck wrote,
-/// `VerifyFailed` when the backup no longer matches, the in-place refusals, `Io`.
-pub fn undo_file(path: &Path, backup_root: &Path) -> Result<UndoReport> {
-    let report = txn::undo(path, backup_root);
+/// `VerifyFailed` when the backup no longer matches, the in-place refusals, `Io` (also when the
+/// file's entry in `cache` cannot be removed, before anything is undone). The entry is removed
+/// before and after the undo, as [`apply_file`] does.
+pub fn undo_file(path: &Path, backup_root: &Path, cache: Option<&Cache>) -> Result<UndoReport> {
+    forget_cached(cache, path)?;
+    let mut report = txn::undo(path, backup_root);
+    if let Err(e) = forget_cached(cache, path) {
+        tracing::warn!(path = %path.display(), error = %e, "cached analysis not removed");
+        if let Ok(r) = &mut report {
+            r.notes
+                .push(format!("the cached analysis was not removed: {e}"));
+        }
+    }
     match &report {
         Ok(r) => tracing::info!(path = %path.display(), txn = %r.txn, undone = %r.undone, "undone"),
         Err(e) => tracing::info!(path = %path.display(), error = %e, "not undone"),
@@ -146,13 +203,15 @@ pub fn undo_file(path: &Path, backup_root: &Path) -> Result<UndoReport> {
     report
 }
 
-/// Recovers the transactions a crash interrupted in `backup_root` (see `sc_io::txn::recover`)
+/// Recovers the transactions a crash interrupted in `backup_root` (see `sc_io::txn::recover`),
+/// removes the `cache` entry of every file it completed or rolled back ([`forget_recovered`])
 /// and logs what it did. Never fails: a journal that cannot be read is reported as
 /// [`RecoveryStatus::Failed`], so the caller can still start.
 #[must_use]
-pub fn recover_at_start(backup_root: &Path) -> RecoveryStatus {
+pub fn recover_at_start(backup_root: &Path, cache: Option<&Cache>) -> RecoveryStatus {
     match txn::recover(backup_root) {
         Ok(report) => {
+            forget_recovered(cache, &report);
             if report.recovered.is_empty() && report.pending.is_empty() {
                 tracing::debug!(root = %backup_root.display(), "nothing to recover");
             } else {
@@ -173,6 +232,16 @@ pub fn recover_at_start(backup_root: &Path) -> RecoveryStatus {
             RecoveryStatus::Failed {
                 message: e.to_string(),
             }
+        }
+    }
+}
+
+/// Removes the `cache` entry of every file `report` completed or rolled back: a change that
+/// stopped half way may have left an entry for either version.
+pub fn forget_recovered(cache: Option<&Cache>, report: &RecoveryReport) {
+    for r in &report.recovered {
+        if let Err(e) = forget_cached(cache, &r.path) {
+            tracing::warn!(path = %r.path.display(), error = %e, "cached analysis not removed");
         }
     }
 }

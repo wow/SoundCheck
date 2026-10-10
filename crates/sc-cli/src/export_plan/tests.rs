@@ -20,6 +20,7 @@ fn plan(cut: Cut) -> ExportPlan {
         bext: None,
         cut,
         notices: Vec::new(),
+        grid_withheld: false,
     }
 }
 
@@ -111,6 +112,7 @@ fn every_skip_has_three_lines() {
         ExportSkip::Unsupported { codec: Codec::Alac },
         ExportSkip::Silent,
         ExportSkip::NoGrid,
+        ExportSkip::GridNeedsReview,
         ExportSkip::UnsupportedChannels { channels: 6 },
         ExportSkip::NothingToWrite {
             reason: XmlOnlyReason::Mp3OrAac { codec: Codec::Mp3 },
@@ -194,6 +196,23 @@ fn notices_follow_the_line() {
     assert!(
         lines[1].starts_with("    note: the copy keeps its Serato cue points")
             && lines[1].contains("0.29 s late"),
+        "{t}"
+    );
+}
+
+#[test]
+fn a_withheld_grid_is_noted() {
+    let mut p = plan(Cut::Library);
+    p.grid_withheld = true;
+    let t = text(&ExportOutcome::Write { plan: p });
+    let lines: Vec<&str> = t.lines().collect();
+    assert_eq!(lines.len(), 2, "{t}");
+    assert_eq!(lines[1], format!("    note: {GRID_WITHHELD}"));
+    let t = text(&ExportOutcome::Skip {
+        reason: ExportSkip::GridNeedsReview,
+    });
+    assert!(
+        t.contains("why: grid only, and its grid needs review"),
         "{t}"
     );
 }

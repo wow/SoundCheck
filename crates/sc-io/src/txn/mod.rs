@@ -89,7 +89,7 @@ use crate::render::RenderReport;
 
 pub use crash::CRASH_ENV;
 pub use forget::{Forgotten, forget};
-pub use fsx::{TEMP_MARKER, hex};
+pub use fsx::{TEMP_MARKER, hash_file, hex};
 pub use journal::{Entry, JOURNAL_FILE, Outcome, State, TxnKind, is_txn_id};
 pub use preflight::{
     SPACE_MARGIN_BYTES, TagFamily, is_in_resolved_backup_root, is_under_backup_root,
@@ -123,7 +123,7 @@ pub fn default_backup_root() -> Result<PathBuf> {
 }
 
 /// How a transaction runs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TxnOptions {
     /// Where backups and the journal live.
     pub backup_root: PathBuf,
@@ -131,6 +131,17 @@ pub struct TxnOptions {
     pub keep_mtime: bool,
     /// Write `<file>.soundcheck.json` next to the file.
     pub sidecar: bool,
+    /// What the export asking for this render planned: journaled and written into the sidecar,
+    /// and checked against the render before anything is replaced (the output must have the
+    /// planned frame count and cut, else [`sc_core::Error::VerifyFailed`]). `None` for a plain
+    /// render.
+    pub export: Option<sc_core::export::ExportRecord>,
+    /// BLAKE3 of the original as the caller planned from it: the transaction refuses, before the
+    /// rename (after the render, against the hash its backup or copy check reads anyway), a file
+    /// whose bytes are no longer those
+    /// ([`sc_core::Error::FileChanged`], [`sc_core::ChangeCause::SincePlanned`]). `None` checks
+    /// nothing.
+    pub expect_original_blake3: Option<[u8; 32]>,
 }
 
 impl TxnOptions {
@@ -141,6 +152,8 @@ impl TxnOptions {
             backup_root: backup_root.into(),
             keep_mtime: true,
             sidecar: true,
+            export: None,
+            expect_original_blake3: None,
         }
     }
 }
@@ -228,9 +241,12 @@ impl<'v> Transaction<'v> {
     /// # Errors
     /// The preflight refusals, the render's errors, [`Error::VerifyFailed`],
     /// [`Error::FileChanged`] when the file changed during processing, [`Error::Cancelled`],
-    /// [`Error::Io`]. On any error before the rename the file is untouched and nothing is left
-    /// behind; an error after it (journal not writable) leaves the transaction for
-    /// [`recover`].
+    /// [`Error::Io`]. Every error comes before the rename: the file is untouched and nothing is
+    /// left behind. Once the file is replaced the call succeeds; a journal line that could not
+    /// be written then is a note in the report, and the next [`recover`] completes the change.
+    /// When every journal line after the rename fails and the same file is changed again before
+    /// that recovery runs, recovery records the first change as rolled back; its backup is kept,
+    /// with a note.
     pub fn apply_in_place(
         &self,
         path: &Path,

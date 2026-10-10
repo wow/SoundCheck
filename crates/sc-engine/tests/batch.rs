@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use sc_core::Error;
 use sc_core::analysis::AnalysisSettings;
-use sc_engine::{BatchFile, BatchSettings, CancelToken, EngineEvent, run_batch};
+use sc_engine::{BatchFile, BatchSettings, CancelToken, EngineEvent, Task, run_batch};
 use sc_io::cache::Cache;
 
 fn batch(paths: &[PathBuf]) -> Vec<BatchFile> {
@@ -29,6 +29,7 @@ fn settings(workers: usize, cache: Option<Cache>) -> BatchSettings {
         analysis: common::loudness_only(),
         workers,
         cache,
+        task: Task::Analyze,
     }
 }
 
@@ -45,7 +46,11 @@ fn file_id(event: &EngineEvent) -> Option<u32> {
         | EngineEvent::Progress { file_id, .. }
         | EngineEvent::Analysed { file_id, .. }
         | EngineEvent::Failed { file_id, .. }
-        | EngineEvent::Cancelled { file_id } => Some(*file_id),
+        | EngineEvent::Cancelled { file_id }
+        | EngineEvent::Processing { file_id, .. }
+        | EngineEvent::Written { file_id, .. }
+        | EngineEvent::ExportSkipped { file_id, .. }
+        | EngineEvent::Done { file_id, .. } => Some(*file_id),
         EngineEvent::Batch(_) => None,
     }
 }
@@ -228,6 +233,7 @@ fn a_missing_model_fails_before_any_file() {
         },
         workers: 2,
         cache: None,
+        task: Task::Analyze,
     };
     let mut events = 0;
     let result = run_batch(&batch(&paths), &s, &CancelToken::new(), &mut |_| {

@@ -110,8 +110,7 @@ impl Shell {
             .inner
             .edits
             .as_ref()
-            .and_then(|store| store.get(&record.path))
-            .filter(|saved| saved.audio == audio_of(&record))
+            .and_then(|store| store.get(&record.path, &audio_of(&record)))
             .map(|saved| saved.edit)
             .unwrap_or_default();
 

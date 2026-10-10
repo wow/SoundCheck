@@ -22,7 +22,7 @@ use sc_io::edits::EditStore;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::analyze::CacheStatus;
-use crate::batch::{BatchFile, BatchSettings, EngineEvent, run_batch};
+use crate::batch::{BatchFile, BatchSettings, EngineEvent, Task, run_batch};
 use crate::cancel::CancelToken;
 use crate::decide::decide;
 use crate::edits::{EditState, apply_saved};
@@ -285,9 +285,10 @@ impl Session {
         Some(Lufs(median))
     }
 
-    /// Turns an engine event into what the UI receives, storing analyses on the way.
-    pub fn on_engine_event(&mut self, job_id: JobId, event: EngineEvent) -> JobEvent {
-        match event {
+    /// Turns an engine event of an analysis job into what the UI receives, storing analyses on
+    /// the way; `None` for the events only an export sends, which this job never runs.
+    pub fn on_engine_event(&mut self, job_id: JobId, event: EngineEvent) -> Option<JobEvent> {
+        Some(match event {
             EngineEvent::Started { file_id } => JobEvent::Started { job_id, file_id },
             EngineEvent::Progress { file_id, fraction } => JobEvent::Progress {
                 job_id,
@@ -337,11 +338,16 @@ impl Session {
                 #[allow(clippy::cast_possible_truncation)]
                 realtime_x: p.realtime_x.map(|x| x as f32),
             },
-        }
+            EngineEvent::Processing { .. }
+            | EngineEvent::Written { .. }
+            | EngineEvent::ExportSkipped { .. }
+            | EngineEvent::Done { .. } => return None,
+        })
     }
 }
 
-/// Runs one job over `file_ids`, sending its events in order and ending with `finished`.
+/// Runs one analysis job over `file_ids` (whatever `settings.task` says), sending its events in
+/// order and ending with `finished`.
 ///
 /// The session is locked only while an event is turned into its IPC form, never while a file is
 /// analysed, so the UI can add files or change settings during a job.
@@ -358,13 +364,18 @@ pub fn run_job(
         let s = lock();
         (s.batch(file_ids), s.edits.clone())
     };
-    let result = run_batch(&files, settings, cancel, &mut |mut event| {
+    let settings = BatchSettings {
+        task: Task::Analyze,
+        ..settings.clone()
+    };
+    let result = run_batch(&files, &settings, cancel, &mut |mut event| {
         // The saved edit is read and refitted before the session is locked.
         if let (EngineEvent::Analysed { report, edit, .. }, Some(store)) = (&mut event, &edits) {
             *edit = apply_saved(&mut report.record, store);
         }
-        let ipc = lock().on_engine_event(job_id, event);
-        send(ipc);
+        if let Some(ipc) = lock().on_engine_event(job_id, event) {
+            send(ipc);
+        }
     });
     match result {
         Ok(summary) => send(JobEvent::Finished {

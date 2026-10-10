@@ -200,6 +200,18 @@ fn records_serialise_for_the_ui() {
     assert_eq!(json["sourceHash"][1], 0x11);
 }
 
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "withholds the grid")]
+fn a_withheld_grid_with_a_tempo_is_caught() {
+    let record = SoundcheckRecord {
+        grid_withheld: true,
+        bar1: None,
+        ..prepared()
+    };
+    let _ = record.to_value();
+}
+
 /// A tempo or level with two decimals, as the planner writes them.
 fn hundredths(lo: i64, hi: i64) -> impl Strategy<Value = f64> {
     #[allow(clippy::cast_precision_loss)] // small integers are exact in f64

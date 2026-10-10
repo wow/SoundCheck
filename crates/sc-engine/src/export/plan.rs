@@ -32,7 +32,6 @@ use sc_core::export::{
     TAG_REPLAYGAIN_TRACK_GAIN, TAG_REPLAYGAIN_TRACK_PEAK, TAG_SOUNDCHECK, XmlOnlyReason,
     positive_zero,
 };
-use sc_core::ipc::JobStage;
 use sc_core::plan::{Codec, DecideSettings, GainPlan, Plan, SkipReason};
 use sc_core::{BextLoudness, Bpm, DbTp, Lu, Lufs, SampleIndex, Tag, VERSION};
 use sc_io::render::{DJ_SAFE_RATES_HZ, head_snap_frames};
@@ -88,8 +87,8 @@ pub struct ExportInput<'a> {
 /// [`ExportSettings::validate`]; a lead outside its range is clamped into it).
 ///
 /// In order: MP3/AAC are left to the XML; other codecs that are not written, sample rates DJ
-/// players refuse, more than two channels and silence are skipped; grid only needs a grid, and
-/// leaves FLAC, sources it would requantise and files without a tag to the XML; with the XML
+/// players refuse, more than two channels and silence are skipped; grid only needs a grid that
+/// does not need review (one that does would leave only an empty record), and leaves FLAC, sources it would requantise and files without a tag to the XML; with the XML
 /// off, what only the XML could carry is skipped; a Prepare cut in place of a file with Serato
 /// data, or whose tags could not be read to rule it out, is skipped (a cut copy of a file with
 /// Serato data gets a notice); everything else is written. That Serato skip is decided here
@@ -119,7 +118,7 @@ pub(super) fn plan_ungated(input: &ExportInput<'_>, settings: &ExportSettings) -
         return skip(ExportSkip::UnsupportedChannels { channels });
     }
     if settings.grid_only {
-        if let Some(reason) = grid_only_refusal(record) {
+        if let Some(reason) = grid_only_refusal(record, input.plan) {
             return reason;
         }
         if let Some(reason) = grid_only_xml(source) {
@@ -258,7 +257,8 @@ fn write_plan(
         .as_ref()
         .and_then(|g| Bars::of(g, sample_rate_hz))
         .map(|bars| bar1_after(&bars, trim_frames));
-    let tags = tags(input, settings, gain_db, trim_frames, bar1);
+    let grid_withheld = record.grid.is_some() && !grid_trusted(input.plan);
+    let tags = tags(input, settings, gain_db, trim_frames, bar1, grid_withheld);
     let bext = (!settings.grid_only && source.codec == Codec::Wav).then(|| bext(record, gain_db));
     ExportPlan {
         gain_db,
@@ -274,6 +274,7 @@ fn write_plan(
         bext,
         cut,
         notices,
+        grid_withheld,
     }
 }
 
@@ -290,9 +291,16 @@ fn skip(reason: ExportSkip) -> ExportOutcome {
     ExportOutcome::Skip { reason }
 }
 
-/// Why a grid-only export skips this file, if it does.
-fn grid_only_refusal(record: &AnalysisRecord) -> Option<ExportOutcome> {
-    record.grid.is_none().then(|| skip(ExportSkip::NoGrid))
+/// Why a grid-only export skips this file, if it does: no grid, or a grid that is withheld
+/// (it needs review and was not confirmed), which would leave only an empty record to write.
+fn grid_only_refusal(record: &AnalysisRecord, plan: &Plan) -> Option<ExportOutcome> {
+    if record.grid.is_none() {
+        Some(skip(ExportSkip::NoGrid))
+    } else if !grid_trusted(plan) {
+        Some(skip(ExportSkip::GridNeedsReview))
+    } else {
+        None
+    }
 }
 
 /// Why a grid-only export leaves this file to the XML, if it does.
@@ -428,10 +436,11 @@ fn head(record: &AnalysisRecord, plan: &Plan, settings: &ExportSettings) -> (Cut
     (cut, trim)
 }
 
-/// Whether the grid may be cut to and written: the row does not need review (a grid the user
-/// confirmed never does; see [`crate::decide()`]).
+/// Whether the grid may be cut to and written: nothing about it needs review (a grid the user
+/// confirmed never does; see [`crate::decide()`]). Read from the review reasons, not the row's
+/// status, which says `Skipped` for a skipped file even when its grid also needs review.
 fn grid_trusted(plan: &Plan) -> bool {
-    plan.status != JobStage::NeedsReview
+    plan.review.is_empty()
 }
 
 /// The first bar line at or after the start, rounded to a sample.
@@ -451,7 +460,7 @@ fn on_bar(bars: &Bars, anchor: SampleIndex, rate: u32) -> Cut {
 }
 
 /// The first bar line of the exported audio (cut by `trim` frames), rounded to a sample.
-fn bar1_after(bars: &Bars, trim: u64) -> SampleIndex {
+pub(crate) fn bar1_after(bars: &Bars, trim: u64) -> SampleIndex {
     // u64 -> f64 is exact below 2^53 samples.
     #[allow(clippy::cast_precision_loss)]
     let trim = trim as f64;
@@ -468,9 +477,9 @@ fn tags(
     gain_db: f64,
     trim_frames: u64,
     bar1: Option<SampleIndex>,
+    grid_withheld: bool,
 ) -> Vec<Tag> {
     let record = input.record;
-    let grid_withheld = record.grid.is_some() && !grid_trusted(input.plan);
     let bpm = record
         .grid
         .as_ref()
