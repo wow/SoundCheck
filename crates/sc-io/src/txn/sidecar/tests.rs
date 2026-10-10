@@ -78,7 +78,7 @@ fn the_text_has_a_fixed_key_order_and_is_deterministic() {
     assert_eq!(text, render_text(&e, &[]).expect("again"));
     assert!(text.ends_with("}\n"));
     let keys = [
-        "\"schema\": 1",
+        "\"schema\": 2",
         "\"app\": \"SoundCheck\"",
         "\"version\"",
         "\"file\": \"a.wav\"",
@@ -164,4 +164,77 @@ fn an_old_record_without_the_cut_derives_it_from_the_frame_counts() {
     // A request that is not flagged as snapped writes no flag, so its text is unchanged.
     let request = serde_json::to_string(&record.request).expect("serialises");
     assert!(!request.contains("trim_snapped_from_frames"), "{request}");
+}
+
+/// A whole sidecar as schema 1 wrote it, before the cut and the export were recorded.
+fn schema_1_text() -> String {
+    format!(
+        r#"{{
+  "schema": 1,
+  "app": "SoundCheck",
+  "version": "0.0.9",
+  "file": "a.wav",
+  "transaction": "t-0",
+  "processed_at": "2026-10-01T10:00:00Z",
+  "mode": "in_place",
+  "original": {{ "blake3": "aa", "bytes": 10 }},
+  "output": {{ "blake3": "bb", "bytes": 12 }},
+  "request": {{ "gain_db": -2.0, "trim_frames": 13009, "bits": null, "loudness": null,
+               "tag_edits": [] }},
+  "render": {OLD_RENDER},
+  "backup": "/backups/a.wav",
+  "metadata": {{ "mtime_kept": true, "notes": [] }}
+}}"#
+    )
+}
+
+#[test]
+fn a_schema_1_sidecar_still_reads() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("a.wav.soundcheck.json");
+    std::fs::write(&path, schema_1_text()).expect("written");
+    let doc = read(&path).expect("schema 1 reads");
+    assert_eq!(doc.schema, 1);
+    assert_eq!(doc.export, None);
+    assert_eq!(doc.render.trim_frames, None);
+    assert_eq!(doc.render.trim_frames(), 13_009);
+    assert_eq!(doc.backup, Some(PathBuf::from("/backups/a.wav")));
+}
+
+#[test]
+fn a_written_sidecar_reads_back_as_written() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let file = dir.path().join("a.wav");
+    let path = write(&entry(&file), &["a note".into()]).expect("written");
+    let doc = read(&path).expect("reads");
+    assert_eq!(doc.schema, SIDECAR_SCHEMA);
+    assert_eq!(doc.transaction, "t-1");
+    assert_eq!(doc.metadata.notes, vec!["a note".to_owned()]);
+    assert_eq!(doc.render.trim_frames(), 0);
+    // The text of what was read is the text written.
+    let mut again = serde_json::to_string_pretty(&doc).expect("serialises");
+    again.push('\n');
+    assert_eq!(again, std::fs::read_to_string(&path).expect("text"));
+}
+
+#[test]
+fn other_schemas_and_other_json_do_not_read() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("x.soundcheck.json");
+    for text in [
+        schema_1_text().replace("\"schema\": 1", "\"schema\": 3"),
+        schema_1_text().replace("\"schema\": 1,", ""),
+        "{\"schema\": 2}".to_owned(),
+        "not json".to_owned(),
+    ] {
+        std::fs::write(&path, &text).expect("written");
+        assert!(
+            matches!(read(&path), Err(Error::Corrupt { .. })),
+            "{text}"
+        );
+    }
+    assert!(matches!(
+        read(&dir.path().join("missing.json")),
+        Err(Error::Io { .. })
+    ));
 }

@@ -106,7 +106,7 @@ pub struct ProcessDone {
 }
 
 /// Exports `path` (the batch's file `file_id`) as `settings` say, sending
-/// [`EngineEvent::Processing`] and [`EngineEvent::Written`] through `emit` as it goes; returns
+/// [`EngineEvent::Processing`] and [`EngineEvent::Written`] through `send` as it goes; returns
 /// the file's terminal event: [`EngineEvent::ExportSkipped`] or [`EngineEvent::Done`].
 ///
 /// # Errors
@@ -118,7 +118,7 @@ pub(crate) fn process_file(
     path: &Path,
     settings: &ProcessSettings,
     progress: Option<&Progress>,
-    emit: &dyn Fn(EngineEvent),
+    send: &dyn Fn(EngineEvent),
 ) -> Result<EngineEvent> {
     let mut record = analyzer
         .analyze_with(path, &mut Timings::default(), progress)?
@@ -153,7 +153,7 @@ pub(crate) fn process_file(
             });
         }
     };
-    emit(EngineEvent::Processing {
+    send(EngineEvent::Processing {
         file_id,
         plan: Box::new(plan.clone()),
     });
@@ -169,7 +169,7 @@ pub(crate) fn process_file(
     };
     let report = apply_file(path, &request, &settings.apply_options(), &analyzer.cancel)?;
     let output = report.output.clone();
-    emit(EngineEvent::Written {
+    send(EngineEvent::Written {
         file_id,
         report: Box::new(report),
     });

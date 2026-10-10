@@ -321,7 +321,7 @@ fn a_skipped_row_whose_grid_needs_review_still_withholds_it() {
     r.loudness.integrated = None;
     let plan = decide(&r, Codec::Wav, &DecideSettings::dj(), false);
     assert_eq!(plan.status, JobStage::Skipped);
-    assert!(!plan.review.is_empty());
+    assert_eq!(plan.review, vec![ReviewReason::Confidence]);
     let grid_only = ExportSettings {
         grid_only: true,
         ..prepare()

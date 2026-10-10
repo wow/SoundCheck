@@ -147,7 +147,8 @@ fn in_place_round_trip(name: &str, bytes: &[u8]) {
     assert_eq!(sidecar, sidecar_path(&path));
     let doc: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&sidecar).expect("sidecar")).expect("JSON");
-    assert_eq!(doc["schema"], 1);
+    assert_eq!(doc["schema"], 2);
+    assert!(doc.get("export").is_none(), "a plain change records no export");
     assert_eq!(doc["file"], name);
     assert_eq!(doc["original"]["blake3"], hex(&original));
     assert_eq!(doc["output"]["blake3"], hex(&report.output_blake3));
