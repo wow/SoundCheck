@@ -13,7 +13,7 @@ fn plan(cut: Cut) -> ExportPlan {
     ExportPlan {
         gain_db: -2.04,
         trim_frames: 0,
-        trim_snapped_from: None,
+        trim_snapped_from_frames: None,
         expect_frames: 1,
         bits: None,
         tags: vec![Tag::new("BPM", "120.00"), Tag::new("SOUNDCHECK", "v=1")],

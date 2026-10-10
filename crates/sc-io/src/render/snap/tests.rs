@@ -103,11 +103,11 @@ impl Source {
 }
 
 /// A gain, a cut and a tag edit, at 16 bits (dithered from a 24-bit source).
-fn request(trim_frames: u64, trim_snapped_from: Option<u64>, label: &str) -> RenderRequest {
+fn request(trim_frames: u64, trim_snapped_from_frames: Option<u64>, label: &str) -> RenderRequest {
     RenderRequest {
         gain_db: -3.0,
         trim_frames,
-        trim_snapped_from,
+        trim_snapped_from_frames,
         bits: Some(16),
         loudness: None,
         tag_edits: vec![TagEdit {

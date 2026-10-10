@@ -8,7 +8,7 @@ import type { Seconds } from "./Seconds";
 export type Cut = { "type": "cut", 
 /**
  * Frames removed from the start (at least 1): the cut asked of the renderer, or, once
- * the plan is snapped ([`ExportPlan::trim_snapped_from`]), the cut it makes.
+ * the plan is snapped ([`ExportPlan::trim_snapped_from_frames`]), the cut it makes.
  */
 frames: number, 
 /**

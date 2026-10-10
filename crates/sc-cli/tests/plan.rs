@@ -214,7 +214,7 @@ fn plan_prepare_prints_cut() {
     let doc: serde_json::Value = serde_json::from_str(json.trim()).expect("one document");
     assert_eq!(doc["export"]["type"], "write");
     // The cut is planned from where the render makes it: up to 1 ms (44 frames) earlier.
-    assert_eq!(doc["export"]["plan"]["trimSnappedFrom"], 17_419);
+    assert_eq!(doc["export"]["plan"]["trimSnappedFromFrames"], 17_419);
     let trim = doc["export"]["plan"]["trimFrames"]
         .as_u64()
         .expect("frames");

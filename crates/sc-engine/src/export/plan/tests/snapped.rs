@@ -89,7 +89,7 @@ fn bar1_lands_within_1ms_and_a_sample_after_the_lead_for_every_snap() {
                     "{rate} Hz {bpm} BPM lead {lead_ms} ms snap {s}: bar 1 at {at}"
                 );
                 assert_eq!(p.trim_frames, s);
-                assert_eq!(p.trim_snapped_from, Some(requested));
+                assert_eq!(p.trim_snapped_from_frames, Some(requested));
                 assert_eq!(p.expect_frames, r.frames - s);
                 assert_eq!(
                     p.cut,
@@ -127,7 +127,7 @@ fn a_snap_to_the_start_cuts_nothing_and_bad_snaps_are_refused() {
     let p = snapped(&r, &plan, &settings, &export, 0).expect("a snap to the start");
     assert!(matches!(p.cut, Cut::OnBar { .. }), "{:?}", p.cut);
     assert_eq!((p.trim_frames, p.expect_frames), (0, r.frames));
-    assert_eq!(p.trim_snapped_from, Some(30));
+    assert_eq!(p.trim_snapped_from_frames, Some(30));
     assert_eq!(bar1_of(&p), 251);
     let invalid =
         |e: sc_core::Result<ExportPlan>| matches!(e, Err(sc_core::Error::InvalidArgument(_)));
@@ -207,7 +207,7 @@ fn rendering_the_snapped_plan_puts_bar1_exactly_where_it_says() {
     let outcome = crate::plan_export_snapped(&path, &input, &prepare()).expect("planned");
     let export = written(outcome);
     // The rising level moves the snap the full 44 frames back.
-    assert_eq!(export.trim_snapped_from, Some(13_009));
+    assert_eq!(export.trim_snapped_from_frames, Some(13_009));
     assert_eq!(export.trim_frames, 12_965);
     assert!(export.gain_db.abs() < 1e-12, "{}", export.gain_db);
     assert_eq!(bar1_of(&export), 13_230 - 12_965);
@@ -216,7 +216,7 @@ fn rendering_the_snapped_plan_puts_bar1_exactly_where_it_says() {
     let request = ApplyRequest {
         gain_db: export.gain_db,
         trim_frames: export.trim_frames,
-        trim_snapped_from: export.trim_snapped_from,
+        trim_snapped_from_frames: export.trim_snapped_from_frames,
         ..ApplyRequest::default()
     };
     let opts = ApplyOptions {
@@ -244,7 +244,7 @@ fn rendering_the_snapped_plan_puts_bar1_exactly_where_it_says() {
     let sidecar = std::fs::read_to_string(sc_io::txn::sidecar_path(&out_dir.join("track.wav")))
         .expect("sidecar");
     assert!(
-        sidecar.contains("\"trim_snapped_from\": 13009"),
+        sidecar.contains("\"trim_snapped_from_frames\": 13009"),
         "{sidecar}"
     );
     assert!(sidecar.contains("\"trim_frames\": 12965"), "{sidecar}");

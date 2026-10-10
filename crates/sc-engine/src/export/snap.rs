@@ -13,7 +13,7 @@ use super::plan::{ExportInput, plan_export, plan_snapped_cut};
 
 /// What exporting does with the file at `path` (whose analysis and source `input` describe)
 /// under `settings`, with every value that depends on the head cut planned from the cut the
-/// renderer makes ([`sc_core::export::ExportPlan::trim_snapped_from`] set). A file that is
+/// renderer makes ([`sc_core::export::ExportPlan::trim_snapped_from_frames`] set). A file that is
 /// not cut is planned without reading it.
 ///
 /// # Errors

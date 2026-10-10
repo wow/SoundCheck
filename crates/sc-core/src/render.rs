@@ -148,7 +148,7 @@ pub struct RenderRequest {
     /// Gain applied to every sample, dB (finite; 0 keeps the samples bit for bit).
     pub gain_db: f64,
     /// Frames removed from the start (0 keeps the length). The render moves a cut up to 1 ms
-    /// earlier to the quietest frame, unless [`Self::trim_snapped_from`] says it already was.
+    /// earlier to the quietest frame, unless [`Self::trim_snapped_from_frames`] says it already was.
     pub trim_frames: u64,
     /// Set when `trim_frames` is already the snapped cut of an earlier request (what
     /// `sc_io::render::snap_head_cut` gave for it): the cut that was requested, frames. The
@@ -156,7 +156,7 @@ pub struct RenderRequest {
     /// requested cut, so the output is the one a render of the original request makes. Snapping
     /// again could move the cut further back. Absent from requests that predate it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trim_snapped_from: Option<u64>,
+    pub trim_snapped_from_frames: Option<u64>,
     /// Output bits per sample, 16 or 24; `None` keeps the source depth (24 for a float source
     /// or one deeper than 24 bits, 16 for one of 16 bits or fewer).
     pub bits: Option<u8>,

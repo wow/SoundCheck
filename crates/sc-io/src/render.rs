@@ -8,7 +8,7 @@
 //!   frame, never later, and the first 2 ms after it faded in (see [`head`]); every position
 //!   shift below uses the cut actually made, which [`RenderReport::trim_frames`] reports next to
 //!   the requested one. A cut already snapped by [`snap_head_cut`] (flagged by
-//!   [`RenderRequest::trim_snapped_from`]) is made exactly, with the same fade.
+//!   [`RenderRequest::trim_snapped_from_frames`]) is made exactly, with the same fade.
 //! - **Container**: WAV and RF64 (EBU Tech 3306) become `RIFF`/`WAVE`; AIFF and AIFF-C become
 //!   `FORM`/`AIFF` (AIFF 1.3). The container size is recomputed; chunks a stale size left
 //!   outside the container are carried inside it.

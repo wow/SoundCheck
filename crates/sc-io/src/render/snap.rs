@@ -2,7 +2,7 @@
 //! requested cut (moved up to 1 ms earlier to the quietest frame, as [`super::head`]
 //! describes), so a caller can plan every position that depends on the cut (the frame count,
 //! bar 1 in the output, the tags that record them) from the cut actually made, and then render
-//! exactly that cut with [`RenderRequest::trim_snapped_from`] set.
+//! exactly that cut with [`RenderRequest::trim_snapped_from_frames`] set.
 //!
 //! The snap is not idempotent: snapping the snapped cut again may move it further back (when
 //! the audio keeps getting quieter towards the start). So a render whose request carries an
@@ -86,7 +86,7 @@ pub(super) fn head_cut(
     sample_rate_hz: u32,
     snap: impl FnOnce() -> Result<u64>,
 ) -> Result<(u64, u64)> {
-    let Some(requested) = req.trim_snapped_from else {
+    let Some(requested) = req.trim_snapped_from_frames else {
         return Ok((snap()?, req.trim_frames));
     };
     let window = head_snap_frames(sample_rate_hz);

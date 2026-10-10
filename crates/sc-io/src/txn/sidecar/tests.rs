@@ -145,7 +145,7 @@ fn an_old_record_without_the_cut_derives_it_from_the_frame_counts() {
              "render": {OLD_RENDER} }}"#
     );
     let record: Record = serde_json::from_str(&record).expect("an old journal record reads");
-    assert_eq!(record.request.trim_snapped_from, None);
+    assert_eq!(record.request.trim_snapped_from_frames, None);
     assert_eq!(record.render.trim_frames(), 13_009);
     // A new record keeps both values as made, also when they differ, and writes them out.
     let mut new = old.clone();
@@ -162,5 +162,5 @@ fn an_old_record_without_the_cut_derives_it_from_the_frame_counts() {
     );
     // A request that is not flagged as snapped writes no flag, so its text is unchanged.
     let request = serde_json::to_string(&record.request).expect("serialises");
-    assert!(!request.contains("trim_snapped_from"), "{request}");
+    assert!(!request.contains("trim_snapped_from_frames"), "{request}");
 }

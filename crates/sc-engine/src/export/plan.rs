@@ -150,7 +150,7 @@ pub fn plan_export(input: &ExportInput<'_>, settings: &ExportSettings) -> Export
 /// returned as it is (its snap is 0).
 ///
 /// Pure: the snap is the caller's to make, once, so that the render is asked for exactly this
-/// cut ([`ExportPlan::trim_snapped_from`] set) and never snaps it again.
+/// cut ([`ExportPlan::trim_snapped_from_frames`] set) and never snaps it again.
 ///
 /// # Errors
 /// [`sc_core::Error::InvalidArgument`] when `plan` is already snapped, is not the plan of
@@ -164,7 +164,7 @@ pub fn plan_snapped_cut(
 ) -> sc_core::Result<ExportPlan> {
     let requested = plan.trim_frames;
     let invalid = |what: String| Err(sc_core::Error::InvalidArgument(what));
-    if plan.trim_snapped_from.is_some() {
+    if plan.trim_snapped_from_frames.is_some() {
         return invalid(format!(
             "the plan's cut of {requested} frames is already snapped"
         ));
@@ -223,7 +223,7 @@ fn write_plan(
     settings: &ExportSettings,
     cut: Cut,
     trim_frames: u64,
-    trim_snapped_from: Option<u64>,
+    trim_snapped_from_frames: Option<u64>,
 ) -> ExportPlan {
     let ExportInput { record, source, .. } = *input;
     let sample_rate_hz = record.spec.sample_rate;
@@ -248,7 +248,7 @@ fn write_plan(
     ExportPlan {
         gain_db,
         trim_frames,
-        trim_snapped_from,
+        trim_snapped_from_frames,
         expect_frames: record.frames.saturating_sub(trim_frames),
         bits: if settings.grid_only {
             None
@@ -380,7 +380,7 @@ fn head(record: &AnalysisRecord, plan: &Plan, settings: &ExportSettings) -> (Cut
         return (Cut::NoGrid, 0);
     };
     let anchor = grid.anchor;
-    if plan.status == JobStage::NeedsReview {
+    if !grid_trusted(plan) {
         let cut = Cut::NeedsReview {
             bar1: anchor,
             bar1_s: anchor.to_seconds(rate),
@@ -413,6 +413,12 @@ fn head(record: &AnalysisRecord, plan: &Plan, settings: &ExportSettings) -> (Cut
     (cut, trim)
 }
 
+/// Whether the grid may be cut to and written: the row does not need review (a grid the user
+/// confirmed never does; see [`crate::decide()`]).
+fn grid_trusted(plan: &Plan) -> bool {
+    plan.status != JobStage::NeedsReview
+}
+
 /// The first bar line at or after the start, rounded to a sample.
 fn first_line(bars: &Bars) -> SampleIndex {
     SampleIndex(floor_frames(bars.first_at_or_after(0.0).round()))
@@ -437,7 +443,10 @@ fn bar1_after(bars: &Bars, trim: u64) -> SampleIndex {
     SampleIndex(floor_frames((bars.first_at_or_after(trim) - trim).round()))
 }
 
-/// The tag items, in a fixed order: `BPM`, Replay Gain track gain and peak, `SOUNDCHECK`.
+/// The tag items, in a fixed order: `BPM`, Replay Gain track gain and peak, `SOUNDCHECK`. A
+/// grid that needs review (and was not confirmed) is not written: no tempo tag, and the record
+/// says `bpm=none;bar1=none`. Writing its tempo would replace a tag that disagrees with it, and
+/// the next analysis would then find nothing to review.
 fn tags(
     input: &ExportInput<'_>,
     settings: &ExportSettings,
@@ -446,7 +455,13 @@ fn tags(
     bar1: Option<SampleIndex>,
 ) -> Vec<Tag> {
     let record = input.record;
-    let bpm = record.grid.as_ref().map(|g| g.bpm);
+    let grid_withheld = record.grid.is_some() && !grid_trusted(input.plan);
+    let bpm = record
+        .grid
+        .as_ref()
+        .filter(|_| !grid_withheld)
+        .map(|g| g.bpm);
+    let bar1 = bar1.filter(|_| !grid_withheld);
     let mut tags = Vec::with_capacity(4);
     if settings.tbpm
         && let Some(bpm) = bpm
@@ -472,6 +487,7 @@ fn tags(
         sample_rate: record.spec.sample_rate,
         bpm: bpm.map(Bpm::written),
         bar1,
+        grid_withheld,
         source_hash: input
             .source
             .blake3

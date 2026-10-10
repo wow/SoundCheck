@@ -214,7 +214,7 @@ pub fn render_request(args: &ApplyArgs, edits: &[TagEdit]) -> sc_core::RenderReq
     sc_core::RenderRequest {
         gain_db: args.gain_db,
         trim_frames: args.trim_samples,
-        trim_snapped_from: None,
+        trim_snapped_from_frames: None,
         bits: args.bits,
         loudness: args.loudness.map(|l| sc_core::BextLoudness {
             integrated_lufs_x100: l.value,

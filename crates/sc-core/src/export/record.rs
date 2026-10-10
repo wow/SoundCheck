@@ -35,8 +35,10 @@ pub struct RecordGain {
 /// 2 dp>;trim=<frames>;rate=<Hz>;bpm=<2 dp>;bar1=<samples>;src=<16 hex digits>`.
 /// Grid only writes `gain=none` and no `stat` or `target` (no level was aligned). Positions are
 /// sample counts at `rate`, as everywhere else: `trim` in the source, `bar1` (the first bar line)
-/// in the exported audio. `bpm` and `bar1` are left out without a grid, `src` without a source
-/// hash.
+/// in the exported audio. `bpm` and `bar1` are left out without a grid, and written as
+/// `bpm=none;bar1=none` when the grid was not trusted (it needed review and the user had not
+/// confirmed it), so the record never vouches for such a grid; `src` is left out without a
+/// source hash.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +58,10 @@ pub struct SoundcheckRecord {
     pub bpm: Option<Bpm>,
     /// The first bar line of the exported audio.
     pub bar1: Option<SampleIndex>,
+    /// The file has a grid, but it needed review and was not confirmed, so neither its tempo
+    /// nor its bar 1 is recorded (`bpm=none;bar1=none`; `bpm` and `bar1` are then `None`).
+    #[serde(default)]
+    pub grid_withheld: bool,
     /// The first 8 bytes of the source file's BLAKE3 hash (16 hex digits in the tag).
     pub source_hash: Option<[u8; 8]>,
 }
@@ -119,11 +125,15 @@ impl SoundcheckRecord {
             None => v.push_str(";gain=none"),
         }
         let _ = write!(v, ";trim={};rate={}", self.trim_frames, self.sample_rate);
-        if let Some(bpm) = self.bpm {
-            let _ = write!(v, ";bpm={:.2}", bpm.0);
-        }
-        if let Some(bar1) = self.bar1 {
-            let _ = write!(v, ";bar1={}", bar1.0);
+        if self.grid_withheld {
+            v.push_str(";bpm=none;bar1=none");
+        } else {
+            if let Some(bpm) = self.bpm {
+                let _ = write!(v, ";bpm={:.2}", bpm.0);
+            }
+            if let Some(bar1) = self.bar1 {
+                let _ = write!(v, ";bar1={}", bar1.0);
+            }
         }
         if let Some(hash) = self.source_hash {
             v.push_str(";src=");
@@ -143,7 +153,8 @@ impl SoundcheckRecord {
     /// # Errors
     /// [`RecordError`]: a value over [`MAX_RECORD_BYTES`], a `v` other than 1, a missing
     /// required key (`v`, `app`, `mode`, `gain`, `trim`, `rate`; `stat` and `target` with a
-    /// gain), a key twice, a part without `=`, `stat` or `target` with `gain=none`, or a value
+    /// gain), a key twice, a part without `=`, `stat` or `target` with `gain=none`, `bpm=none`
+    /// without `bar1=none` or the other way round, or a value
     /// that does not read (`mode` other than `prepare`/`library`, `stat` other than
     /// `S-P95`/`I`, a number that does not parse or is not finite, `src` not 16 hex digits, an
     /// empty `app`).
@@ -185,6 +196,7 @@ impl SoundcheckRecord {
                 gain_db: decimal("gain", gain)?,
             }),
         };
+        let grid_withheld = withheld(&pairs)?;
         Ok(Self {
             app: app.to_owned(),
             mode,
@@ -193,14 +205,28 @@ impl SoundcheckRecord {
             sample_rate: integer("rate", pairs.required("rate")?)?,
             bpm: pairs
                 .get("bpm")
+                .filter(|_| !grid_withheld)
                 .map(|v| decimal("bpm", v).map(Bpm))
                 .transpose()?,
             bar1: pairs
                 .get("bar1")
+                .filter(|_| !grid_withheld)
                 .map(|v| integer("bar1", v).map(SampleIndex))
                 .transpose()?,
+            grid_withheld,
             source_hash: pairs.get("src").map(hex8).transpose()?,
         })
+    }
+}
+
+/// Whether the record withholds the grid: `bpm=none` and `bar1=none` together.
+fn withheld(pairs: &Pairs<'_>) -> Result<bool, RecordError> {
+    let (bpm, bar1) = (pairs.get("bpm"), pairs.get("bar1"));
+    match (bpm == Some("none"), bar1 == Some("none")) {
+        (true, true) => Ok(true),
+        (false, false) => Ok(false),
+        (true, false) => Err(bar1.map_or(RecordError::Missing("bar1"), |v| invalid("bar1", v))),
+        (false, true) => Err(bpm.map_or(RecordError::Missing("bpm"), |v| invalid("bpm", v))),
     }
 }
 

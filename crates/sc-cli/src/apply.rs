@@ -430,7 +430,7 @@ pub fn run_apply(args: ApplyArgs) -> anyhow::Result<usize> {
     let req = ApplyRequest {
         gain_db: args.gain_db,
         trim_frames: args.trim_samples,
-        trim_snapped_from: None,
+        trim_snapped_from_frames: None,
         bits: args.bits,
         loudness: None,
         tags: args.tags,

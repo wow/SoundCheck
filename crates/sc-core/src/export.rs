@@ -160,7 +160,7 @@ pub enum Cut {
     /// 1 ms and a sample after it once the cut is snapped to a quiet frame).
     Cut {
         /// Frames removed from the start (at least 1): the cut asked of the renderer, or, once
-        /// the plan is snapped ([`ExportPlan::trim_snapped_from`]), the cut it makes.
+        /// the plan is snapped ([`ExportPlan::trim_snapped_from_frames`]), the cut it makes.
         #[ts(type = "number")]
         frames: u64,
         /// `frames` in seconds.
@@ -240,7 +240,7 @@ pub struct ExportPlan {
     /// Set once the plan is snapped: the cut that was asked for, frames, of which
     /// `trim_frames` is the snap. A render is then asked to cut exactly `trim_frames`.
     #[ts(type = "number | null")]
-    pub trim_snapped_from: Option<u64>,
+    pub trim_snapped_from_frames: Option<u64>,
     /// Frames the output must have: the source's minus `trim_frames` (Library: the source's).
     /// Exact once the plan is snapped; before, a cut the renderer makes earlier leaves as many
     /// frames more as it moved.

@@ -23,7 +23,7 @@ trimFrames: number,
  * Set once the plan is snapped: the cut that was asked for, frames, of which
  * `trim_frames` is the snap. A render is then asked to cut exactly `trim_frames`.
  */
-trimSnappedFrom: number | null, 
+trimSnappedFromFrames: number | null, 
 /**
  * Frames the output must have: the source's minus `trim_frames` (Library: the source's).
  * Exact once the plan is snapped; before, a cut the renderer makes earlier leaves as many
