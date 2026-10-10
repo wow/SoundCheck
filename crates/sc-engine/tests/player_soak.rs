@@ -136,7 +136,9 @@ fn fifty_switches_on_a_real_time_null_sink_never_run_the_ring_dry() {
     let mut next = start;
     let mut switches = 0;
     let (mut last_fill, mut longest, mut late) = (start, Duration::ZERO, 0_u32);
-    while start.elapsed() < run {
+    // Runs until the time is up and every switch has been sent: a stalled machine can push the
+    // last switch past the end of the run.
+    while start.elapsed() < run || switches < SWITCHES {
         longest = longest.max(last_fill.elapsed());
         last_fill = Instant::now();
         callback.fill(&mut buffer);
