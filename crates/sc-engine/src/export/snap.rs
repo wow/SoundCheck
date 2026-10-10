@@ -2,7 +2,7 @@
 //! renderer's snap of the planned cut ([`sc_io::render::snap_head_cut`], which decodes only the
 //! frames up to the cut), then [`plan_snapped_cut`]. The snap is made once, here; the render is
 //! then asked for exactly the snapped cut, because snapping it again may move it further back.
-//! Tested with the planner (`plan/tests/snapped.rs`).
+//! Tested with the planner's unit tests (`tests/snapped.rs` next to it).
 
 use std::path::Path;
 
