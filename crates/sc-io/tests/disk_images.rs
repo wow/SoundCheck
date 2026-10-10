@@ -157,6 +157,37 @@ fn is_apple_double(p: &Path) -> bool {
         .is_some_and(|n| n.to_string_lossy().starts_with("._"))
 }
 
+/// On FAT32 (macOS 15 mounts it through FSKit) the folder lists a Turkish name decomposed,
+/// while asking the open file for its path answers with whichever spelling first reached it
+/// since the mount. The rekordbox location is spelled from the listing: a path typed
+/// precomposed and one typed decomposed give the same bytes, the listing's.
+#[test]
+fn rekordbox_locations_follow_the_listing_on_fat32() {
+    use sc_io::rekordbox::{Speller, location};
+    use unicode_normalization::UnicodeNormalization;
+    if !enabled() {
+        eprintln!("skipped: set SC_DISK_IMAGES=1 on macOS to run");
+        return;
+    }
+    let Some(vol) = Mounted::new("MS-DOS FAT32") else {
+        panic!("hdiutil could not make a FAT32 image");
+    };
+    let nfc = "Şarkı Çiçek Ğüzel.wav";
+    let nfd: String = nfc.nfd().collect();
+    std::fs::write(vol.mount.join(nfc), b"x").expect("write");
+    let listed = std::fs::read_dir(&vol.mount)
+        .expect("list")
+        .map(|e| e.expect("entry").file_name())
+        .find(|n| n.to_string_lossy().nfc().eq(nfc.chars()))
+        .expect("listed");
+    // The decomposed spelling reaches the file first, then the precomposed one, each through a
+    // fresh speller (no listing shared between them).
+    let by_nfd = Speller::new().spell(&vol.mount.join(&nfd));
+    let by_nfc = Speller::new().spell(&vol.mount.join(nfc));
+    assert_eq!(location(&by_nfd), location(&by_nfc));
+    assert_eq!(by_nfc.file_name(), Some(listed.as_os_str()));
+}
+
 #[test]
 fn transactions_work_on_exfat_and_fat32() {
     if !enabled() {

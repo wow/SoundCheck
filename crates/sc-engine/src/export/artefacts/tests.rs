@@ -2,7 +2,7 @@
 //! 22,050-sample beat; a Prepare cut leaves bar 1 at 221 samples (5 ms).
 use super::*;
 use sc_core::analysis::{BeatUnit, Meter};
-use sc_core::export::{ExportSkip, ExportedGrid, XmlOnlyReason};
+use sc_core::export::{ExportSkip, ExportedGrid, XmlOnlyReason, XmlTrackInfo};
 use sc_core::{Bpm, Seconds};
 
 const SR: u32 = 44_100;
@@ -44,9 +44,25 @@ fn plan(gain_db: f64, cut_frames: u64) -> ExportPlan {
     }
 }
 
+fn info(grid: XmlGrid) -> XmlTrackInfo {
+    XmlTrackInfo {
+        grid,
+        title: None,
+        artist: None,
+    }
+}
+
 fn written(name: &str, mode: BatchMode, g: XmlGrid) -> BatchRow {
     let path = PathBuf::from(format!("/nowhere/{name}"));
-    BatchRow::written(&path, mode, &plan(-2.0, 9_261), &path, 4_410_000, SR, g)
+    BatchRow::written(
+        &path,
+        mode,
+        &plan(-2.0, 9_261),
+        &path,
+        4_410_000,
+        SR,
+        info(g),
+    )
 }
 
 fn mp3(mode: BatchMode, g: XmlGrid) -> BatchRow {
@@ -58,7 +74,11 @@ fn mp3(mode: BatchMode, g: XmlGrid) -> BatchRow {
         },
         Seconds(61.5),
         Codec::Mp3,
-        g,
+        XmlTrackInfo {
+            title: Some("Gece Yarısı".into()),
+            artist: Some("Sezen Aksu".into()),
+            ..info(g)
+        },
     )
 }
 
@@ -75,7 +95,7 @@ fn batch(mode: BatchMode) -> Vec<BatchRow> {
             },
             Seconds(5.0),
             Codec::Wav,
-            XmlGrid::Absent,
+            info(XmlGrid::Absent),
         ),
         BatchRow::failed(Path::new("/nowhere/e.wav"), Some(mode)),
     ]
@@ -89,18 +109,22 @@ fn prepare_lists_written_and_xml_only_rows() {
         .iter()
         .map(|t| t.path.file_name().and_then(|n| n.to_str()).expect("name"))
         .collect();
-    assert_eq!(names, ["a.wav", "b.aiff", "c.mp3"]);
+    // The withheld grid (b.aiff) is not listed: a track without a TEMPO could only change its
+    // information in rekordbox.
+    assert_eq!(names, ["a.wav", "c.mp3"]);
     // Bar 1 at the lead after the cut: the first beat, beat 1, at 5 ms.
-    let a = tracks[0].tempo.expect("a tempo");
+    let a = tracks[0].tempo;
     assert_eq!(
         (format!("{:.3}", a.inizio.0), a.battito),
         ("0.005".into(), 1)
     );
     assert!((tracks[0].duration.0 - 100.0).abs() < 1e-9);
-    // Withheld: listed without a tempo.
-    assert_eq!(tracks[1].tempo, None);
-    // MP3, bar 1 two beats and 100 samples in: the first beat is beat 3, at 2 ms.
-    assert_eq!(tracks[2].tempo.map(|t| t.battito), Some(3));
+    assert_eq!((&tracks[0].title, &tracks[0].artist), (&None, &None));
+    // MP3, bar 1 two beats and 100 samples in: the first beat is beat 3, at 2 ms; named by
+    // its tags.
+    assert_eq!(tracks[1].tempo.battito, 3);
+    assert_eq!(tracks[1].title.as_deref(), Some("Gece Yarısı"));
+    assert_eq!(tracks[1].artist.as_deref(), Some("Sezen Aksu"));
     assert!(tracks.iter().all(|t| t.path.is_absolute()));
 }
 
@@ -110,8 +134,8 @@ fn library_lists_only_confirmed_rows() {
     let tracks = xml_tracks(&rows, XmlSelect::Batch);
     assert_eq!(tracks.len(), 1, "{tracks:?}");
     assert!(tracks[0].path.ends_with("c.mp3"));
-    // Named one by one, every file with something to list is listed.
-    assert_eq!(xml_tracks(&rows, XmlSelect::All).len(), 3);
+    // Named one by one, every file with a grid to list is listed, Library or not.
+    assert_eq!(xml_tracks(&rows, XmlSelect::All).len(), 2);
     assert_eq!(xml_tracks(&rows, XmlSelect::Off).len(), 0);
 }
 
@@ -131,11 +155,11 @@ fn report_rows_say_what_the_xml_carries() {
         grid,
         [
             "tempo: beat 1 at 0.005 s",
-            "withheld: grid needs review",
+            "not in the XML: grid needs review",
             "tempo: beat 3 at 0.002 s (unverified: MP3/AAC encoder delay)",
             "not in the XML",
             "not in the XML",
-            "withheld: meter 7/8 · 2+2+3 (the XML carries 4/4 grids only)",
+            "not in the XML: meter 7/8 · 2+2+3 (the XML carries 4/4 grids only)",
         ]
     );
     let a = &report[0];
@@ -159,19 +183,25 @@ fn report_rows_say_what_the_xml_carries() {
 fn artefacts_are_written_together() {
     let dir = tempfile::tempdir().expect("temp dir");
     let rows = batch(BatchMode::Prepare);
-    let written = write_artefacts(dir.path(), &rows, XmlSelect::Batch).expect("written");
-    assert_eq!((written.listed, written.with_tempo), (3, 2));
+    let written =
+        write_artefacts(dir.path(), &rows, XmlSelect::Batch, "SoundCheck t").expect("written");
+    assert_eq!(written.listed, 2);
     let xml = std::fs::read(written.xml.as_ref().expect("xml")).expect("read");
     assert_eq!(
         xml,
-        sc_io::rekordbox::xml_bytes(&xml_tracks(&rows, XmlSelect::Batch), sc_core::VERSION)
+        sc_io::rekordbox::xml_bytes(
+            &xml_tracks(&rows, XmlSelect::Batch),
+            sc_core::VERSION,
+            "SoundCheck t"
+        )
     );
     let csv = std::fs::read(&written.report).expect("read");
     assert!(csv.starts_with(b"\xEF\xBB\xBFfile,mode,action,"));
     assert_eq!(csv.windows(2).filter(|w| w == b"\r\n").count(), 6);
     // Run again: the same bytes replace them.
-    let again = write_artefacts(dir.path(), &rows, XmlSelect::Batch).expect("written");
+    let again =
+        write_artefacts(dir.path(), &rows, XmlSelect::Batch, "SoundCheck t").expect("written");
     assert_eq!(std::fs::read(again.xml.expect("xml")).expect("read"), xml);
-    let off = write_artefacts(dir.path(), &rows, XmlSelect::Off).expect("written");
+    let off = write_artefacts(dir.path(), &rows, XmlSelect::Off, "SoundCheck t").expect("written");
     assert_eq!((off.xml, off.listed), (None, 0));
 }

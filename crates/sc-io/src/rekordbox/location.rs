@@ -72,9 +72,9 @@ impl Speller {
     }
 
     /// `path` made absolute (`.` dropped, `..` taking the name before it away), each name
-    /// replaced by its folder's entry for the same file: the entry whose name equals it
-    /// ignoring Unicode normalisation and case and whose inode is the file's (the first such
-    /// name in byte order). A name no entry matches, in a folder that cannot be listed, or on
+    /// replaced by its folder's entry for the same file: the entry whose inode is the file's,
+    /// preferring one whose name equals it ignoring Unicode normalisation and case (the first
+    /// such name in byte order). A name no entry matches, in a folder that cannot be listed, or on
     /// a system without inodes, stays as given; links are not followed.
     pub fn spell(&mut self, path: &Path) -> PathBuf {
         let Ok(absolute) = std::path::absolute(path) else {
@@ -107,10 +107,15 @@ impl Speller {
             .or_insert_with(|| list(dir))
             .as_ref()?;
         let want = fold(name);
+        let same_file =
+            |n: &&OsString| std::fs::symlink_metadata(dir.join(n)).is_ok_and(|m| m.ino() == ino);
+        // Names equal but for normalisation and case first; then any name of that file, for a
+        // volume whose case rules differ from Unicode's simple ones (Turkish dotless `ı`).
         names
             .iter()
             .filter(|n| fold(n) == want)
-            .find(|n| std::fs::symlink_metadata(dir.join(n)).is_ok_and(|m| m.ino() == ino))
+            .find(same_file)
+            .or_else(|| names.iter().find(same_file))
             .cloned()
     }
 

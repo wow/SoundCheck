@@ -35,3 +35,39 @@ fn files_are_replaced_whole() {
     assert_eq!(names, ["soundcheck-rekordbox.xml"]);
     assert!(write_file(&dir.path().join("missing/x.csv"), b"x").is_err());
 }
+
+#[test]
+fn only_our_own_artefacts_are_replaced() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let xml = dir.path().join("soundcheck-rekordbox.xml");
+    let ours = crate::rekordbox::xml_bytes(&[], "0.0.0", "SoundCheck x");
+    write_artefact(&xml, &ours, crate::rekordbox::is_soundcheck_xml).expect("new");
+    write_artefact(&xml, &ours, crate::rekordbox::is_soundcheck_xml).expect("ours, replaced");
+    // Someone else's XML, an audio file and a folder are never replaced.
+    let theirs = dir.path().join("theirs.xml");
+    let rekordbox = b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<DJ_PLAYLISTS Version=\"1.0.0\">\n  <PRODUCT Name=\"rekordbox\" Version=\"7.2.0\" Company=\"AlphaTheta\"/>\n";
+    std::fs::write(&theirs, rekordbox).expect("write");
+    let wav = dir.path().join("a.wav");
+    std::fs::write(&wav, b"RIFF....WAVEfmt ").expect("write");
+    let folder = dir.path().join("folder.xml");
+    std::fs::create_dir(&folder).expect("folder");
+    for path in [&theirs, &wav, &folder] {
+        let before = std::fs::symlink_metadata(path).expect("there");
+        assert!(matches!(
+            write_artefact(path, &ours, crate::rekordbox::is_soundcheck_xml),
+            Err(Error::AlreadyExists { .. })
+        ));
+        assert_eq!(
+            std::fs::symlink_metadata(path).expect("there").len(),
+            before.len()
+        );
+    }
+    assert_eq!(std::fs::read(&theirs).expect("read"), rekordbox);
+    // The report: ours is recognised by its byte-order mark and header row.
+    let csv = dir.path().join("grid-report.csv");
+    let report = crate::report::csv_bytes(&[]);
+    write_artefact(&csv, &report, crate::report::is_soundcheck_report).expect("new");
+    write_artefact(&csv, &report, crate::report::is_soundcheck_report).expect("replaced");
+    std::fs::write(&csv, b"file,mode\r\n").expect("write");
+    assert!(write_artefact(&csv, &report, crate::report::is_soundcheck_report).is_err());
+}

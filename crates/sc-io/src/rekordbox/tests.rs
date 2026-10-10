@@ -31,16 +31,21 @@ fn grid(bar1: u64, bpm: f64, meter: Meter) -> XmlGrid {
     }
 }
 
-fn track(path: &str, seconds: f64, tempo: Option<Tempo>) -> XmlTrack {
+/// A track without title and artist tags.
+fn track(path: &str, seconds: f64, tempo: Tempo) -> XmlTrack {
     XmlTrack {
         path: PathBuf::from(path),
+        title: None,
+        artist: None,
         duration: Seconds(seconds),
         tempo,
     }
 }
 
+const PLAYLIST: &str = "SoundCheck 2026-10-11 14.05.33";
+
 fn xml(tracks: &[XmlTrack]) -> String {
-    String::from_utf8(xml_bytes(tracks, "9.9.9-test")).expect("UTF-8")
+    String::from_utf8(xml_bytes(tracks, "9.9.9-test", PLAYLIST)).expect("UTF-8")
 }
 
 #[test]
@@ -67,7 +72,7 @@ fn inizio_is_lead_after_prepare() {
     let from_grid = Tempo::of(&grid(221, 127.996, four_four())).expect("tempo");
     assert_eq!(format!("{:.2}", from_grid.bpm.0), "128.00");
     assert_eq!(from_grid.battito, 1);
-    let text = xml(&[track("/m/a.wav", 300.0, Some(from_grid))]);
+    let text = xml(&[track("/m/a.wav", 300.0, from_grid)]);
     assert!(
         text.contains(r#"<TEMPO Inizio="0.005" Bpm="128.00" Metro="4/4" Battito="1"/>"#),
         "{text}"
@@ -122,32 +127,29 @@ fn review_grid_has_no_tempo() {
         Tempo::of_bar1(SampleIndex(0), Bpm(0.001), &four_four(), SR),
         Err(TempoWithheld::InvalidTempo)
     );
-    // A track without a tempo has neither TEMPO nor AverageBpm.
-    let withheld = Tempo::of(&XmlGrid::NeedsReview).ok();
-    let text = xml(&[track("/m/review.wav", 200.0, withheld)]);
-    assert!(
-        !text.contains("<TEMPO") && !text.contains("AverageBpm"),
-        "{text}"
-    );
-    assert!(text.contains(r#"<TRACK TrackID="1" Name="review" TotalTime="200" Location="#));
+    // Such a track cannot be listed at all: an `XmlTrack` always has a tempo.
 }
 
-/// A batch of two written by hand: a Turkish name with `&` and `'` (NFC), a withheld grid with
-/// `<` and `>` in its name.
+/// A batch of two written by hand: a file tagged with a Turkish title and artist (`&` and `'`
+/// in them, NFC) under a folder with `&`, and an untagged file named with `<`, `>` and `"`,
+/// whose name falls back to the file name. Each `TRACK` has only `Name`, `Artist` (when
+/// tagged), `TotalTime`, `AverageBpm` and `Location`; the playlist is keyed by location.
 const EXPECTED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <DJ_PLAYLISTS Version="1.0.0">
   <PRODUCT Name="SoundCheck" Version="9.9.9-test" Company="SoundCheck"/>
   <COLLECTION Entries="2">
-    <TRACK TrackID="1" Name="Deniz&apos;in Parçası" TotalTime="245" AverageBpm="128.00" Location="file://localhost/Music/%C5%9Eark%C4%B1%20%26%20Co/Deniz%27in%20Par%C3%A7as%C4%B1.wav">
+    <TRACK Name="Deniz&apos;in Parçası" Artist="Ayşe &amp; İlhan" TotalTime="245" AverageBpm="128.00" Location="file://localhost/Music/%C5%9Eark%C4%B1%20%26%20Co/01.wav">
       <TEMPO Inizio="0.005" Bpm="128.00" Metro="4/4" Battito="1"/>
     </TRACK>
-    <TRACK TrackID="2" Name="b &lt;live&gt; &quot;1&quot;" TotalTime="60" Location="file://localhost/Music/b%20%3Clive%3E%20%221%22.wav"/>
+    <TRACK Name="b &lt;live&gt; &quot;1&quot;" TotalTime="60" AverageBpm="120.00" Location="file://localhost/Music/b%20%3Clive%3E%20%221%22.wav">
+      <TEMPO Inizio="0.065" Bpm="120.00" Metro="4/4" Battito="1"/>
+    </TRACK>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
-      <NODE Name="SoundCheck" Type="1" KeyType="0" Entries="2">
-        <TRACK Key="1"/>
-        <TRACK Key="2"/>
+      <NODE Name="SoundCheck 2026-10-11 14.05.33" Type="1" KeyType="1" Entries="2">
+        <TRACK Key="file://localhost/Music/%C5%9Eark%C4%B1%20%26%20Co/01.wav"/>
+        <TRACK Key="file://localhost/Music/b%20%3Clive%3E%20%221%22.wav"/>
       </NODE>
     </NODE>
   </PLAYLISTS>
@@ -156,12 +158,13 @@ const EXPECTED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 
 fn batch() -> Vec<XmlTrack> {
     vec![
-        track(
-            "/Music/Şarkı & Co/Deniz'in Parçası.wav",
-            245.97,
-            Some(tempo(221, 128.0)),
-        ),
-        track("/Music/b <live> \"1\".wav", 60.0, None),
+        XmlTrack {
+            title: Some("Deniz'in Parçası".into()),
+            artist: Some("Ayşe & İlhan".into()),
+            ..track("/Music/Şarkı & Co/01.wav", 245.97, tempo(221, 128.0))
+        },
+        // 2,866 samples = 0.065 s: bar 1 itself, at 120 BPM.
+        track("/Music/b <live> \"1\".wav", 60.0, tempo(2_866, 120.0)),
     ]
 }
 
@@ -169,25 +172,33 @@ fn batch() -> Vec<XmlTrack> {
 fn escapes() {
     assert_eq!(xml(&batch()), EXPECTED);
     // Characters XML 1.0 forbids never reach the file; the location keeps the bytes.
-    let odd = track("/m/a\u{1}b.wav", 1.0, None);
+    let odd = XmlTrack {
+        artist: Some("x\u{FFFF}".into()),
+        ..track("/m/a\u{1}b.wav", 1.0, tempo(0, 120.0))
+    };
     let text = xml(&[odd]);
     assert!(text.contains("Name=\"a\u{FFFD}b\""), "{text}");
+    assert!(text.contains("Artist=\"x\u{FFFD}\""), "{text}");
     assert!(text.contains("/m/a%01b.wav"), "{text}");
+    // Only the five attributes SoundCheck means to set.
+    assert!(!EXPECTED.contains("TrackID") && !EXPECTED.contains("Genre"));
 }
 
 #[test]
 fn deterministic_bytes() {
-    let a = xml_bytes(&batch(), "9.9.9-test");
-    let b = xml_bytes(&batch(), "9.9.9-test");
+    let a = xml_bytes(&batch(), "9.9.9-test", PLAYLIST);
+    let b = xml_bytes(&batch(), "9.9.9-test", PLAYLIST);
     assert_eq!(a, b);
     assert!(!a.contains(&b'\r'), "LF line ends only");
     assert!(a.ends_with(b"</DJ_PLAYLISTS>\n"));
     assert!(!a.starts_with(b"\xEF\xBB\xBF"), "no byte-order mark");
     // An empty batch is still a valid document with an empty playlist.
-    let empty = String::from_utf8(xml_bytes(&[], "9.9.9-test")).expect("UTF-8");
+    let empty = String::from_utf8(xml_bytes(&[], "9.9.9-test", PLAYLIST)).expect("UTF-8");
     assert!(empty.contains(r#"<COLLECTION Entries="0"/>"#), "{empty}");
     assert!(
-        empty.contains(r#"<NODE Name="SoundCheck" Type="1" KeyType="0" Entries="0"/>"#),
+        empty.contains(
+            r#"<NODE Name="SoundCheck 2026-10-11 14.05.33" Type="1" KeyType="1" Entries="0"/>"#
+        ),
         "{empty}"
     );
 }
@@ -218,45 +229,67 @@ fn location_turkish_nfc() {
     );
 }
 
-/// On macOS the location of a file reached by either spelling is the one its folder stores:
-/// what rekordbox recorded when it added the file.
+/// The speller writes each name as its folder lists it. On macOS a file reached by either
+/// Unicode spelling (or another case) gets the listed one: what the Finder, and rekordbox when it
+/// added the file, see.
 #[cfg(target_os = "macos")]
 #[test]
 fn location_uses_the_spelling_on_disk() {
     use unicode_normalization::UnicodeNormalization;
     let dir = tempfile::tempdir().expect("temp dir");
+    let base = Speller::new().spell(dir.path());
     for stored in ["Şarkı İçin.wav", "Gu\u{308}l S\u{327}arkı.wav"] {
-        let on_disk = dir.path().join(stored);
-        std::fs::write(&on_disk, b"x").expect("write");
+        std::fs::write(dir.path().join(stored), b"x").expect("write");
+        // A speller reads each folder once, so a new one sees the file just written.
+        let mut speller = Speller::new();
         let other: String = if stored.nfc().eq(stored.chars()) {
             stored.nfd().collect()
         } else {
             stored.nfc().collect()
         };
         assert_ne!(other, stored);
-        let resolved = crate::txn::resolve_file(&dir.path().join(&other)).expect("resolves");
-        assert_eq!(
-            resolved.file_name().and_then(|n| n.to_str()),
-            Some(stored),
-            "reached as {other:?}"
-        );
-        assert!(location(&resolved).ends_with(&location(Path::new(stored))[16..]));
+        for given in [other.clone(), other.to_ascii_uppercase(), stored.to_owned()] {
+            assert_eq!(
+                speller.spell(&dir.path().join(&given)),
+                base.join(stored),
+                "reached as {given:?}"
+            );
+        }
     }
+}
+
+#[test]
+fn speller_drops_dots_and_keeps_what_it_cannot_list() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::create_dir(dir.path().join("sub")).expect("folder");
+    std::fs::write(dir.path().join("a.wav"), b"x").expect("write");
+    let mut speller = Speller::new();
+    let base = speller.spell(dir.path());
+    assert_eq!(
+        speller.spell(&dir.path().join("./sub/../a.wav")),
+        base.join("a.wav")
+    );
+    // A name that is not there stays as given.
+    assert_eq!(
+        speller.spell(&dir.path().join("missing.wav")),
+        base.join("missing.wav")
+    );
+    assert!(speller.spell(Path::new("rel.wav")).is_absolute());
 }
 
 #[test]
 fn parse_back() {
     use quick_xml::events::Event;
     let tracks = vec![
-        track("/Music/Şarkı & Co/a.wav", 245.0, Some(tempo(221, 128.0))),
+        track("/Music/Şarkı & Co/a.wav", 245.0, tempo(221, 128.0)),
         track(
             "/Music/S\u{327}ark\u{131}/b.aiff",
             61.9,
-            Some(tempo(44_200, 127.5)),
+            tempo(44_200, 127.5),
         ),
-        track("/Music/c%20d#e.flac", 10.0, None),
+        track("/Music/c%20d#e.flac", 10.0, tempo(5_000, 174.0)),
     ];
-    let bytes = xml_bytes(&tracks, "9.9.9-test");
+    let bytes = xml_bytes(&tracks, "9.9.9-test", "SoundCheck & <co>");
     let mut reader = quick_xml::Reader::from_reader(bytes.as_slice());
     let mut buf = Vec::new();
     let mut locations = Vec::new();
@@ -292,16 +325,17 @@ fn parse_back() {
         }
         buf.clear();
     }
-    assert_eq!(keys, ["1", "2", "3"]);
+    // The playlist lists every track, keyed by its location.
+    assert_eq!(keys, locations);
     let paths: Vec<PathBuf> = locations
         .iter()
         .map(|l| decode_location(l).expect("a file location"))
         .collect();
     let given: Vec<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
     assert_eq!(paths, given);
-    assert_eq!(tempos.len(), 2);
+    assert_eq!(tempos.len(), 3);
     for (index, [inizio, bpm, metro, battito]) in &tempos {
-        let t = tracks[index - 1].tempo.expect("a tempo");
+        let t = tracks[index - 1].tempo;
         let inizio: f64 = inizio.parse().expect("number");
         assert!((inizio - t.inizio.0).abs() <= 0.0005, "{inizio} vs {t:?}");
         assert_eq!(bpm.parse::<f64>().expect("number"), t.bpm.0);

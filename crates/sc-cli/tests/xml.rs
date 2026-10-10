@@ -88,7 +88,7 @@ fn process_in_place_writes_the_artefacts_into_a_new_batch_folder() {
     let csv_path = folders[0].join("grid-report.csv");
     assert!(
         run.stdout.contains(&format!(
-            "rekordbox XML: {} (1 tracks, 0 with a grid)",
+            "rekordbox XML: {} (0 tracks with a grid; playlist \"SoundCheck 20",
             xml_path.display()
         )),
         "{}",
@@ -101,9 +101,18 @@ fn process_in_place_writes_the_artefacts_into_a_new_batch_folder() {
         run.text()
     );
     let xml = read(&xml_path);
-    // The file is listed where it is (in place), without a grid (loudness only).
-    assert!(xml.contains("%C5%9Eark%C4%B1%20%26%20co.wav\"/>"), "{xml}");
-    assert!(!xml.contains("<TEMPO"), "{xml}");
+    // Loudness only: no grid, so the file is not listed (importing it could only change its
+    // information in rekordbox); the report says why.
+    assert!(xml.contains("<COLLECTION Entries=\"0\"/>"), "{xml}");
+    // The playlist is named after the batch's folder.
+    let folder = folders[0]
+        .file_name()
+        .and_then(|n| n.to_str())
+        .expect("name");
+    assert!(
+        xml.contains(&format!("Name=\"SoundCheck {folder}\"")),
+        "{xml}"
+    );
     let csv = read(&csv_path);
     let mut lines = csv.trim_start_matches('\u{FEFF}').lines();
     assert_eq!(
@@ -117,7 +126,7 @@ fn process_in_place_writes_the_artefacts_into_a_new_batch_folder() {
     );
     // No cut, BPM or bar 1 without a grid; the note says why no tag was written.
     assert!(
-        row.ends_with(",,,,no grid,,tags not added: the file has no ID3 tag"),
+        row.ends_with(",,,,not in the XML: no grid,,tags not added: the file has no ID3 tag"),
         "{row}"
     );
     // A second batch gets its own folder.
@@ -168,9 +177,7 @@ fn process_out_writes_the_artefacts_next_to_the_copies() {
     assert_eq!(run.docs().len(), 2);
     assert!(run.stderr.contains("rekordbox XML: "), "{}", run.text());
     let xml = read(&out.join("soundcheck-rekordbox.xml"));
-    let copy = sc_io::rekordbox::location(&out.join("a.wav"));
-    assert!(xml.contains(&format!("Location=\"{copy}\"")), "{xml}");
-    assert!(xml.contains("<COLLECTION Entries=\"1\">"), "{xml}");
+    assert!(xml.contains("<COLLECTION Entries=\"0\"/>"), "{xml}");
     let csv = read(&out.join("grid-report.csv"));
     let rows: Vec<&str> = csv.lines().skip(1).collect();
     assert_eq!(rows.len(), 2, "{csv}");
@@ -217,10 +224,41 @@ fn record_grid(wav: &Path) {
     std::fs::write(&path, serde_json::to_vec_pretty(&doc).expect("json")).expect("write");
 }
 
+/// Appends an ID3v2.3 `id3 ` chunk with a `TIT2` title and a `TPE1` artist (UTF-16 with a
+/// byte-order mark) to the WAV at `path`.
+fn tag_wav(path: &Path, title: &str, artist: &str) {
+    let frame = |id: &[u8; 4], text: &str| {
+        let mut body = vec![1_u8, 0xFF, 0xFE];
+        body.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        let mut f = id.to_vec();
+        f.extend_from_slice(&u32::try_from(body.len()).expect("small").to_be_bytes());
+        f.extend_from_slice(&[0, 0]);
+        f.extend(body);
+        f
+    };
+    let mut frames = frame(b"TIT2", title);
+    frames.extend(frame(b"TPE1", artist));
+    let size = u32::try_from(frames.len()).expect("small");
+    let mut tag = b"ID3\x03\x00\x00".to_vec();
+    tag.extend([21, 14, 7, 0].map(|shift| u8::try_from((size >> shift) & 0x7F).expect("7 bits")));
+    tag.extend(frames);
+    let mut bytes = std::fs::read(path).expect("read");
+    bytes.extend_from_slice(b"id3 ");
+    bytes.extend_from_slice(&u32::try_from(tag.len()).expect("small").to_le_bytes());
+    bytes.extend(&tag);
+    if tag.len() % 2 == 1 {
+        bytes.push(0);
+    }
+    let riff = u32::try_from(bytes.len() - 8).expect("small");
+    bytes[4..8].copy_from_slice(&riff.to_le_bytes());
+    std::fs::write(path, bytes).expect("write");
+}
+
 #[test]
 fn xml_reads_an_export_back_from_its_sidecar() {
     let lib = Library::new();
     let wav = tone(&lib, "a.wav");
+    tag_wav(&wav, "Gece Yarısı", "Ayşe & İlhan");
     let run = sc_cli(
         &lib,
         &["process", arg(&wav), "--batch-mode", "library", "--no-grid"],
@@ -242,12 +280,18 @@ fn xml_reads_an_export_back_from_its_sidecar() {
     );
     assert!(run.ok, "{}", run.text());
     let xml = read(&out);
+    // Named by its own tags; only the attributes SoundCheck sets.
+    let location = sc_io::rekordbox::location(&wav);
     assert!(
-        xml.contains(r#"<TEMPO Inizio="0.005" Bpm="120.00" Metro="4/4" Battito="1"/>"#),
+        xml.contains(&format!(
+            "<TRACK Name=\"Gece Yarısı\" Artist=\"Ayşe &amp; İlhan\" TotalTime=\"5\" \
+             AverageBpm=\"120.00\" Location=\"{location}\">\n      \
+             <TEMPO Inizio=\"0.005\" Bpm=\"120.00\" Metro=\"4/4\" Battito=\"1\"/>"
+        )),
         "{xml}"
     );
-    assert!(xml.contains(r#"AverageBpm="120.00""#), "{xml}");
-    assert!(xml.contains("<COLLECTION Entries=\"2\">"), "{xml}");
+    // The changed file has no grid: not listed.
+    assert!(xml.contains("<COLLECTION Entries=\"1\">"), "{xml}");
     assert!(
         run.stdout.contains(&format!(
             "{}: exported earlier; tempo: beat 1 at 0.005 s; 120.00 BPM",
@@ -257,13 +301,16 @@ fn xml_reads_an_export_back_from_its_sidecar() {
         run.text()
     );
     assert!(
-        run.stdout
-            .contains(&format!("{}: analysed; no grid", changed.display())),
+        run.stdout.contains(&format!(
+            "{}: analysed; not in the XML: no grid",
+            changed.display()
+        )),
         "{}",
         run.text()
     );
     assert!(
-        run.stdout.contains("(2 tracks, 1 with a grid; 0 failed)"),
+        run.stdout
+            .contains("(1 tracks, 1 not listed (no grid the XML may carry), 0 failed;"),
         "{}",
         run.text()
     );
@@ -279,10 +326,53 @@ fn xml_reads_an_export_back_from_its_sidecar() {
     assert!(!run.stdout.contains("<TEMPO"), "{}", run.text());
     assert!(
         run.stderr
-            .contains("analysed; no grid; changed since its export"),
+            .contains("analysed; not in the XML: no grid; changed since its export"),
         "{}",
         run.text()
     );
+}
+
+#[test]
+fn xml_out_never_replaces_a_file_soundcheck_did_not_write() {
+    let lib = Library::new();
+    let a = tone(&lib, "a.wav");
+    let b = tone(&lib, "b.wav");
+    let a_bytes = std::fs::read(&a).expect("read");
+    // `--out *.wav` as a shell expands it: `--out a.wav b.wav`.
+    let run = sc_cli(&lib, &["xml", "--no-grid", "--out", arg(&a), arg(&b)]);
+    assert_eq!(run.code, Some(2), "{}", run.text());
+    assert_eq!(
+        std::fs::read(&a).expect("read"),
+        a_bytes,
+        "the audio is untouched"
+    );
+    let lines: Vec<&str> = run.stderr.lines().collect();
+    assert_eq!(lines.len(), 3, "{}", run.text());
+    assert_eq!(lines[0], format!("{}: not written", a.display()));
+    assert!(
+        lines[1].starts_with("  why: ") && lines[1].contains(".xml"),
+        "{}",
+        run.text()
+    );
+    assert!(lines[2].starts_with("  what to do: "), "{}", run.text());
+    // An existing file ending in .xml that SoundCheck did not write is not replaced either.
+    let theirs = lib.base.join("rekordbox.xml");
+    let rekordbox = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<DJ_PLAYLISTS Version=\"1.0.0\">\n  <PRODUCT Name=\"rekordbox\"/>\n</DJ_PLAYLISTS>\n";
+    std::fs::write(&theirs, rekordbox).expect("write");
+    let run = sc_cli(&lib, &["xml", "--no-grid", "--out", arg(&theirs), arg(&b)]);
+    assert_eq!(run.code, Some(2), "{}", run.text());
+    assert!(
+        run.stderr.contains("SoundCheck did not write"),
+        "{}",
+        run.text()
+    );
+    assert_eq!(read(&theirs), rekordbox);
+    // Its own XML is replaced.
+    let ours = lib.base.join("ours.XML");
+    for _ in 0..2 {
+        let run = sc_cli(&lib, &["xml", "--no-grid", "--out", arg(&ours), arg(&b)]);
+        assert!(run.ok, "{}", run.text());
+    }
 }
 
 #[test]
@@ -292,13 +382,10 @@ fn xml_fails_for_a_missing_file_and_lists_the_rest() {
     let missing = lib.music.join("missing.wav");
     let run = sc_cli(&lib, &["xml", arg(&missing), arg(&wav), "--no-grid"]);
     assert_eq!(run.code, Some(2), "{}", run.text());
+    assert!(run.stdout.starts_with("<?xml"), "{}", run.text());
     assert!(
-        run.stdout.contains("<COLLECTION Entries=\"1\">"),
-        "{}",
-        run.text()
-    );
-    assert!(
-        run.stderr.contains("1 tracks, 0 with a grid; 1 failed"),
+        run.stderr
+            .contains("0 tracks, 1 not listed (no grid the XML may carry), 1 failed"),
         "{}",
         run.text()
     );
@@ -334,6 +421,14 @@ fn prepare_xml_puts_bar_1_at_the_lead() {
         r#"<TEMPO Inizio="0.006" Bpm="120.00" Metro="4/4" Battito="1"/>"#,
     ];
     assert!(ok.iter().any(|t| xml.contains(t)), "{xml}");
+    // The copy is listed, named after the file (it has no title tag).
+    let copy = sc_io::rekordbox::location(&out.join("click.wav"));
+    assert!(
+        xml.contains(&format!(
+            "<TRACK Name=\"click\" TotalTime=\"32\" AverageBpm=\"120.00\" Location=\"{copy}\">"
+        )),
+        "{xml}"
+    );
     let csv = read(&out.join("grid-report.csv"));
     assert!(csv.contains(",120.00,0.00"), "{csv}");
 }
