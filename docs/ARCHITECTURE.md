@@ -6,8 +6,8 @@ Status: v0.1 architecture fixed 2026-09-24.
 ```
 src        React 19 + TS (Vite, Tailwind 4, shadcn, zustand, xstate)   -- renders; never holds PCM
 src-tauri  Tauri 2 shell: commands, Channel<JobEvent>, read_peaks         -- thin; calls sc-engine
-crates/sc-cli           headless binary: analyze | plan | labels | eval | bench | cache | apply | undo | journal | recover (later: process | grid-check) -- thin; calls sc-engine (and sc-io's journal) and only prints
-crates/sc-engine        analyze (the per-file pipeline), run_batch(files, settings, cancel, on_event), cancellation, player (cpal + rtrb; live meters, original/processed audition, monitor volume),
+crates/sc-cli           headless binary: analyze | plan | process | labels | eval | bench | cache | apply | undo | journal | recover (later: grid-check) -- thin; calls sc-engine (and sc-io's journal) and only prints
+crates/sc-engine        analyze (the per-file pipeline), run_batch(files, settings{task: Analyze | Process}, cancel, on_event), cancellation, player (cpal + rtrb; live meters, original/processed audition, monitor volume),
                         apply_file / undo_file / recover_at_start / check_inputs over sc_io::txn, neutral tag names, folder expansion that skips the backup root,
                         decide (loudness plan per row) and export::plan_export (what exporting does to a file: gain, Prepare cut, tags, XML only or skip)
 crates/sc-analysis      loudness (ebur128 wrap + S-P95/S-top30/PLR + timeline), beats (beat-this, rten), grid solver (Huber LS, comb phase, kick-band anchor, octave order, thresholds, confidence, refit), DJ-safe report
@@ -56,14 +56,16 @@ EXPORT PLAN (pure, under 1 us per row with DECIDE; `sc_engine::export::plan_expo
   plan_export(ExportInput{record (grid as shown), plan (DECIDE's), decide settings, ExportSource{codec, bits, float, has_tag, serato, blake3}}, ExportSettings{batch_mode: Prepare|Library, place, depth, grid_only, tbpm, xml, lead_ms})
   -> ExportOutcome: Write{ExportPlan{gain_db, trim_frames, trim_snapped_from_frames, expect_frames, bits, tags (neutral names), bext, cut, notices: [SeratoCuesShifted{cut_s}]}}
      | XmlOnly{Mp3OrAac | GridOnlyFlac | GridOnlyWouldRequantise | NoTagToWriteGridOnly}
-     | Skip{SeratoInPlaceCut | SeratoUnknownInPlaceCut | NotDjSafeRate | UnsupportedChannels | Unsupported | Silent | NoGrid | NothingToWrite{xml-only reason, when the XML is off}}
+     | Skip{SeratoInPlaceCut | SeratoUnknownInPlaceCut | NotDjSafeRate | UnsupportedChannels | Unsupported | Silent | NoGrid | GridNeedsReview (grid only on a
+       grid that needs review: nothing but an empty record to write) | NothingToWrite{xml-only reason, when the XML is off}}
   gain = DECIDE's (0 and the source depth for grid only, which needs 16- or 24-bit integer PCM, so the samples stay bit for bit);
   Prepare: bar lines extrapolated from bar 1 by whole bars (meter pulses x 60 sr / bpm, at `Bpm::written()`, the two-decimal BPM that the tags,
   the XML, the sidecar and grid-check all use, fractional samples); F = the first bar line at or after the start: F before the lead -> Cut::OnBar{bar_line, bar1}
   (no cut, never added silence); else cut floor(F - lead) frames so F lands at the lead or under a sample after it (Cut::Cut); more than the bar's last beat ->
-  Cut::NotCut{bar1, first_bar_line} (no music removed); a row that needs review (DECIDE's status; a grid the user confirmed needs none) ->
+  Cut::NotCut{bar1, first_bar_line} (no music removed); a grid that needs review (any of DECIDE's review reasons, not its status, which says Skipped first;
+  a grid the user confirmed has none) ->
   Cut::NeedsReview{bar1} (no cut; gain and loudness tags written, the grid not: no BPM tag and SOUNDCHECK `bpm=none;bar1=none`, in every mode,
-  so a disagreeing BPM tag survives and the row still needs review after re-analysis); Library never cuts and expects the source's frame count; a cut copy of a file with
+  so a disagreeing BPM tag survives and the row still needs review after re-analysis; ExportPlan.grid_withheld says so); Library never cuts and expects the source's frame count; a cut copy of a file with
   Serato data (ExportSource.serato from the probe's detection) carries its Serato tags unchanged, so the plan notes SeratoCuesShifted; in place it is skipped,
   as is an in-place cut of a file whose tags could not be read (serato_unknown); plan_export_snapped decides that skip by the cut made (a cut that snaps
   to the first frame cuts nothing and is not skipped);
@@ -71,6 +73,20 @@ EXPORT PLAN (pure, under 1 us per row with DECIDE; `sc_engine::export::plan_expo
   SOUNDCHECK `v=1;app;mode;stat;target;gain;trim;rate;bpm;bar1;src` (grid only: `gain=none`, no stat/target; trim and bar1 in samples at rate);
   bext (WAV) = the measurements moved by g; its JSON keys stay snake_case (`integrated_lufs_x100`, ...) inside the camelCase ExportPlan, as
   render requests persist them. The process job turns a Write into an apply_file request.
+PROCESS (`run_batch` with `Task::Process(ProcessSettings{decide, export, out_dir, backup_root, edits, recovery: Arc<RecoveryGate>})`, `sc-cli process`):
+  settings checked (folder given exactly for Place::Folder) -> wait on the RecoveryGate (closed while start-up recovery runs; a cancel meanwhile
+  cancels every file, nothing touched) -> per file on the workers: analyse (cache) + saved edit applied -> ExportSource::read (fresh probe, chunks,
+  BLAKE3 of writable sources) -> DECIDE -> plan_export_snapped -> not Write: ExportSkipped (terminal) | Write: Processing{plan} -> apply_file with
+  trim_snapped_from_frames and an ExportRecord{settings, decide, decided, plan, grid: ExportedGrid{bar1, first_bar_line, bpm (written), bpm_exact,
+  meter, edited, confirmed} in output samples, source measurements}: the transaction refuses (VerifyFailed, before anything is replaced) an output
+  whose frame count or cut is not the plan's (Library: frames_out == frames_in; Prepare: frames_in - trim), journals the record and writes it into
+  the sidecar (schema 2, key `export`; schema 1 still reads via `sc_io::txn::sidecar::read`) -> Written{TxnReport} -> after the write (never fails,
+  problems become notes): an edited or confirmed grid edit is carried to the output (`carry_edit`: made on the output's audio, measured by a
+  loudness pass that a cancel does not stop; a confirmed grid pinned as typed BPM + meter + bar line at anchor - T'; an unconfirmed edit keeps its
+  overrides with a placed line moved to anchor - T') -> the output analysed afresh (`Analyzer::analyze_fresh`: its cache entry replaced even when
+  size and mtime match the old one; the place where its grid is compared with the exported one) -> Done{ProcessDone{output, analysis, edit,
+  edit_carried, notes}}. Library keeps the mtime, Prepare does not. Events per file: Started, Progress*, Processing, Written, Done | ExportSkipped
+  | Failed | Cancelled.
   Snapped cut: the render's head snap is not idempotent (snapping the snapped cut may move it further back), so the cut is snapped once,
   before rendering: `sc_io::render::snap_head_cut(path, T) -> T'` (decodes only the frames up to T, except a FLAC whose STREAMINFO declares no total,
   which is decoded whole to count its frames; the same choice as the render),
@@ -109,13 +125,13 @@ RENDER (streamed)
              file holds its per-file lock, so recovery never lands on top of it); `forget` ends a pending entry as `forgotten` (only ids of the generated
              `<hex>-<pid>-<n>` shape, looked up before any lock; recovery skips it, nothing deleted); lock files are named only from checked ids or hashes;
              `undo` restores the newest backup through the same steps and reports how many earlier changes remain;
-             entry points: `sc_engine::apply_file(path, ApplyRequest{gain_db, trim_frames, bits, loudness, tags}, ApplyOptions{place: InPlace|Folder, backup_root,
+             entry points: `sc_engine::apply_file(path, ApplyRequest{gain_db, trim_frames, trim_snapped_from_frames, bits, loudness, tags, export}, ApplyOptions{place: InPlace|Folder, backup_root,
              keep_mtime, sidecar}, cancel)`; `check_inputs(files, place)` first refuses a file listed twice (resolved like the transaction: on-disk name, case,
              Unicode form) and copies into one folder that would share a name, before anything is written; tags use neutral names mapped per container
              (`BPM` -> ID3 `TBPM` integer + `TXXX:BPM` / Vorbis `BPM`; `INITIALKEY` -> `TKEY` / `INITIALKEY`; `NAME` -> `TXXX:NAME` / `NAME`; the frame ids
              declared by ID3v2.3/2.4 plus iTunes' own, and labels with `:`, refused); `undo_file`; `recover_at_start(root) -> RecoveryStatus` (never fails: an unreadable journal is `failed`), which the
              desktop shell runs on a background thread at start, keeping the result for the `recovery_status` command and logging it, and which
-             `sc-cli apply`/`undo` run before writing; `collect_audio_files` never lists a file in the backup root (resolved once per call);
+             `sc-cli process`/`apply`/`undo` run before writing; `collect_audio_files` never lists a file in the backup root (resolved once per call);
              copy-to-folder mode: same steps, no backup, never replaces a file. Crash matrix behind the test-only `crash-test` feature
   batch artefacts: soundcheck-rekordbox.xml, grid-report.csv; per-file grid-check
 ```
