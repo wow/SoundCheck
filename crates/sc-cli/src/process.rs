@@ -3,7 +3,9 @@
 //! cache is used), planned as `sc-cli plan --batch-mode` plans it, written in place after a
 //! backup (or as a copy with `--out`), verified, and analysed again. Each file prints one line
 //! (or one JSON document) in the order given: what was written, or why not; a refusal prints
-//! three lines on stderr. A summary line ends the text output.
+//! three lines on stderr. A summary line ends the text output. Unless `--no-xml`, the batch's
+//! rekordbox XML and grid report are written last (`sc_engine::write_artefacts`): into the
+//! `--out` folder, or for an export in place into a new folder under the exports root.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -11,13 +13,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::ValueEnum;
-use sc_core::Error;
 use sc_core::export::{
     BatchMode, DEFAULT_LEAD_MS, ExportOutcome, ExportPlan, ExportSettings, Place as ExportPlace,
+    XmlOnlyReason, XmlTrackInfo,
 };
+use sc_core::plan::Codec;
+use sc_core::{Error, Seconds};
 use sc_engine::{
-    BatchFile, BatchSettings, CancelToken, EngineEvent, Place, ProcessDone, ProcessSettings,
-    RecoveryGate, Task, check_inputs, default_workers, run_batch,
+    Artefacts, BatchFile, BatchRow, BatchSettings, CancelToken, EngineEvent, Place, ProcessDone,
+    ProcessSettings, RecoveryGate, RowAction, Task, XmlSelect, check_inputs, default_workers,
+    run_batch, write_artefacts,
 };
 use sc_io::cache::Cache;
 use sc_io::edits::EditStore;
@@ -42,6 +47,20 @@ pub enum DepthArg {
     /// 24-bit.
     #[value(name = "24")]
     TwentyFour,
+}
+
+/// The artefact flags of `process`.
+#[derive(clap::Args)]
+pub struct ArtefactArgs {
+    /// Write the batch's rekordbox XML (`soundcheck-rekordbox.xml`) and grid report
+    /// (`grid-report.csv`): into the --out folder, or for an export in place into a new folder
+    /// under ~/Music/SoundCheck/exports (`SC_EXPORTS_ROOT` overrides it). On by default.
+    #[arg(long, overrides_with = "no_xml")]
+    xml: bool,
+    /// Write neither the rekordbox XML nor the grid report; a file only the XML could carry
+    /// (MP3, AAC) then has nothing to write.
+    #[arg(long, overrides_with = "xml")]
+    no_xml: bool,
 }
 
 /// The flags of `process`.
@@ -69,6 +88,8 @@ pub struct ProcessArgs {
     /// Do not write the tempo tag (it is written in Prepare mode by default, never in Library).
     #[arg(long)]
     no_tbpm: bool,
+    #[command(flatten)]
+    artefacts: ArtefactArgs,
     /// Statistic to align: S-P95 for DJ sets, integrated loudness for streaming.
     #[arg(long, value_enum, default_value = "dj")]
     mode: ModeArg,
@@ -110,6 +131,7 @@ impl ProcessArgs {
             },
             grid_only: self.grid_only,
             tbpm: defaults.tbpm && !self.no_tbpm,
+            xml: !self.artefacts.no_xml,
             lead_ms: self.lead_ms,
             ..defaults
         };
@@ -126,8 +148,13 @@ enum FileResult {
         report: Box<TxnReport>,
         done: Box<ProcessDone>,
     },
-    /// Not written.
-    NotWritten(Box<ExportOutcome>),
+    /// Not written: why, and what the XML may carry for it.
+    NotWritten {
+        outcome: Box<ExportOutcome>,
+        duration: Seconds,
+        codec: Codec,
+        xml: Box<XmlTrackInfo>,
+    },
     /// Refused or failed.
     Failed(Error),
 }
@@ -149,6 +176,10 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
     let decide = decide_settings(args.mode, args.target, args.ceiling, &args.analysis);
     decide.validate()?;
     let export = args.export_settings()?;
+    // Refused before anything is exported: the batch could not write its XML or report.
+    if export.xml && refuse_foreign_artefact(args.out.as_deref()) {
+        return Ok(1);
+    }
     let root = args.backup.resolve()?;
     let cache = Cache::open(Cache::default_dir()?);
     let recovered = recover_first(&root, &cache);
@@ -196,6 +227,7 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
         mode: export.batch_mode,
         next: 0,
         counts: Counts::default(),
+        rows: Vec::with_capacity(args.files.len()),
         error: None,
     };
     printer.flush(&mut results);
@@ -228,7 +260,97 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
             c.failed
         );
     }
+    if export.xml && printer.rows.iter().any(|r| r.action != RowAction::Failed) {
+        let now = std::time::SystemTime::now();
+        let dir = artefacts_dir(args.out.as_deref(), now)?;
+        let playlist = sc_io::rekordbox::playlist_name(now);
+        let written = write_artefacts(&dir, &printer.rows, XmlSelect::Batch, &playlist)?;
+        print_artefacts(&written, &playlist, export.batch_mode, args.json);
+    }
     Ok(c.failed)
+}
+
+/// Whether an artefact name in the `--out` folder is taken by a file SoundCheck did not write;
+/// if so, the refusal is printed in three lines.
+fn refuse_foreign_artefact(out: Option<&Path>) -> bool {
+    let Some((path, why)) = out.and_then(foreign_artefact) else {
+        return false;
+    };
+    eprintln!(
+        "{}: not written\n  why: {why}\n  what to do: export into another folder, move that \
+         file away, or pass --no-xml",
+        path.display()
+    );
+    true
+}
+
+/// Recognises a file SoundCheck wrote from its first bytes.
+type IsOurs = fn(&[u8]) -> bool;
+
+/// An artefact name in the `--out` folder taken by a file SoundCheck did not write, and why it
+/// blocks the batch.
+fn foreign_artefact(out: &Path) -> Option<(PathBuf, String)> {
+    use sc_io::artefacts::check_replaceable;
+    let checks: [(&str, IsOurs); 2] = [
+        (
+            sc_io::rekordbox::XML_FILE_NAME,
+            sc_io::rekordbox::is_soundcheck_xml,
+        ),
+        (
+            sc_io::report::REPORT_FILE_NAME,
+            sc_io::report::is_soundcheck_report,
+        ),
+    ];
+    checks.into_iter().find_map(|(name, is_ours)| {
+        let path = out.join(name);
+        check_replaceable(&path, is_ours).err().map(|e| {
+            let why = match e {
+                Error::AlreadyExists { .. } => format!(
+                    "the batch writes its {name} here, and a file SoundCheck did not write is \
+                     already there; it is never replaced"
+                ),
+                other => format!("it could not be read to check it: {other}"),
+            };
+            (path, why)
+        })
+    })
+}
+
+/// Where the batch's artefacts go: the `--out` folder (created if no copy was written), else a
+/// new folder under the exports root.
+fn artefacts_dir(out: Option<&Path>, now: std::time::SystemTime) -> anyhow::Result<PathBuf> {
+    if let Some(dir) = out {
+        let dir = std::path::absolute(dir)?;
+        std::fs::create_dir_all(&dir)?;
+        return Ok(dir);
+    }
+    let root = sc_io::artefacts::default_exports_root()?;
+    Ok(sc_io::artefacts::new_batch_folder(&root, now)?)
+}
+
+/// Where the artefacts are (on stderr with `--json`, whose stdout holds one document per file).
+fn print_artefacts(written: &Artefacts, playlist: &str, mode: BatchMode, json: bool) {
+    let mut lines = Vec::new();
+    if let Some(xml) = &written.xml {
+        let only = if mode == BatchMode::Library {
+            ", Library rows only with a confirmed grid"
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "rekordbox XML: {} ({} tracks with a grid{only}; playlist \"{playlist}\")",
+            xml.display(),
+            written.listed,
+        ));
+    }
+    lines.push(format!("grid report: {}", written.report.display()));
+    for line in lines {
+        if json {
+            eprintln!("{line}");
+        } else {
+            println!("{line}");
+        }
+    }
 }
 
 /// What the files being written have reported so far.
@@ -266,8 +388,20 @@ impl InFlight {
                 }
             }
             EngineEvent::ExportSkipped {
-                file_id, outcome, ..
-            } => (file_id, FileResult::NotWritten(outcome)),
+                file_id,
+                outcome,
+                duration,
+                codec,
+                xml,
+            } => (
+                file_id,
+                FileResult::NotWritten {
+                    outcome,
+                    duration,
+                    codec,
+                    xml,
+                },
+            ),
             EngineEvent::Failed { file_id, error } => (file_id, FileResult::Failed(error)),
             EngineEvent::Cancelled { file_id } => (file_id, FileResult::Failed(Error::Cancelled)),
             _ => return None,
@@ -283,6 +417,8 @@ struct Printer<'a> {
     mode: BatchMode,
     next: usize,
     counts: Counts,
+    /// The batch's artefact rows, in the order given.
+    rows: Vec<BatchRow>,
     error: Option<anyhow::Error>,
 }
 
@@ -298,13 +434,14 @@ impl Printer<'_> {
     }
 
     fn print(&mut self, file: &Path, result: FileResult) -> anyhow::Result<()> {
+        self.rows.push(row_of(file, &result, self.mode));
         match result {
             FileResult::Failed(err) => {
                 self.counts.failed += 1;
                 return print_failed(file, err, self.action, self.json);
             }
             FileResult::Written { .. } => self.counts.written += 1,
-            FileResult::NotWritten(ref outcome) => match **outcome {
+            FileResult::NotWritten { ref outcome, .. } => match **outcome {
                 ExportOutcome::XmlOnly { .. } => self.counts.xml_only += 1,
                 _ => self.counts.skipped += 1,
             },
@@ -346,9 +483,13 @@ fn write_lines(
             }
             Ok(())
         }
-        FileResult::NotWritten(outcome) => match **outcome {
+        FileResult::NotWritten { outcome, .. } => match **outcome {
             ExportOutcome::XmlOnly { reason } => {
-                writeln!(out, "{head}: XML only: {}", xml_only_text(reason))
+                writeln!(out, "{head}: XML only: {}", xml_only_text(reason))?;
+                if matches!(reason, XmlOnlyReason::Mp3OrAac { .. }) {
+                    writeln!(out, "  note: {UNVERIFIED}")?;
+                }
+                Ok(())
             }
             ExportOutcome::Skip { reason } => {
                 let (why, what_to_do) = skip_text(reason);
@@ -389,6 +530,58 @@ fn written_text(report: &TxnReport, done: &ProcessDone) -> String {
         let _ = write!(s, "; note: {note}");
     }
     s
+}
+
+/// The note on an MP3 or AAC file the XML carries.
+pub(crate) const UNVERIFIED: &str = "in the rekordbox XML its bar 1 is not yet verified \
+    against the encoder delay rekordbox applies to MP3 and AAC";
+
+/// The artefact row of one file, with its notes worded as the lines are.
+fn row_of(file: &Path, result: &FileResult, mode: BatchMode) -> BatchRow {
+    match result {
+        FileResult::Written { plan, report, done } => {
+            let mut row = BatchRow::written(
+                file,
+                mode,
+                plan,
+                &done.output,
+                report.render.frames_out,
+                report.render.sample_rate_hz,
+                done.xml.clone(),
+            );
+            row.notes
+                .extend(plan.notices.iter().map(|n| notice_text(*n)));
+            if plan.grid_withheld {
+                row.notes.push(GRID_WITHHELD.to_owned());
+            }
+            if let Some(why) = &report.render.tags_not_added {
+                row.notes.push(format!("tags not added: {why}"));
+            }
+            row.notes
+                .extend(report.notes.iter().chain(&done.notes).cloned());
+            row
+        }
+        FileResult::NotWritten {
+            outcome,
+            duration,
+            codec,
+            xml,
+        } => {
+            let mut row =
+                BatchRow::not_written(file, mode, outcome, *duration, *codec, (**xml).clone());
+            match **outcome {
+                ExportOutcome::XmlOnly { reason } => row.notes.push(xml_only_text(reason)),
+                ExportOutcome::Skip { reason } => row.notes.push(skip_text(reason).0),
+                ExportOutcome::Write { .. } => {}
+            }
+            row
+        }
+        FileResult::Failed(err) => {
+            let mut row = BatchRow::failed(file, Some(mode));
+            row.notes.push(err.to_string());
+            row
+        }
+    }
 }
 
 /// The JSON document of one file that was not refused.
@@ -452,7 +645,7 @@ fn doc<'a>(file: &Path, result: &'a FileResult) -> Option<ProcessDoc<'a>> {
                     .collect(),
             }),
         ),
-        FileResult::NotWritten(outcome) => ((**outcome).clone(), None),
+        FileResult::NotWritten { outcome, .. } => ((**outcome).clone(), None),
         FileResult::Failed(_) => return None,
     };
     Some(ProcessDoc {

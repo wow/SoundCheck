@@ -248,6 +248,31 @@ pub(crate) fn skip_text(reason: ExportSkip) -> (String, String) {
             "grid only, and no beats were found, so there is no grid to write".to_owned(),
             "set the grid in the app, or export without --grid-only".to_owned(),
         ),
+        ExportSkip::XmlNoGrid { codec } => (
+            format!(
+                "{} files are carried by the rekordbox XML alone, and no beats were found, so it \
+                 would carry nothing",
+                codec.label()
+            ),
+            "set the grid in the app first".to_owned(),
+        ),
+        ExportSkip::XmlGridNeedsReview { codec } => (
+            format!(
+                "{} files are carried by the rekordbox XML alone, and its grid needs review, so \
+                 it is not written and the XML would carry nothing",
+                codec.label()
+            ),
+            "check and confirm the grid in the app".to_owned(),
+        ),
+        ExportSkip::XmlNotOptedIn { codec } => (
+            format!(
+                "{} files are carried by the rekordbox XML alone, and in Library mode the XML \
+                 lists a track only once its grid is confirmed (importing it replaces the DJ \
+                 app's own grid)",
+                codec.label()
+            ),
+            "confirm the grid in the app to include it, or use --batch-mode prepare".to_owned(),
+        ),
         ExportSkip::GridNeedsReview => (
             "grid only, and its grid needs review, so it is not written and there is nothing \
              else to write"

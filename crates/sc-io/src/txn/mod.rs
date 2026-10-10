@@ -69,7 +69,7 @@ mod apply;
 pub(crate) mod crash;
 mod finish;
 mod forget;
-mod fsx;
+pub(crate) mod fsx;
 pub mod journal;
 pub(crate) mod meta;
 mod preflight;

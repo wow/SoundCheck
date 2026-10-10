@@ -24,6 +24,7 @@ fn prepared(record: &AnalysisRecord, lead_ms: f64) -> (Plan, ExportSettings, Exp
         plan: &plan,
         decide: &decide_settings,
         source: &source,
+        grid_confirmed: false,
     };
     let export = written(plan_export(&input, &settings));
     (plan, settings, export)
@@ -44,6 +45,7 @@ fn snapped(
         plan,
         decide: &decide_settings,
         source: &source,
+        grid_confirmed: false,
     };
     plan_snapped_cut(&input, settings, export, snapped_frames)
 }
@@ -203,6 +205,7 @@ fn rendering_the_snapped_plan_puts_bar1_exactly_where_it_says() {
         plan: &plan,
         decide: &decide_settings,
         source: &source,
+        grid_confirmed: false,
     };
     let outcome = crate::plan_export_snapped(&path, &input, &prepare()).expect("planned");
     let export = written(outcome);
@@ -278,6 +281,7 @@ fn the_serato_in_place_skip_follows_the_cut_made() {
             plan: &plan,
             decide: &decide_settings,
             source: &source,
+            grid_confirmed: false,
         };
         let snapped = crate::plan_export_snapped(&path, &input, &prepare()).expect("planned");
         (plan_export(&input, &prepare()), snapped)

@@ -136,6 +136,7 @@ impl Library {
             .env("SC_BACKUP_ROOT", &self.backups)
             .env("SC_CACHE_DIR", self.base.join("cache"))
             .env("SC_EDITS_DIR", self.base.join("edits"))
+            .env("SC_EXPORTS_ROOT", self.base.join("exports"))
             .current_dir(cwd)
             .args(args)
             .output()

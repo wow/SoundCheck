@@ -32,8 +32,9 @@ pub use decide::decide;
 pub use edits::{EditState, apply_saved, carry_edit, fit_choice, save_edit};
 pub use expand::{collect_audio_files, probe_all};
 pub use export::{
-    ExportInput, ExportSource, ProcessDone, ProcessSettings, SeratoPresence, plan_export,
-    plan_export_snapped, plan_snapped_cut,
+    Artefacts, BatchRow, ExportInput, ExportSource, ProcessDone, ProcessSettings, RowAction,
+    RowTrack, SeratoPresence, XmlSelect, plan_export, plan_export_snapped, plan_snapped_cut,
+    write_artefacts,
 };
 pub use session::{Session, run_job};
 pub use track::{Track, TrackProgress};

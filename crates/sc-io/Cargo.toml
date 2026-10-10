@@ -28,6 +28,8 @@ blake3 = { workspace = true }
 flac-codec = { workspace = true }
 md-5 = { workspace = true }
 unicode-normalization = { workspace = true }
+quick-xml = { workspace = true }
+percent-encoding = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
@@ -66,6 +68,10 @@ harness = false
 
 [[bench]]
 name = "txn"
+harness = false
+
+[[bench]]
+name = "rekordbox"
 harness = false
 
 # The crash matrix's subject (tests/crash.rs). A bin target rather than an example: Cargo builds

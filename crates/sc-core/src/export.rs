@@ -19,11 +19,13 @@ use crate::units::{Lufs, SampleIndex, Seconds};
 
 mod record;
 mod sidecar;
+mod xml_grid;
 
 pub use record::{
     MAX_RECORD_BYTES, RecordError, RecordGain, SOUNDCHECK_RECORD_VERSION, SoundcheckRecord,
 };
 pub use sidecar::{ExportRecord, ExportedGrid, SourceMeasurements};
+pub use xml_grid::{XmlGrid, XmlTrackInfo};
 
 /// The lead a Prepare cut leaves before bar 1, milliseconds, until it is calibrated against
 /// DJ apps' own analysis.
@@ -341,6 +343,26 @@ pub enum ExportSkip {
     /// written (where bar 1 is cannot be trusted), so there is nothing to write. Confirm the
     /// grid first.
     GridNeedsReview,
+    /// An MP3 or AAC file, which only the rekordbox XML carries, without a grid: the XML would
+    /// list nothing for it.
+    XmlNoGrid {
+        /// The codec.
+        codec: Codec,
+    },
+    /// An MP3 or AAC file, which only the rekordbox XML carries, whose grid needs review and was
+    /// not confirmed: the grid is withheld (where bar 1 is cannot be trusted), so the XML would
+    /// carry nothing for it. Confirm the grid first.
+    XmlGridNeedsReview {
+        /// The codec.
+        codec: Codec,
+    },
+    /// Library mode, and an MP3 or AAC file, which only the rekordbox XML carries, whose grid
+    /// the user has not confirmed: the Library XML lists a track only once its grid is
+    /// confirmed, because importing it replaces the DJ app's own grid.
+    XmlNotOptedIn {
+        /// The codec.
+        codec: Codec,
+    },
     /// Only the rekordbox XML could carry the file's grid, and the XML is off.
     NothingToWrite {
         /// Why the file itself is not written.

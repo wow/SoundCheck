@@ -40,6 +40,10 @@ md-5 = "0.11"
 # Pure-Rust maths (musl port): the same bits on every platform, unlike the system libm.
 libm = { version = "0.2", default-features = false }
 unicode-normalization = "0.1"
+# rekordbox XML writer (attributes escaped, fixed order); MIT.
+quick-xml = "0.42"
+# file:// URIs of the rekordbox XML, byte by byte; MIT OR Apache-2.0.
+percent-encoding = "2.3"
 # Write transaction: extended attributes copied through the atomic rename, fsync fallback,
 # free space and no-replace rename (rustix, fs only), ACL detection on macOS (exacl).
 xattr = "1.6"

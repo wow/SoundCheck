@@ -90,6 +90,7 @@ fn plan_table(c: &mut Criterion) {
                         plan: &plan,
                         decide: &decide_settings,
                         source,
+                        grid_confirmed: false,
                     };
                     plan_export(&input, &settings)
                 })

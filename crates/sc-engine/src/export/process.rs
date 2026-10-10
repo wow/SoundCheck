@@ -20,14 +20,14 @@ use std::path::{Path, PathBuf};
 use sc_core::analysis::{AnalysisRecord, AnalysisSettings, Grid};
 use sc_core::export::{
     ExportOutcome, ExportPlan, ExportRecord, ExportSettings, ExportedGrid, Place as ExportPlace,
-    SourceMeasurements,
+    SourceMeasurements, XmlGrid, XmlTrackInfo,
 };
 use sc_core::plan::{DecideSettings, Plan};
 use sc_core::{Error, Result, Seconds};
 use sc_io::cache::Cache;
 use sc_io::edits::{EditStore, SavedEdit};
 
-use super::plan::{Bars, ExportInput, ExportSource, bar1_after};
+use super::plan::{Bars, ExportInput, ExportSource, bar1_after, grid_trusted};
 use super::plan_export_snapped;
 use crate::analyze::{Analyzer, Progress, Timings};
 use crate::batch::EngineEvent;
@@ -97,6 +97,9 @@ pub struct ProcessDone {
     pub output: PathBuf,
     /// The source's playing time.
     pub duration: Seconds,
+    /// What the batch's rekordbox XML carries for the written file: its grid in its samples (as
+    /// exported, or withheld) and its title and artist tags.
+    pub xml: XmlTrackInfo,
     /// The output's own analysis, now in the cache, with the carried grid edit applied; `None`
     /// when it did not finish (see `notes`).
     pub analysis: Option<Box<AnalysisRecord>>,
@@ -147,6 +150,7 @@ pub(crate) fn process_file(
         plan: &decided,
         decide: &settings.decide,
         source: &source,
+        grid_confirmed: edit.confirmed,
     };
     let plan = match plan_export_snapped(path, &input, &settings.export)? {
         ExportOutcome::Write { plan } => plan,
@@ -155,6 +159,11 @@ pub(crate) fn process_file(
                 file_id,
                 outcome: Box::new(outcome),
                 duration: record.duration,
+                codec: source.codec,
+                xml: Box::new(xml_info(
+                    &record,
+                    xml_grid(&record, 0, grid_trusted(&decided), edit),
+                )),
             });
         }
     };
@@ -190,6 +199,10 @@ pub(crate) fn process_file(
         file_id,
         report: Box::new(report),
     });
+    let xml = xml_info(
+        &record,
+        xml_grid(&record, plan.trim_frames, !plan.grid_withheld, edit),
+    );
     let carry = Carry {
         saved: saved.as_ref(),
         edit,
@@ -202,6 +215,7 @@ pub(crate) fn process_file(
     .unwrap_or_else(|_| ProcessDone {
         output: output.clone(),
         duration: record.duration,
+        xml: xml.clone(),
         analysis: None,
         edit: EditState::default(),
         edit_carried: false,
@@ -213,7 +227,7 @@ pub(crate) fn process_file(
     });
     Ok(EngineEvent::Done {
         file_id,
-        done: Box::new(done),
+        done: Box::new(ProcessDone { xml, ..done }),
     })
 }
 
@@ -230,31 +244,70 @@ fn export_record(
         decide: settings.decide,
         decided: decided.clone(),
         plan: plan.clone(),
-        grid: exported_grid(record, plan, edit),
+        grid: exported_grid(record, plan.trim_frames, !plan.grid_withheld, edit),
         source: SourceMeasurements::of(record),
     }
 }
 
-/// The grid of `record` as `plan` exports it, in the output's samples; `None` without a grid or
-/// when the plan withholds it.
+/// The grid of `record` in the samples of a file cut by `trim` frames; `None` without a grid or
+/// when it is not `trusted` (it needs review and was not confirmed, so it is withheld).
 fn exported_grid(
     record: &AnalysisRecord,
-    plan: &ExportPlan,
+    trim: u64,
+    trusted: bool,
     edit: EditState,
 ) -> Option<ExportedGrid> {
-    if plan.grid_withheld {
+    if !trusted {
         return None;
     }
     let grid = record.grid.as_ref()?;
     let bars = Bars::of(grid, record.spec.sample_rate)?;
     Some(ExportedGrid {
-        bar1: sc_core::SampleIndex(grid.anchor.0.saturating_sub(plan.trim_frames)),
-        first_bar_line: bar1_after(&bars, plan.trim_frames),
+        bar1: sc_core::SampleIndex(grid.anchor.0.saturating_sub(trim)),
+        first_bar_line: bar1_after(&bars, trim),
         bpm: grid.bpm.written(),
         bpm_exact: grid.bpm,
         meter: grid.meter.clone(),
         edited: edit.edited,
         confirmed: edit.confirmed,
+    })
+}
+
+/// What the XML carries for `record`: `grid` and the title and artist tags.
+pub(crate) fn xml_info(record: &AnalysisRecord, grid: XmlGrid) -> XmlTrackInfo {
+    XmlTrackInfo {
+        grid,
+        title: record.tags.title.clone(),
+        artist: record.tags.artist.clone(),
+    }
+}
+
+/// Nothing for the XML (replaced by the caller).
+fn xml_info_absent() -> XmlTrackInfo {
+    XmlTrackInfo {
+        grid: XmlGrid::Absent,
+        title: None,
+        artist: None,
+    }
+}
+
+/// The grid the batch's rekordbox XML carries for `record` in the samples of a file cut by
+/// `trim` frames: withheld when not `trusted`.
+pub(crate) fn xml_grid(
+    record: &AnalysisRecord,
+    trim: u64,
+    trusted: bool,
+    edit: EditState,
+) -> XmlGrid {
+    if record.grid.is_none() {
+        return XmlGrid::Absent;
+    }
+    if !trusted {
+        return XmlGrid::NeedsReview;
+    }
+    exported_grid(record, trim, trusted, edit).map_or(XmlGrid::Absent, |grid| XmlGrid::Grid {
+        grid,
+        sample_rate: record.spec.sample_rate,
     })
 }
 
@@ -329,6 +382,8 @@ fn after_write(
     ProcessDone {
         output: output.to_path_buf(),
         duration,
+        // Set by the caller, which knows the plan.
+        xml: xml_info_absent(),
         analysis,
         edit,
         edit_carried,

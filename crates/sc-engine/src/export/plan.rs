@@ -81,12 +81,18 @@ pub struct ExportInput<'a> {
     pub decide: &'a DecideSettings,
     /// The source file.
     pub source: &'a ExportSource,
+    /// The user confirmed the grid by ear: in Library mode the rekordbox XML lists a track only
+    /// then (importing it replaces the DJ app's own grid), so an MP3 or AAC file, which only the
+    /// XML carries, is skipped without it.
+    pub grid_confirmed: bool,
 }
 
 /// What exporting does with one file under `settings` (checked with
 /// [`ExportSettings::validate`]; a lead outside its range is clamped into it).
 ///
-/// In order: MP3/AAC are left to the XML; other codecs that are not written, sample rates DJ
+/// In order: MP3/AAC are left to the XML when they have a grid that does not need review (or
+/// that the user confirmed) and, in Library mode, that the user confirmed, else skipped, since
+/// the XML would carry nothing for them; other codecs that are not written, sample rates DJ
 /// players refuse, more than two channels and silence are skipped; grid only needs a grid that
 /// does not need review (one that does would leave only an empty record), and leaves FLAC, sources it would requantise and files without a tag to the XML; with the XML
 /// off, what only the XML could carry is skipped; a Prepare cut in place of a file with Serato
@@ -104,6 +110,17 @@ pub(super) fn plan_ungated(input: &ExportInput<'_>, settings: &ExportSettings) -
     let ExportInput { record, source, .. } = *input;
     let codec = source.codec;
     if matches!(codec, Codec::Mp3 | Codec::Aac) {
+        // Only the XML carries these files, and it carries nothing without a grid it may write:
+        // the review gate comes before the XML, as it does before the tags.
+        if record.grid.is_none() {
+            return skip(ExportSkip::XmlNoGrid { codec });
+        }
+        if !grid_trusted(input.plan) {
+            return skip(ExportSkip::XmlGridNeedsReview { codec });
+        }
+        if settings.batch_mode == BatchMode::Library && !input.grid_confirmed {
+            return skip(ExportSkip::XmlNotOptedIn { codec });
+        }
         return xml_only(settings, XmlOnlyReason::Mp3OrAac { codec });
     }
     if !codec.is_writable() {
@@ -439,7 +456,7 @@ fn head(record: &AnalysisRecord, plan: &Plan, settings: &ExportSettings) -> (Cut
 /// Whether the grid may be cut to and written: nothing about it needs review (a grid the user
 /// confirmed never does; see [`crate::decide()`]). Read from the review reasons, not the row's
 /// status, which says `Skipped` for a skipped file even when its grid also needs review.
-fn grid_trusted(plan: &Plan) -> bool {
+pub(crate) fn grid_trusted(plan: &Plan) -> bool {
     plan.review.is_empty()
 }
 
