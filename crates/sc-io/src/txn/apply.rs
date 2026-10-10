@@ -299,6 +299,7 @@ fn before_rename(
             (report, Check::Flac(check))
         }
     };
+    check_planned(plan, &report)?;
     sync_path(&plan.temp)?;
     plan.journal
         .append(&Line::new(&plan.id, State::TempWritten))?;
@@ -326,6 +327,7 @@ fn before_rename(
     line.record = Some(Record {
         request: req.clone(),
         render: RenderSummary::of(&report),
+        export: plan.opts.export.clone(),
     });
     let folder_original = if plan.kind == TxnKind::ToFolder {
         let original = hash_file(&plan.src.path)?;
@@ -359,6 +361,26 @@ fn before_rename(
         backup,
         backup_notes,
     })
+}
+
+/// For an export, [`Error::VerifyFailed`] unless the render cut what the export planned and
+/// wrote the frame count it expects (Library: the source's; Prepare: the source's minus the
+/// cut), so nothing of another length replaces anything.
+fn check_planned(plan: &Plan<'_>, report: &RenderReport) -> Result<()> {
+    let Some(export) = &plan.opts.export else {
+        return Ok(());
+    };
+    let planned = &export.plan;
+    if report.frames_out != planned.expect_frames || report.trim_frames != planned.trim_frames {
+        return Err(Error::VerifyFailed {
+            path: plan.target.clone(),
+            detail: format!(
+                "{} frames written after a {}-frame cut; the export planned {} after {}",
+                report.frames_out, report.trim_frames, planned.expect_frames, planned.trim_frames
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Copies the original to its backup temp with the system's copy (data, extended attributes,

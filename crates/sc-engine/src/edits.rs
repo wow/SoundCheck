@@ -11,7 +11,7 @@ use sc_analysis::grid::{self, Solved};
 use sc_analysis::refit::{self, Context};
 use sc_core::analysis::{AnalysisRecord, Grid, GridEdit, GridFit, Verdict};
 use sc_core::ipc::FitChoice;
-use sc_core::{Bpm, Result};
+use sc_core::{Bpm, Result, SampleIndex};
 use sc_io::edits::{AudioIdentity, EDIT_SCHEMA, EditStore, GridPin, SavedEdit};
 
 /// Largest tempo difference, in BPM, at which a refitted grid is still the one confirmed.
@@ -252,5 +252,76 @@ pub fn save_edit(
         edited: grid != record.grid,
         confirmed,
         fit: edit.fit,
+    })
+}
+
+/// Carries `saved`, the user's edit of a file that was then exported with its first `trim`
+/// frames cut, over to the exported file: the edit saved for `output` (its NFC path; the same
+/// path in place), made on `audio` (the output's own audio), with bar 1 moved back by the cut.
+/// `grid` is the grid the edit gave on the source, as shown.
+///
+/// A grid the user confirmed is carried pinned: its tempo (typed, exact), meter and bar 1
+/// become the edit, so the output's own analysis gives the very grid that was confirmed even
+/// where it would solve the start of the cut file differently. An edit that was not confirmed
+/// keeps its overrides (a placed bar line moves to bar 1, back by the cut), so the output's grid is solved, and
+/// judged for review, as the source's was.
+///
+/// # Errors
+/// [`sc_core::Error::InvalidArgument`] when bar 1 lies inside the cut; [`sc_core::Error::Io`]
+/// when the edit cannot be written.
+pub fn carry_edit(
+    store: &EditStore,
+    saved: &SavedEdit,
+    grid: Option<&Grid>,
+    confirmed: bool,
+    trim: u64,
+    output: &str,
+    audio: AudioIdentity,
+) -> Result<()> {
+    let back = |anchor: SampleIndex| {
+        anchor.0.checked_sub(trim).map(SampleIndex).ok_or_else(|| {
+            sc_core::Error::InvalidArgument(format!(
+                "bar 1 at sample {} lies inside the {trim}-frame cut",
+                anchor.0
+            ))
+        })
+    };
+    let pin = grid
+        .map(|g| {
+            Ok::<_, sc_core::Error>(GridPin {
+                anchor: back(g.anchor)?,
+                ..pin_of(g)
+            })
+        })
+        .transpose()?;
+    let edit = match (&pin, confirmed) {
+        (Some(p), true) => GridEdit {
+            meter: Some(p.meter.clone()),
+            bpm: Some(p.bpm),
+            tempo_hint: None,
+            octave: 0,
+            anchor: Some(p.anchor),
+            downbeat_shift: 0,
+            fit: saved.edit.fit,
+        },
+        // A placed bar line (any line of bar 1's lattice, maybe one inside the cut) is placed
+        // again at bar 1, which lies on the same lattice.
+        _ => GridEdit {
+            anchor: match (saved.edit.anchor, &pin) {
+                (None, _) => None,
+                (Some(_), Some(p)) => Some(p.anchor),
+                (Some(a), None) => Some(back(a)?),
+            },
+            ..saved.edit.clone()
+        },
+    };
+    store.put(&SavedEdit {
+        schema: EDIT_SCHEMA,
+        path: output.to_owned(),
+        audio,
+        bpm_range: saved.bpm_range,
+        edit,
+        grid: pin,
+        confirmed,
     })
 }

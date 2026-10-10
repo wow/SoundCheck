@@ -54,6 +54,7 @@ fn entry(path: &Path) -> Entry {
                 tags_not_added: None,
                 stale_loudness_tags: Vec::new(),
             },
+            export: None,
         }),
         outcome: None,
         error: None,

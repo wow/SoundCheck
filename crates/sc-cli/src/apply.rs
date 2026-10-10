@@ -434,6 +434,7 @@ pub fn run_apply(args: ApplyArgs) -> anyhow::Result<usize> {
         bits: args.bits,
         loudness: None,
         tags: args.tags,
+        export: None,
     };
     let (place, action) = match args.out {
         Some(dir) => (Place::Folder(std::path::absolute(dir)?), Action::Copy),

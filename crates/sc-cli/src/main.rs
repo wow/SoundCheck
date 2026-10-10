@@ -24,7 +24,7 @@ use sc_core::plan::DecideSettings;
 use sc_core::{Bpm, DbTp, Error, Lufs};
 use sc_engine::{
     AnalyzeReport, Analyzer, BatchFile, BatchSettings, CancelToken, EngineEvent, REPORT_SCHEMA,
-    Timings, default_workers, run_batch,
+    Task, Timings, default_workers, run_batch,
 };
 use sc_io::cache::Cache;
 use sc_io::edits::EditStore;
@@ -220,6 +220,7 @@ fn main() -> anyhow::Result<()> {
                 analysis: settings(&analysis),
                 workers: jobs.unwrap_or_else(default_workers),
                 cache,
+                task: Task::Analyze,
             };
             let failed = analyze_all(&settings, &files, json, evidence)?;
             if failed > 0 {
@@ -292,6 +293,7 @@ fn cached_batch(analysis: &AnalysisArgs, jobs: Option<usize>) -> anyhow::Result<
         analysis: settings(analysis),
         workers: jobs.unwrap_or_else(default_workers),
         cache: Some(Cache::open(Cache::default_dir()?)),
+        task: Task::Analyze,
     })
 }
 

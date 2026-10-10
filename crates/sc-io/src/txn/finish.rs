@@ -112,6 +112,7 @@ pub(super) fn entry_of(plan: &Plan<'_>, req: &RenderRequest, p: &Prepared) -> En
         record: Some(Record {
             request: req.clone(),
             render: RenderSummary::of(&p.report),
+            export: plan.opts.export.clone(),
         }),
         outcome: None,
         error: None,

@@ -159,9 +159,35 @@ impl Analyzer {
         timings: &mut Timings,
         progress: Option<&Progress>,
     ) -> Result<AnalyzeReport> {
+        self.run(path, timings, progress, true)
+    }
+
+    /// As [`Analyzer::analyze_with`], but never served from the cache: the file is analysed and
+    /// its entry replaced. For a file just written, whose old entry may still match: a file
+    /// rewritten at the same length with its modification time put back has the same key.
+    ///
+    /// # Errors
+    /// As for [`Analyzer::analyze_with`].
+    pub fn analyze_fresh(
+        &mut self,
+        path: &Path,
+        timings: &mut Timings,
+        progress: Option<&Progress>,
+    ) -> Result<AnalyzeReport> {
+        self.run(path, timings, progress, false)
+    }
+
+    fn run(
+        &mut self,
+        path: &Path,
+        timings: &mut Timings,
+        progress: Option<&Progress>,
+        read_cache: bool,
+    ) -> Result<AnalyzeReport> {
         self.check_cancel()?;
         let (nfc_path, key) = Cache::key_for(path, &self.settings)?;
-        if let Some(cache) = &self.cache
+        if read_cache
+            && let Some(cache) = &self.cache
             && let Some(record) = cache.get(&nfc_path, &key)
         {
             return Ok(AnalyzeReport {

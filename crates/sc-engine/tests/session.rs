@@ -9,7 +9,9 @@ use std::sync::Mutex;
 use sc_core::Lufs;
 use sc_core::ipc::{IpcErrorKind, JobEvent, JobStage};
 use sc_core::plan::{DecideSettings, GainPlan};
-use sc_engine::{BatchSettings, CancelToken, Session, collect_audio_files, probe_all, run_job};
+use sc_engine::{
+    BatchSettings, CancelToken, Session, Task, collect_audio_files, probe_all, run_job,
+};
 
 fn add(session: &mut Session, paths: &[PathBuf]) -> Vec<u32> {
     let files = collect_audio_files(paths, None);
@@ -26,6 +28,7 @@ fn settings() -> BatchSettings {
         analysis: common::loudness_only(),
         workers: 2,
         cache: None,
+        task: Task::Analyze,
     }
 }
 

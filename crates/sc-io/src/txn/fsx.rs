@@ -114,7 +114,7 @@ pub fn hex(hash: &[u8; 32]) -> String {
 ///
 /// # Errors
 /// [`Error::Io`] naming `path`.
-pub(crate) fn hash_file(path: &Path) -> Result<(u64, [u8; 32])> {
+pub fn hash_file(path: &Path) -> Result<(u64, [u8; 32])> {
     let mut file = File::open(path).map_err(|e| io_err(path, e))?;
     let mut hasher = blake3::Hasher::new();
     let mut buf = vec![0_u8; COPY_BUFFER_BYTES];

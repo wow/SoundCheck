@@ -14,7 +14,7 @@ use sc_core::ipc::{
 use sc_core::plan::{DecideSettings, check_bpm_range};
 use sc_engine::player::Player;
 use sc_engine::{
-    BatchSettings, CancelToken, Session, collect_audio_files, default_workers, probe_all,
+    BatchSettings, CancelToken, Session, Task, collect_audio_files, default_workers, probe_all,
     recover_at_start, run_job,
 };
 use sc_io::cache::Cache;
@@ -202,6 +202,7 @@ impl Shell {
             analysis: req.analysis,
             workers: self.inner.workers,
             cache: self.inner.cache.clone(),
+            task: Task::Analyze,
         };
         std::thread::Builder::new()
             .name(format!("sc-job-{job_id}"))

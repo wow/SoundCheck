@@ -14,7 +14,7 @@ use sc_core::ipc::{JobEvent, JobStage, RowAnalysis};
 use sc_core::plan::{DecideSettings, Plan, ReviewReason};
 use sc_core::{Bpm, SampleIndex};
 use sc_engine::{
-    Analyzer, BatchSettings, CancelToken, EditState, Session, collect_audio_files, probe_all,
+    Analyzer, BatchSettings, CancelToken, EditState, Session, Task, collect_audio_files, probe_all,
     run_job, save_edit,
 };
 use sc_io::cache::Cache;
@@ -67,6 +67,7 @@ fn row_and_plan(
         analysis,
         workers: 1,
         cache: Some(cache.clone()),
+        task: Task::Analyze,
     };
     let mut events = Vec::new();
     run_job(

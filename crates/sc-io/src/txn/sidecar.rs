@@ -1,9 +1,11 @@
 //! The sidecar `<file>.soundcheck.json` written next to every processed file: what was asked,
-//! what the render did, the hashes of the original and the output, and where the backup is.
+//! what the render did, the hashes of the original and the output, where the backup is and,
+//! for a file an export wrote, what the export planned and the grid it exported ([`SidecarDoc`]).
 //!
 //! Keys come in a fixed order and every value derives from the input, the request and the
 //! version, except `transaction` and `processed_at`, which say which run wrote it. The file is
-//! replaced atomically (temp file, sync, rename), so a reader never sees half of one.
+//! replaced atomically (temp file, sync, rename), so a reader never sees half of one. [`read`]
+//! reads every schema written so far.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -11,14 +13,19 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use sc_core::export::ExportRecord;
 use sc_core::{Error, RenderRequest, Result};
 
 use super::fsx::{hex, io_err, remove_if_exists, sync_dir, sync_file, temp_name};
 use super::journal::{Entry, TxnKind};
 use crate::render::{BlockFate, RenderReport};
 
-/// Version of the sidecar layout; a change that breaks readers increments it.
-pub const SIDECAR_SCHEMA: u32 = 1;
+/// Version of the sidecar layout; a change that breaks readers increments it. Version 2 added
+/// `export`; version 1 sidecars (without it) still read.
+pub const SIDECAR_SCHEMA: u32 = 2;
+
+/// The oldest sidecar layout [`read`] reads.
+pub const OLDEST_SIDECAR_SCHEMA: u32 = 1;
 
 /// What every sidecar's name ends with.
 pub const SIDECAR_SUFFIX: &str = ".soundcheck.json";
@@ -131,35 +138,63 @@ pub struct Record {
     pub request: RenderRequest,
     /// What the render did.
     pub render: RenderSummary,
+    /// What the export that asked for the render planned; `None` for a plain render (and in
+    /// records written before exports were recorded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export: Option<ExportRecord>,
 }
 
-#[derive(Serialize)]
-struct FileHash<'a> {
-    blake3: &'a str,
-    bytes: u64,
+/// A file's length and hash, as a sidecar records them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileHash {
+    /// BLAKE3, hex.
+    pub blake3: String,
+    /// Length, bytes.
+    pub bytes: u64,
 }
 
-#[derive(Serialize)]
-struct MetadataSummary<'a> {
-    mtime_kept: bool,
-    notes: &'a [String],
+/// What became of the original's metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetadataSummary {
+    /// The modification time was put back.
+    pub mtime_kept: bool,
+    /// What the backup lacks and what could not be restored.
+    pub notes: Vec<String>,
 }
 
-#[derive(Serialize)]
-struct Sidecar<'a> {
-    schema: u32,
-    app: &'static str,
-    version: &'static str,
-    file: String,
-    transaction: &'a str,
-    processed_at: &'a str,
-    mode: TxnKind,
-    original: Option<FileHash<'a>>,
-    output: Option<FileHash<'a>>,
-    request: &'a RenderRequest,
-    render: &'a RenderSummary,
-    backup: Option<&'a Path>,
-    metadata: MetadataSummary<'a>,
+/// A sidecar as written and as [`read`] reads it back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SidecarDoc {
+    /// The layout version, [`OLDEST_SIDECAR_SCHEMA`] to [`SIDECAR_SCHEMA`].
+    pub schema: u32,
+    /// `SoundCheck`.
+    pub app: String,
+    /// The SoundCheck version that wrote it.
+    pub version: String,
+    /// The file's name.
+    pub file: String,
+    /// The transaction that wrote the file.
+    pub transaction: String,
+    /// When the transaction started (RFC 3339, UTC).
+    pub processed_at: String,
+    /// In place or into a folder.
+    pub mode: TxnKind,
+    /// The original file.
+    pub original: Option<FileHash>,
+    /// The file written.
+    pub output: Option<FileHash>,
+    /// What the render was asked.
+    pub request: RenderRequest,
+    /// What the render did.
+    pub render: RenderSummary,
+    /// The backup of the original (in place).
+    pub backup: Option<PathBuf>,
+    /// What became of the original's metadata.
+    pub metadata: MetadataSummary,
+    /// What the export planned and the grid it exported; absent for a plain render and in
+    /// schema 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export: Option<ExportRecord>,
 }
 
 /// The sidecar path of `file`: `<file name>.soundcheck.json` next to it.
@@ -180,40 +215,66 @@ pub(crate) fn render_text(entry: &Entry, notes: &[String]) -> Result<String> {
     let record = entry.record.as_ref().ok_or_else(|| {
         Error::Internal(format!("transaction {} has no render record", entry.txn))
     })?;
-    let original = entry.original_blake3.as_deref().map(|h| FileHash {
-        blake3: h,
-        bytes: entry.original_bytes.unwrap_or(0),
-    });
-    let output = entry.output_blake3.as_deref().map(|h| FileHash {
-        blake3: h,
-        bytes: entry.output_bytes.unwrap_or(0),
-    });
-    let doc = Sidecar {
+    let hash = |h: Option<&String>, bytes: Option<u64>| {
+        h.map(|h| FileHash {
+            blake3: h.clone(),
+            bytes: bytes.unwrap_or(0),
+        })
+    };
+    let doc = SidecarDoc {
         schema: SIDECAR_SCHEMA,
-        app: "SoundCheck",
-        version: sc_core::VERSION,
+        app: "SoundCheck".to_owned(),
+        version: sc_core::VERSION.to_owned(),
         file: entry
             .path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default(),
-        transaction: &entry.txn,
-        processed_at: &entry.started_at,
+        transaction: entry.txn.clone(),
+        processed_at: entry.started_at.clone(),
         mode: entry.kind,
-        original,
-        output,
-        request: &record.request,
-        render: &record.render,
-        backup: entry.backup.as_deref(),
+        original: hash(entry.original_blake3.as_ref(), entry.original_bytes),
+        output: hash(entry.output_blake3.as_ref(), entry.output_bytes),
+        request: record.request.clone(),
+        render: record.render.clone(),
+        backup: entry.backup.clone(),
         metadata: MetadataSummary {
             mtime_kept: entry.keep_mtime,
-            notes,
+            notes: notes.to_vec(),
         },
+        export: record.export.clone(),
     };
     let mut text = serde_json::to_string_pretty(&doc)
         .map_err(|e| Error::Internal(format!("sidecar not serialisable: {e}")))?;
     text.push('\n');
     Ok(text)
+}
+
+/// Reads the sidecar at `path` (see [`sidecar_path`]): any schema from
+/// [`OLDEST_SIDECAR_SCHEMA`] to [`SIDECAR_SCHEMA`]. Values a schema did not have yet read as
+/// absent (a render's cut, [`RenderSummary::trim_frames`]; the `export`).
+///
+/// # Errors
+/// [`Error::Io`] when it cannot be read; [`Error::Corrupt`] when it is not a sidecar, or one of
+/// a schema this version does not read.
+pub fn read(path: &Path) -> Result<SidecarDoc> {
+    let bytes = std::fs::read(path).map_err(|e| io_err(path, e))?;
+    let corrupt = |detail: String| Error::Corrupt {
+        path: path.to_path_buf(),
+        detail,
+    };
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| corrupt(format!("not JSON: {e}")))?;
+    let schema = value
+        .get("schema")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| corrupt("no schema".to_owned()))?;
+    if !(u64::from(OLDEST_SIDECAR_SCHEMA)..=u64::from(SIDECAR_SCHEMA)).contains(&schema) {
+        return Err(corrupt(format!(
+            "sidecar schema {schema}; this version reads {OLDEST_SIDECAR_SCHEMA} to {SIDECAR_SCHEMA}"
+        )));
+    }
+    serde_json::from_value(value).map_err(|e| corrupt(format!("not a sidecar: {e}")))
 }
 
 /// Writes the sidecar of `entry` next to its target, replacing an older one atomically.

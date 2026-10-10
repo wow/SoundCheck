@@ -104,8 +104,16 @@ impl SoundcheckRecord {
     }
 
     /// The tag value (see the type's documentation).
+    ///
+    /// A record that withholds the grid has neither a tempo nor a bar 1; one that has either is
+    /// a programming error, caught by a debug assertion (release builds write `bpm=none;bar1=none`
+    /// all the same).
     #[must_use]
     pub fn to_value(&self) -> String {
+        debug_assert!(
+            !self.grid_withheld || (self.bpm.is_none() && self.bar1.is_none()),
+            "a record that withholds the grid holds no tempo and no bar 1"
+        );
         let mut v = format!(
             "v={SOUNDCHECK_RECORD_VERSION};app={};mode={}",
             self.app,

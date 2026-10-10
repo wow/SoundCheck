@@ -87,6 +87,9 @@ pub fn write_outcome(
             for notice in &plan.notices {
                 writeln!(out, "    note: {}", notice_text(*notice))?;
             }
+            if plan.grid_withheld {
+                writeln!(out, "    note: {GRID_WITHHELD}")?;
+            }
             Ok(())
         }
         ExportOutcome::XmlOnly { reason } => {
@@ -100,6 +103,10 @@ pub fn write_outcome(
         }
     }
 }
+
+/// The note on a written file whose grid needs review and was not confirmed.
+pub const GRID_WITHHELD: &str =
+    "its BPM and bar 1 are not written, because the grid needs review (confirm it in the app)";
 
 /// `Gain -2.0 dB, Cut 0.29 s; tags BPM, ...`.
 fn write_text(plan: &ExportPlan) -> String {
@@ -240,6 +247,12 @@ fn skip_text(reason: ExportSkip) -> (String, String) {
         ExportSkip::NoGrid => (
             "grid only, and no beats were found, so there is no grid to write".to_owned(),
             "set the grid in the app, or export without --grid-only".to_owned(),
+        ),
+        ExportSkip::GridNeedsReview => (
+            "grid only, and its grid needs review, so it is not written and there is nothing \
+             else to write"
+                .to_owned(),
+            "check and confirm the grid in the app, or export without --grid-only".to_owned(),
         ),
     }
 }

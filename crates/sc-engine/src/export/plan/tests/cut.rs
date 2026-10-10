@@ -260,3 +260,76 @@ fn a_disagreeing_bpm_tag_survives_an_export_so_the_row_still_needs_review() {
         next.cut
     );
 }
+
+#[test]
+fn grid_only_on_a_review_row_is_skipped_not_written() {
+    // Amber confidence: the row needs review. Grid only would write no tempo, no gain and a
+    // record that withholds the grid: nothing worth rewriting the file for.
+    let mut r = record(44_100, 101_430);
+    r.grid.as_mut().expect("grid").confidence = Confidence::Amber;
+    let grid_only = ExportSettings {
+        grid_only: true,
+        ..prepare()
+    };
+    assert_eq!(
+        plan_with(&r, &wav(), &grid_only),
+        ExportOutcome::Skip {
+            reason: ExportSkip::GridNeedsReview
+        }
+    );
+    // On FLAC too: the XML withholds such a grid the same way, so nothing would carry it.
+    let flac = ExportSource {
+        codec: Codec::Flac,
+        ..wav()
+    };
+    assert_eq!(
+        plan_with(&r, &flac, &grid_only),
+        ExportOutcome::Skip {
+            reason: ExportSkip::GridNeedsReview
+        }
+    );
+    // Confirmed by ear, the grid is written.
+    let plan = written(plan_decided(&r, &wav(), &grid_only, true));
+    assert_eq!(plan.cut, Cut::GridOnly);
+    assert!(!plan.grid_withheld);
+    assert_eq!(tag(&plan, "BPM"), Some("120.00"));
+}
+
+#[test]
+fn a_withheld_grid_is_flagged_on_the_written_plan() {
+    let mut r = record(44_100, 101_430);
+    r.tags.bpm = Some(Bpm(126.0));
+    for settings in [prepare(), ExportSettings::new(BatchMode::Library)] {
+        let plan = written(plan_with(&r, &wav(), &settings));
+        assert!(plan.grid_withheld, "{:?}", settings.batch_mode);
+        assert_eq!(tag(&plan, "BPM"), None);
+    }
+    // A trusted grid is not withheld, and a file without a grid has nothing to withhold.
+    assert!(!written(plan_with(&record(44_100, 101_430), &wav(), &prepare())).grid_withheld);
+    let mut none = record(44_100, 101_430);
+    none.grid = None;
+    assert!(!written(plan_with(&none, &wav(), &prepare())).grid_withheld);
+}
+
+#[test]
+fn a_skipped_row_whose_grid_needs_review_still_withholds_it() {
+    // Silent by the gate (no S-P95, no I) with an amber grid: decide says Skipped, which
+    // outranks NeedsReview in the row's status, but the grid still needs review.
+    let mut r = record(44_100, 101_430);
+    r.grid.as_mut().expect("grid").confidence = Confidence::Amber;
+    r.loudness.short_term_p95 = None;
+    r.loudness.integrated = None;
+    let plan = decide(&r, Codec::Wav, &DecideSettings::dj(), false);
+    assert_eq!(plan.status, JobStage::Skipped);
+    assert!(!plan.review.is_empty());
+    let grid_only = ExportSettings {
+        grid_only: true,
+        ..prepare()
+    };
+    assert_eq!(
+        plan_with(&r, &wav(), &grid_only),
+        ExportOutcome::Skip {
+            reason: ExportSkip::GridNeedsReview
+        }
+    );
+}

@@ -89,7 +89,7 @@ use crate::render::RenderReport;
 
 pub use crash::CRASH_ENV;
 pub use forget::{Forgotten, forget};
-pub use fsx::{TEMP_MARKER, hex};
+pub use fsx::{TEMP_MARKER, hash_file, hex};
 pub use journal::{Entry, JOURNAL_FILE, Outcome, State, TxnKind, is_txn_id};
 pub use preflight::{
     SPACE_MARGIN_BYTES, TagFamily, is_in_resolved_backup_root, is_under_backup_root,
@@ -123,7 +123,7 @@ pub fn default_backup_root() -> Result<PathBuf> {
 }
 
 /// How a transaction runs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TxnOptions {
     /// Where backups and the journal live.
     pub backup_root: PathBuf,
@@ -131,6 +131,11 @@ pub struct TxnOptions {
     pub keep_mtime: bool,
     /// Write `<file>.soundcheck.json` next to the file.
     pub sidecar: bool,
+    /// What the export asking for this render planned: journaled and written into the sidecar,
+    /// and checked against the render before anything is replaced (the output must have the
+    /// planned frame count and cut, else [`sc_core::Error::VerifyFailed`]). `None` for a plain
+    /// render.
+    pub export: Option<sc_core::export::ExportRecord>,
 }
 
 impl TxnOptions {
@@ -141,6 +146,7 @@ impl TxnOptions {
             backup_root: backup_root.into(),
             keep_mtime: true,
             sidecar: true,
+            export: None,
         }
     }
 }

@@ -324,6 +324,7 @@ fn record() -> crate::txn::sidecar::Record {
             tags_not_added: None,
             stale_loudness_tags: Vec::new(),
         },
+        export: None,
     }
 }
 

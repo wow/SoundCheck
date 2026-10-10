@@ -7,6 +7,7 @@
 use super::*;
 use sc_core::analysis::{Alternatives, BeatUnit, LoudnessReport, Meter, TagHints, Timeline};
 use sc_core::export::{BatchMode, ExportSettings, Place};
+use sc_core::ipc::JobStage;
 use sc_core::{AudioSpec, Bpm, Confidence, DbFs, Seconds, Verdict};
 
 use crate::decide;

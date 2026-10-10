@@ -18,10 +18,12 @@ use crate::render::{BextLoudness, Tag};
 use crate::units::{Lufs, SampleIndex, Seconds};
 
 mod record;
+mod sidecar;
 
 pub use record::{
     MAX_RECORD_BYTES, RecordError, RecordGain, SOUNDCHECK_RECORD_VERSION, SoundcheckRecord,
 };
+pub use sidecar::{ExportRecord, ExportedGrid, SourceMeasurements};
 
 /// The lead a Prepare cut leaves before bar 1, milliseconds, until it is calibrated against
 /// DJ apps' own analysis.
@@ -258,6 +260,12 @@ pub struct ExportPlan {
     pub cut: Cut,
     /// What the user should know about the written file.
     pub notices: Vec<ExportNotice>,
+    /// The file has a grid, but it needs review and the user has not confirmed it, so the
+    /// export writes neither its tempo nor its bar 1 (no `BPM` tag; the `SOUNDCHECK` record
+    /// says `bpm=none;bar1=none`) and does not cut to it. Absent (false) in plans from before
+    /// it was recorded.
+    #[serde(default)]
+    pub grid_withheld: bool,
 }
 
 /// Why only the batch's rekordbox XML carries a file's grid (the file is not written).
@@ -329,6 +337,10 @@ pub enum ExportSkip {
     Silent,
     /// Grid only on a file without a grid: there is nothing to write.
     NoGrid,
+    /// Grid only on a file whose grid needs review and was not confirmed: the grid is not
+    /// written (where bar 1 is cannot be trusted), so there is nothing to write. Confirm the
+    /// grid first.
+    GridNeedsReview,
     /// Only the rekordbox XML could carry the file's grid, and the XML is off.
     NothingToWrite {
         /// Why the file itself is not written.

@@ -7,17 +7,20 @@
 //! back the transactions a crash interrupted; the app shell calls it once at start and the CLI
 //! before every command that writes.
 
+mod gate;
 mod inputs;
 mod tags;
 
 use std::path::{Path, PathBuf};
 
+use sc_core::export::ExportRecord;
 use sc_core::ipc::{PendingChange, RecoveredChange, RecoveryOutcome, RecoveryStatus};
 use sc_core::{BextLoudness, RenderRequest, Result};
 use sc_io::txn::{self, Outcome, RecoveryReport, TxnOptions, TxnReport, UndoReport};
 
 use crate::CancelToken;
 
+pub use gate::RecoveryGate;
 pub use inputs::check_inputs;
 pub use tags::{Tag, check_tags, tag_edits};
 
@@ -40,6 +43,9 @@ pub struct ApplyRequest {
     pub loudness: Option<BextLoudness>,
     /// Tag items by their neutral names (see [`tags`]), mapped to the file's container.
     pub tags: Vec<Tag>,
+    /// What the export asking for this write planned, for the sidecar; the transaction refuses
+    /// an output whose frame count or cut is not the planned one. `None` for a plain change.
+    pub export: Option<ExportRecord>,
 }
 
 /// Where the processed file goes.
@@ -112,6 +118,7 @@ pub fn apply_file(
         backup_root: opts.backup_root.clone(),
         keep_mtime: opts.keep_mtime,
         sidecar: opts.sidecar,
+        export: req.export.clone(),
     };
     let flag = cancel.flag();
     let report = match &opts.place {
