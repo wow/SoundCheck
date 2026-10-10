@@ -8,9 +8,10 @@ SoundCheck is a free, open-source desktop app for DJs and producers. Drop a fold
 > - **The app** analyses a dropped library (loudness, BPM, meter and bar 1, with a Needs-review queue) and opens any track in a grid view to inspect and fix its grid while a click plays along, with live IN/OUT meters, an original/processed A/B and a volume control. It does not write files yet.
 > - **`sc-cli apply`** already changes WAV, AIFF and FLAC files: gain and an optional head trim (snapped back up to 1 ms to the quietest frame and faded in over 2 ms), every other chunk, block and tag carried byte for byte, verified, with a backup in `~/Music/SoundCheck Backups` and `sc-cli undo`.
 > - **`sc-cli process <files> --batch-mode prepare|library`** exports: the planned gain, the Prepare cut and the tags written in place after a backup (or as copies with `--out`), verified against the planned length, with a sidecar recording the exported grid; grid edits and confirmations made in the app carry over to the exported file.
+> - **`sc-cli process`** also writes the batch's **rekordbox XML** (`soundcheck-rekordbox.xml`: each track's location and a 4/4 `TEMPO` with bar 1 where the export put it) and a **`grid-report.csv`**, into the `--out` folder or `~/Music/SoundCheck/exports/<date time>/`; **`sc-cli xml <files>`** writes the XML for files already exported or only analysed.
 > - **`sc-cli plan --batch-mode prepare|library`** previews what an export will do to each file: the gain, the head cut (`Cut 0.21 s`, `Starts on bar 1`, `Starts on a bar line (bar 1 at 8.00 s)`, `Not cut: bar 1 1.00 s in`, or `Not cut: grid needs review` until the grid is confirmed), the tags, or why a file is left to the rekordbox XML (MP3/AAC for now) or skipped.
 >
-> Exporting from the app, the rekordbox XML, the exported-grid self-check and MP3 output come next. The first pre-release, `v0.1.0-alpha.1`, follows once exported files pass rekordbox 7's own analysis; `v0.1.0` is the first release for everyone. Watch the releases page or the changelog.
+> Exporting from the app, the exported-grid self-check and MP3 output come next. The first pre-release, `v0.1.0-alpha.1`, follows once exported files pass rekordbox 7's own analysis; `v0.1.0` is the first release for everyone. Watch the releases page or the changelog.
 
 ## What v0.1 will do
 

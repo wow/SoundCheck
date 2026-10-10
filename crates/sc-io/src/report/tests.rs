@@ -48,6 +48,21 @@ fn csv_columns() {
     assert_eq!(COLUMNS.len(), 10);
     assert!(csv_bytes(&rows).starts_with(b"\xEF\xBB\xBFfile,mode,"));
     assert_eq!(csv_bytes(&rows), csv_bytes(&rows));
+    // Every text cell that a spreadsheet would run as a formula is neutralised; numbers are not.
+    let risky = [ReportRow {
+        file: "-1+2.flac".into(),
+        mode: "@mode".into(),
+        action: "+x".into(),
+        gain_db: Some(-2.3),
+        grid: "\tgrid".into(),
+        grid_check: Some("\rcheck".into()),
+        notes: vec!["@SUM(1)".into(), "fine".into()],
+        ..ReportRow::default()
+    }];
+    assert_eq!(
+        text(&risky).lines().nth(1),
+        Some("'-1+2.flac,'@mode,'+x,-2.30,,,,'\tgrid,\"'\rcheck\",'@SUM(1); fine")
+    );
     // An empty report is the header alone.
     assert_eq!(text(&[]), format!("{}\r\n", COLUMNS.join(",")));
 }

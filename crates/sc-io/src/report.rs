@@ -5,9 +5,10 @@
 //! holds a comma, a quote, a line break or a leading or trailing space, quotes doubled inside.
 //! The text is UTF-8 with a byte-order mark: spreadsheet apps (Excel in particular) read a CSV
 //! without one in the system's legacy code page, which garbles Turkish and other non-ASCII
-//! names; with it they read UTF-8. A text field starting with `=`, `+`, `-` or `@` gets a
-//! leading `'` so a spreadsheet does not run a file name as a formula (numbers are written as
-//! numbers). Numbers use a dot and fixed decimals whatever the locale: gain in dB with a sign
+//! names; with it they read UTF-8. A text field starting with `=`, `+`, `-`, `@`, a tab or a
+//! carriage return gets a leading `'` (OWASP, "CSV Injection") so a spreadsheet does not run a
+//! file name or note as a formula; the numeric columns are written as plain numbers, so a
+//! negative gain stays a number. Numbers use a dot and fixed decimals whatever the locale: gain in dB with a sign
 //! and two decimals, the cut and bar 1 in seconds with three, the tempo with two.
 //!
 //! Columns: `file` (as given), `mode` (`prepare`, `library`, or empty for a file only read),
@@ -36,6 +37,10 @@ pub const COLUMNS: [&str; 10] = [
     "grid_check",
     "notes",
 ];
+
+/// Leading characters a spreadsheet reads as the start of a formula (OWASP, "CSV Injection"):
+/// a text field starting with one gets a leading `'`.
+const FORMULA_STARTS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
 
 /// The UTF-8 byte-order mark the report starts with.
 pub const BOM: &[u8] = b"\xEF\xBB\xBF";
@@ -118,7 +123,7 @@ fn write_record(
             out.write_all(b",")?;
         }
         let value = match field {
-            Field::Text(s) if s.starts_with(['=', '+', '-', '@']) => format!("'{s}"),
+            Field::Text(s) if s.starts_with(FORMULA_STARTS) => format!("'{s}"),
             Field::Text(s) | Field::Number(s) => s,
         };
         out.write_all(quoted(&value).as_bytes())?;

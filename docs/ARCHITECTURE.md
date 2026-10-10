@@ -55,9 +55,10 @@ DECIDE (pure, about 28 ns per row): decide(AnalysisRecord, Codec, DecideSettings
 EXPORT PLAN (pure, under 1 us per row with DECIDE; `sc_engine::export::plan_export`, `sc-cli plan --batch-mode`):
   plan_export(ExportInput{record (grid as shown), plan (DECIDE's), decide settings, ExportSource{codec, bits, float, has_tag, serato, blake3}}, ExportSettings{batch_mode: Prepare|Library, place, depth, grid_only, tbpm, xml, lead_ms})
   -> ExportOutcome: Write{ExportPlan{gain_db, trim_frames, trim_snapped_from_frames, expect_frames, bits, tags (neutral names), bext, cut, notices: [SeratoCuesShifted{cut_s}]}}
-     | XmlOnly{Mp3OrAac | GridOnlyFlac | GridOnlyWouldRequantise | NoTagToWriteGridOnly}
+     | XmlOnly{Mp3OrAac (only with a grid that needs no review) | GridOnlyFlac | GridOnlyWouldRequantise | NoTagToWriteGridOnly}
      | Skip{SeratoInPlaceCut | SeratoUnknownInPlaceCut | NotDjSafeRate | UnsupportedChannels | Unsupported | Silent | NoGrid | GridNeedsReview (grid only on a
-       grid that needs review: nothing but an empty record to write) | NothingToWrite{xml-only reason, when the XML is off}}
+       grid that needs review: nothing but an empty record to write) | XmlNoGrid{codec} | XmlGridNeedsReview{codec} (MP3/AAC: the review gate comes before the XML,
+       which would carry nothing) | NothingToWrite{xml-only reason, when the XML is off}}
   gain = DECIDE's (0 and the source depth for grid only, which needs 16- or 24-bit integer PCM, so the samples stay bit for bit);
   Prepare: bar lines extrapolated from bar 1 by whole bars (meter pulses x 60 sr / bpm, at `Bpm::written()`, the two-decimal BPM that the tags,
   the XML, the sidecar and grid-check all use, fractional samples); F = the first bar line at or after the start: F before the lead -> Cut::OnBar{bar_line, bar1}
@@ -141,7 +142,13 @@ RENDER (streamed)
              desktop shell runs on a background thread at start, keeping the result for the `recovery_status` command and logging it, and which
              `sc-cli process`/`apply`/`undo` run before writing; `collect_audio_files` never lists a file in the backup root (resolved once per call);
              copy-to-folder mode: same steps, no backup, never replaces a file. Crash matrix behind the test-only `crash-test` feature
-  batch artefacts: soundcheck-rekordbox.xml, grid-report.csv; per-file grid-check
+  batch artefacts (`sc_engine::export::artefacts`): one BatchRow per file in the order given (Written from the plan, the TxnReport and ProcessDone.grid;
+             XmlOnly/Skipped from EngineEvent::ExportSkipped{outcome, duration, codec, grid}; Failed; Exported from a sidecar whose output hash still matches;
+             Analysed), each with an XmlGrid{Grid{ExportedGrid, sample_rate} | NeedsReview | Absent} in the file's samples
+             -> write_artefacts(dir, rows, XmlSelect::Batch (Prepare rows; Library rows only with a confirmed grid) | All (sc-cli xml) | Off)
+             -> sc_io::rekordbox (soundcheck-rekordbox.xml: Location = the on-disk spelling, percent-encoded; one 4/4 TEMPO from bar 1, first beat >= 0 with its Battito;
+             withheld for review grids and other meters) + sc_io::report (grid-report.csv), each replaced atomically; in place they go to a new
+             `~/Music/SoundCheck/exports/<local date time>/` (sc_io::artefacts, SC_EXPORTS_ROOT); per-file grid-check comes next
 ```
 
 ## Key types (sc-core)

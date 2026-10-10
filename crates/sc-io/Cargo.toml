@@ -70,6 +70,10 @@ harness = false
 name = "txn"
 harness = false
 
+[[bench]]
+name = "rekordbox"
+harness = false
+
 # The crash matrix's subject (tests/crash.rs). A bin target rather than an example: Cargo builds
 # bins before integration tests and passes their path in CARGO_BIN_EXE_<name>, so the test never
 # runs a stale build. Only built with the test-only `crash-test` feature.
