@@ -26,7 +26,15 @@ channels: number, } | { "type": "unsupported",
 /**
  * The codec.
  */
-codec: Codec, } | { "type": "silent" } | { "type": "noGrid" } | { "type": "gridNeedsReview" } | { "type": "nothingToWrite", 
+codec: Codec, } | { "type": "silent" } | { "type": "noGrid" } | { "type": "gridNeedsReview" } | { "type": "xmlNoGrid", 
+/**
+ * The codec.
+ */
+codec: Codec, } | { "type": "xmlGridNeedsReview", 
+/**
+ * The codec.
+ */
+codec: Codec, } | { "type": "nothingToWrite", 
 /**
  * Why the file itself is not written.
  */

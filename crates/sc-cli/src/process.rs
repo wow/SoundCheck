@@ -49,6 +49,20 @@ pub enum DepthArg {
     TwentyFour,
 }
 
+/// The artefact flags of `process`.
+#[derive(clap::Args)]
+pub struct ArtefactArgs {
+    /// Write the batch's rekordbox XML (`soundcheck-rekordbox.xml`) and grid report
+    /// (`grid-report.csv`): into the --out folder, or for an export in place into a new folder
+    /// under ~/Music/SoundCheck/exports (`SC_EXPORTS_ROOT` overrides it). On by default.
+    #[arg(long, overrides_with = "no_xml")]
+    xml: bool,
+    /// Write neither the rekordbox XML nor the grid report; a file only the XML could carry
+    /// (MP3, AAC) then has nothing to write.
+    #[arg(long, overrides_with = "xml")]
+    no_xml: bool,
+}
+
 /// The flags of `process`.
 #[derive(clap::Args)]
 pub struct ProcessArgs {
@@ -74,15 +88,8 @@ pub struct ProcessArgs {
     /// Do not write the tempo tag (it is written in Prepare mode by default, never in Library).
     #[arg(long)]
     no_tbpm: bool,
-    /// Write the batch's rekordbox XML (`soundcheck-rekordbox.xml`) and grid report
-    /// (`grid-report.csv`): into the --out folder, or for an export in place into a new folder
-    /// under ~/Music/SoundCheck/exports (`SC_EXPORTS_ROOT` overrides it). On by default.
-    #[arg(long, overrides_with = "no_xml")]
-    xml: bool,
-    /// Write neither the rekordbox XML nor the grid report; a file only the XML could carry
-    /// (MP3, AAC) then has nothing to write.
-    #[arg(long, overrides_with = "xml")]
-    no_xml: bool,
+    #[command(flatten)]
+    artefacts: ArtefactArgs,
     /// Statistic to align: S-P95 for DJ sets, integrated loudness for streaming.
     #[arg(long, value_enum, default_value = "dj")]
     mode: ModeArg,
@@ -124,7 +131,7 @@ impl ProcessArgs {
             },
             grid_only: self.grid_only,
             tbpm: defaults.tbpm && !self.no_tbpm,
-            xml: !self.no_xml,
+            xml: !self.artefacts.no_xml,
             lead_ms: self.lead_ms,
             ..defaults
         };

@@ -6,13 +6,14 @@
 //! The XML goes to `--out` (replaced atomically) or to stdout; one line per file says what it
 //! carries (on stderr when the XML goes to stdout).
 
+use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use sc_core::plan::{Codec, DecideSettings};
 use sc_core::{Bpm, Error};
 use sc_engine::export::{report_rows, xml_tracks};
-use sc_engine::{BatchRow, XmlSelect, apply_saved, decide, default_workers};
+use sc_engine::{BatchRow, XmlSelect, apply_saved, decide};
 use sc_io::edits::EditStore;
 use sc_io::txn::sidecar::{self, SidecarDoc};
 use sc_io::txn::{hash_file, hex};
@@ -51,19 +52,14 @@ pub fn run_xml(args: &XmlArgs) -> anyhow::Result<usize> {
         .collect();
     let mut failed = 0;
     if !todo.is_empty() {
-        let analysed = analyse(args, &todo)?;
-        let mut analysed = analysed.into_iter();
+        let mut analysed = analyse(args, &todo)?.into_iter();
         for slot in rows.iter_mut().filter(|r| r.is_none()) {
-            match analysed.next() {
-                Some(Ok(row)) => *slot = Some(row),
-                Some(Err(row)) | None => {
+            *slot = analysed.next().map(|outcome| {
+                outcome.unwrap_or_else(|row| {
                     failed += 1;
-                    *slot = Some(row_or_failed(None));
-                    if let Some(row) = analysed_err(row) {
-                        *slot = Some(row);
-                    }
-                }
-            }
+                    row
+                })
+            });
         }
     }
     let rows: Vec<BatchRow> = rows.into_iter().flatten().collect();
@@ -79,7 +75,7 @@ pub fn run_xml(args: &XmlArgs) -> anyhow::Result<usize> {
     for (row, report) in rows.iter().zip(report_rows(&rows, XmlSelect::All)) {
         let mut line = format!("{}: {}; {}", row.file.display(), report.action, report.grid);
         if let Some(bpm) = report.bpm {
-            line.push_str(&format!("; {:.2} BPM", Bpm::written(bpm).0));
+            let _ = write!(line, "; {:.2} BPM", Bpm::written(bpm).0);
         }
         for note in &row.notes {
             line.push_str("; ");
@@ -128,7 +124,7 @@ fn exported_row(file: &Path) -> Option<BatchRow> {
 
 /// The rows of `files` (none of them exported as they are now), analysed in order.
 fn analyse(args: &XmlArgs, files: &[PathBuf]) -> anyhow::Result<Vec<Result<BatchRow, BatchRow>>> {
-    let settings = crate::cached_batch(&args.analysis, args.jobs.or(Some(default_workers())))?;
+    let settings = crate::cached_batch(&args.analysis, args.jobs)?;
     let edits = EditStore::open(EditStore::default_dir()?);
     let mut decide_settings = DecideSettings::dj();
     decide_settings.bpm_range = settings.analysis.bpm_range;

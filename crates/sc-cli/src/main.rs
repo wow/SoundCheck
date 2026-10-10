@@ -12,6 +12,7 @@ mod process;
 mod refusal;
 mod report;
 mod vocab;
+mod xml;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -159,6 +160,11 @@ enum Command {
     /// else; in place after backing up the original (default), or as copies with --out. Runs
     /// crash recovery first. The grid edits saved in the app are applied and carried over.
     Process(process::ProcessArgs),
+    /// Write a rekordbox XML of the files named: an exported file's grid is read back from its
+    /// sidecar (when the file is still what that export wrote), any other file's from its
+    /// analysis (the cache is used, the grid edits saved in the app applied). A grid that needs
+    /// review and was not confirmed is withheld; only 4/4 grids get a TEMPO.
+    Xml(xml::XmlArgs),
     /// Change files' level (and optionally cut their start), verified, losing nothing else: in
     /// place after backing up the original (default), or as copies with --out. Runs crash
     /// recovery first. WAV, AIFF and FLAC.
@@ -281,6 +287,7 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Process(args) => exit_with_failures(process::run_process(&args)),
+        Command::Xml(args) => exit_with_failures(xml::run_xml(&args)),
         Command::Apply(args) => exit_with_failures(apply::run_apply(args)),
         Command::Undo(args) => exit_with_failures(apply::run_undo(&args)),
         Command::Journal(args) => exit_with_failures(journal::run_journal(&args)),

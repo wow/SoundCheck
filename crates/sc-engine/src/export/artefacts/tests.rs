@@ -112,7 +112,7 @@ fn library_lists_only_confirmed_rows() {
     assert!(tracks[0].path.ends_with("c.mp3"));
     // Named one by one, every file with something to list is listed.
     assert_eq!(xml_tracks(&rows, XmlSelect::All).len(), 3);
-    assert!(xml_tracks(&rows, XmlSelect::Off).is_empty());
+    assert_eq!(xml_tracks(&rows, XmlSelect::Off).len(), 0);
 }
 
 #[test]

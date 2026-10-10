@@ -36,6 +36,7 @@ fn process(lib: &Library, args: &[&str]) -> Run {
         .env("SC_BACKUP_ROOT", &lib.backups)
         .env("SC_CACHE_DIR", lib.base.join("cache"))
         .env("SC_EDITS_DIR", lib.base.join("edits"))
+        .env("SC_EXPORTS_ROOT", lib.base.join("exports"))
         .current_dir(&lib.base)
         .arg("process")
         .args(args)
