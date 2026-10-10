@@ -4,6 +4,7 @@
 
 mod apply;
 mod eval;
+mod export_plan;
 mod journal;
 mod labels;
 mod plan;
@@ -105,28 +106,9 @@ enum Command {
     },
     /// Analyse files (using the cache) and print what processing would do to each: the gain,
     /// what would be skipped, and what needs a look first. The app decides every row the same way.
-    Plan {
-        /// Audio files.
-        #[arg(required = true)]
-        files: Vec<PathBuf>,
-        /// Statistic to align: S-P95 for DJ sets, integrated loudness for streaming.
-        #[arg(long, value_enum, default_value = "dj")]
-        mode: ModeArg,
-        /// Target in LUFS (default -11 for dj, -14 for streaming).
-        #[arg(long, allow_hyphen_values = true)]
-        target: Option<f64>,
-        /// True-peak ceiling in dBTP (default -0.5 for dj, -1.0 for streaming).
-        #[arg(long, allow_hyphen_values = true)]
-        ceiling: Option<f64>,
-        /// Print JSON (one document per file) instead of text.
-        #[arg(long)]
-        json: bool,
-        /// Files analysed at once (default: a quarter of the logical cores, at most 4).
-        #[arg(long)]
-        jobs: Option<usize>,
-        #[command(flatten)]
-        analysis: AnalysisArgs,
-    },
+    /// With --batch-mode, also what exporting would do: the cut, the tags, or why the file is left
+    /// to the rekordbox XML or skipped.
+    Plan(plan::PlanArgs),
     /// Print evaluation labels (CSV: `file`, `bpm`, `bar1_s`, `meter`, `grouping`, `confirmed`,
     /// `fit`) from each file's grid as the app shows it, with the edits saved there applied;
     /// `fit` is `start` when the grid was fitted to the start of a track whose tempo changes,
@@ -245,21 +227,7 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Command::Plan {
-            files,
-            mode,
-            target,
-            ceiling,
-            json,
-            jobs,
-            analysis,
-        } => {
-            let decide = decide_settings(mode, target, ceiling, &analysis);
-            let edits = EditStore::open(EditStore::default_dir()?);
-            let batch = cached_batch(&analysis, jobs)?;
-            exit_if_failed(plan::plan_all(&batch, &decide, Some(&edits), &files, json)?);
-            Ok(())
-        }
+        Command::Plan(args) => exit_with_failures(plan::run_plan(&args)),
         Command::Labels {
             files,
             confirmed_only,

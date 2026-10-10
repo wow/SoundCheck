@@ -7,41 +7,15 @@
 //! | `INITIALKEY` | `TKEY` | `INITIALKEY` |
 //! | any other `NAME` | `TXXX:NAME` | `NAME` |
 //!
-//! A name is upper-case letters, digits and `_` (`REPLAYGAIN_TRACK_GAIN`, `SOUNDCHECK`).
+//! [`Tag::parse`] reads `NAME=VALUE`; [`check_tags`] checks the names. A name is upper-case
+//! letters, digits and `_` (`REPLAYGAIN_TRACK_GAIN`, `SOUNDCHECK`).
 //! Container-specific labels are refused rather than written somewhere they mean nothing: a
 //! label with `:` (`TXXX:BPM`) and an ID3 frame id ([`ID3_FRAME_IDS`]: `TBPM`, `TKEY`, ...).
 //! Other four-letter names (`MOOD`, `YEAR`, `DATE`) are neutral names like any other.
 
+pub use sc_core::Tag;
 use sc_core::{Error, Result, TagEdit};
 use sc_io::txn::TagFamily;
-
-/// A tag item to add or replace, by its container-neutral name.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct Tag {
-    /// The name (see the module documentation).
-    pub name: String,
-    /// The text value.
-    pub value: String,
-}
-
-impl Tag {
-    /// Parses `NAME=VALUE` (split at the first `=`); the name is upper-cased.
-    ///
-    /// # Errors
-    /// [`Error::InvalidArgument`] without `=` or a name; the name is checked by [`check_tags`].
-    pub fn parse(text: &str) -> Result<Self> {
-        let (name, value) = text
-            .split_once('=')
-            .ok_or_else(|| Error::InvalidArgument(format!("tag {text:?} is not NAME=VALUE")))?;
-        if name.is_empty() {
-            return Err(Error::InvalidArgument(format!("tag {text:?} has no name")));
-        }
-        Ok(Self {
-            name: name.to_ascii_uppercase(),
-            value: value.to_owned(),
-        })
-    }
-}
 
 fn invalid(msg: String) -> Error {
     Error::InvalidArgument(msg)

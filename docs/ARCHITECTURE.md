@@ -8,7 +8,8 @@ src        React 19 + TS (Vite, Tailwind 4, shadcn, zustand, xstate)   -- render
 src-tauri  Tauri 2 shell: commands, Channel<JobEvent>, read_peaks         -- thin; calls sc-engine
 crates/sc-cli           headless binary: analyze | plan | labels | eval | bench | cache | apply | undo | journal | recover (later: process | grid-check) -- thin; calls sc-engine (and sc-io's journal) and only prints
 crates/sc-engine        analyze (the per-file pipeline), run_batch(files, settings, cancel, on_event), cancellation, player (cpal + rtrb; live meters, original/processed audition, monitor volume),
-                        apply_file / undo_file / recover_at_start / check_inputs over sc_io::txn, neutral tag names, folder expansion that skips the backup root
+                        apply_file / undo_file / recover_at_start / check_inputs over sc_io::txn, neutral tag names, folder expansion that skips the backup root,
+                        decide (loudness plan per row) and export::plan_export (what exporting does to a file: gain, Prepare cut, tags, XML only or skip)
 crates/sc-analysis      loudness (ebur128 wrap + S-P95/S-top30/PLR + timeline), beats (beat-this, rten), grid solver (Huber LS, comb phase, kick-band anchor, octave order, thresholds, confidence, refit), DJ-safe report
 crates/sc-dsp           gain, TPDF dither, primitives (biquad, kick-band filter, RMS/derivative onset), [v0.2 limiter, Re-Pitch], [v0.3 stretch]
 crates/sc-io            decode (symphonia + opus, LAME delay/padding applied), iff (WAV/RF64/AIFF read + header writers), render (IFF and FLAC renders: trim, gain via sc-dsp's Requantiser, verbatim chunk/block carry, position patches, ID3/Vorbis edit, tee hash, FLAC full-decode verify), id3 (ID3v2.3/2.4 tag index and frame-level replace/append: every other frame byte for byte, padding reused before the tag grows), tagcopy (ID3v1/APEv2/Vorbis opaque carry + append), flac (FLAC walk, flac-codec frames-only encoder and decoder, our own STREAMINFO with MD5, SEEKTABLE rebuild, Vorbis comment re-emit, CUESHEET shift; symphonia decode for verification), mp3gain (global_gain patch + CRC + undo), transaction (LengthPolicy, tiered verify, backup, journal, sidecar), rekordbox XML + CSV writers, cache, lofty read-only facade
@@ -45,6 +46,17 @@ DECIDE (pure, about 28 ns per row): decide(AnalysisRecord, Codec, DecideSettings
   -> Plan { measured, gain: Gain{gain_db, short_by_lu, true_peak_after} | GlobalGain{steps, gain_db, residual_lu} (MP3, 1.5051 dB steps) | AtTarget,
             skip: AnalyseOnly{codec} | Silent, review: [Confidence | Drifts | OutsideBpmRange | TagBpmDisagrees{tag} | NoGrid] (a grid that fits with elevated residuals is marked "check" in the BPM column, not queued; a grid the user confirmed has none), status }
   turning down is always allowed; a boost stops at the true-peak ceiling and the rest is "short by"; export adds batch_mode, length policy, tags and XML
+
+EXPORT PLAN (pure, under 1 us per row with DECIDE; `sc_engine::export::plan_export`, `sc-cli plan --batch-mode`):
+  plan_export(ExportInput{record (grid as shown), plan (DECIDE's), decide settings, ExportSource{codec, bits, float, has_tag, serato, blake3}}, ExportSettings{batch_mode: Prepare|Library, place, depth, grid_only, tbpm, xml, lead_ms})
+  -> ExportOutcome: Write{ExportPlan{gain_db, trim_frames, expect_frames, bits, tags (neutral names), bext, cut}} | XmlOnly{Mp3OrAac | GridOnlyFlac | GridOnlyWouldRequantise | NoTagToWriteGridOnly}
+     | Skip{SeratoInPlaceCut | NotDjSafeRate | Unsupported | Silent | NoGrid}
+  gain = DECIDE's (0 and the source depth for grid only, so the samples stay bit for bit); Prepare cut: bar lines extrapolated from bar 1 by whole bars
+  (meter pulses x 60 sr / bpm, fractional samples), B = the earliest at or after the lead, cut floor(B - lead) frames so bar 1 lands at the lead or
+  under a sample after it; more than the bar's last beat -> NotCut (no music removed); Library never cuts and expects the source's frame count;
+  tags: BPM (2 decimals, at the meter's unit) when tbpm, REPLAYGAIN_TRACK_GAIN = -18 - (I + g) dB and _PEAK = 10^((TP + g)/20) unless grid only,
+  SOUNDCHECK `v=1;app;mode;stat;target;gain;trim;bpm;bar1;src`; bext (WAV) = the measurements moved by g. The process job turns a Write into
+  an apply_file request.
 
 RENDER (streamed)
   lossless: decode -> [TrimHead] -> gain -> [TPDF if 16-bit] -> iff/flac writer with carried chunks/blocks -> tagcopy append
@@ -86,7 +98,7 @@ RENDER (streamed)
 - `AudioSpec { sample_rate, channels }`, `AudioBuffer { spec, data: Vec<f32> }` interleaved; `SampleIndex(u64)`.
 - `LoudnessReport { integrated, momentary_max, short_term_max, short_term_p95, short_term_top30, lra, true_peak, sample_peak, plr, dual_mono, timeline }`.
 - `Meter { beats_per_bar, unit, grouping: Vec<u8> }` and `Grid { anchor, bpm, meter, first_downbeat_index, segments, residual_p95_ms, residual_max_ms, local_bpm_range, drift_ppm, verdict: Static|StaticWarn|Drifts, confidence: Green|Amber|Red, reasons, alternatives: { octave_up, octave_down, downbeat_shift } }`.
-- `Plan`, `GainPlan`, `ReviewReason`, `DecideSettings`, `Codec` (sc-core `plan`), `LengthPolicy`, `SkipReason` (`AnalyseOnly`, `Silent`; with export: `WouldGetQuieter`, `UnsupportedFormat`, `UnsupportedChannels`, `DrmProtected`, `RekordboxUsbExport`, `SeratoTagsPresentInPlaceCut`, `GainFieldRange`, `Corrupt`, `Cancelled`), `JobEvent`, `IpcError`.
+- `Plan`, `GainPlan`, `ReviewReason`, `DecideSettings`, `Codec` (sc-core `plan`; `is_writable`: WAV, AIFF, FLAC; `has_gain_plan` adds MP3), `BatchMode`, `Place`, `ExportSettings`, `ExportPlan`, `Cut`, `ExportOutcome`, `XmlOnlyReason`, `ExportSkip`, `SoundcheckRecord` (sc-core `export`), `Tag` (neutral tag name and value, sc-core `render`), `LengthPolicy`, `SkipReason` (`AnalyseOnly`, `Silent`; with export: `WouldGetQuieter`, `UnsupportedFormat`, `UnsupportedChannels`, `DrmProtected`, `RekordboxUsbExport`, `SeratoTagsPresentInPlaceCut`, `GainFieldRange`, `Corrupt`, `Cancelled`), `JobEvent`, `IpcError`.
 - `RenderRequest { gain_db, trim_frames, bits, loudness: Option<BextLoudness>, tag_edits }` (sc-core `render`) is what a lossless render is asked to do; `sc_io::render::RenderReport` says what it did (frames in/out, depth, exact/dithered, saturated samples, BLAKE3 of the written PCM, each source chunk's or FLAC block's fate, output size, leading/trailing bytes carried, whether tags were added and if not why (`sc_io::id3::NotEditable`), frames or fields replaced/appended, loudness tags a gain left stale). A render that cannot be DJ-safe fails with `Error::NotDjSafe` (IPC kind `notDjSafe`). The write transaction adds `RekordboxUsbExport`, `InPlaceRefused { reason: InPlaceRefusal }` (symlink, Finder-locked, ACL, read-only file or folder, hard links), `NoSpace`, `VerifyFailed`, `FileChanged`, `NothingToUndo` and `AlreadyExists`, each its own IPC kind.
 
 ## Threading and IPC

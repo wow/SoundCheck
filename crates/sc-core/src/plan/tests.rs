@@ -37,8 +37,10 @@ fn codecs_from_names() {
     assert_eq!(Codec::from_path(Path::new("x.aif")), Codec::Aiff);
     assert_eq!(Codec::from_path(Path::new("x.m4a")), Codec::Aac);
     assert_eq!(Codec::from_path(Path::new("x")), Codec::Other);
-    assert!(Codec::Mp3.is_writable());
-    assert!(!Codec::Alac.is_writable());
+    assert!(Codec::Flac.is_writable() && Codec::Aiff.is_writable() && Codec::Wav.is_writable());
+    assert!(!Codec::Mp3.is_writable() && !Codec::Aac.is_writable());
+    assert!(Codec::Mp3.has_gain_plan() && Codec::Wav.has_gain_plan());
+    assert!(!Codec::Alac.is_writable() && !Codec::Alac.has_gain_plan());
 }
 
 #[test]
