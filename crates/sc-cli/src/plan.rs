@@ -1,20 +1,73 @@
 //! `sc-cli plan`: what processing would do to each file, decided exactly as the app's table
-//! decides it (`sc_engine::decide`), with the grid edits saved in the app applied.
+//! decides it (`sc_engine::decide`), with the grid edits saved in the app applied; with
+//! `--batch-mode`, also what exporting would do (see `export_plan`).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use sc_core::Error;
 use sc_core::analysis::AnalysisRecord;
+use sc_core::export::{BatchMode, ExportOutcome, ExportSettings};
 use sc_core::ipc::{IpcError, JobStage};
 use sc_core::plan::{
     Codec, DecideSettings, GainPlan, LoudnessMode, Plan, ReviewReason, SkipReason,
 };
-use sc_engine::{BatchSettings, EditState, REPORT_SCHEMA, apply_saved, decide};
+use sc_engine::{
+    BatchSettings, EditState, ExportInput, ExportSource, REPORT_SCHEMA, apply_saved, decide,
+    plan_export,
+};
 use sc_io::edits::EditStore;
 use serde::Serialize;
 
+use crate::export_plan::ExportArgs;
 use crate::report::ErrorReport;
+use crate::{AnalysisArgs, ModeArg, cached_batch, decide_settings};
+
+/// The flags of `plan`.
+#[derive(clap::Args)]
+pub struct PlanArgs {
+    /// Audio files.
+    #[arg(required = true)]
+    files: Vec<PathBuf>,
+    /// Statistic to align: S-P95 for DJ sets, integrated loudness for streaming.
+    #[arg(long, value_enum, default_value = "dj")]
+    mode: ModeArg,
+    /// Target in LUFS (default -11 for dj, -14 for streaming).
+    #[arg(long, allow_hyphen_values = true)]
+    target: Option<f64>,
+    /// True-peak ceiling in dBTP (default -0.5 for dj, -1.0 for streaming).
+    #[arg(long, allow_hyphen_values = true)]
+    ceiling: Option<f64>,
+    /// Print JSON (one document per file) instead of text.
+    #[arg(long)]
+    json: bool,
+    /// Files analysed at once (default: a quarter of the logical cores, at most 4).
+    #[arg(long)]
+    jobs: Option<usize>,
+    #[command(flatten)]
+    export: ExportArgs,
+    #[command(flatten)]
+    analysis: AnalysisArgs,
+}
+
+/// Runs `plan`; returns how many files failed.
+///
+/// # Errors
+/// Invalid export flags, an unreachable cache or edits folder, or a failed write to stdout.
+pub fn run_plan(args: &PlanArgs) -> anyhow::Result<usize> {
+    let decide = decide_settings(args.mode, args.target, args.ceiling, &args.analysis);
+    let export = args.export.settings()?;
+    let edits = EditStore::open(EditStore::default_dir()?);
+    let batch = cached_batch(&args.analysis, args.jobs)?;
+    plan_all(
+        &batch,
+        &decide,
+        export.as_ref(),
+        Some(&edits),
+        &args.files,
+        args.json,
+    )
+}
 
 /// The JSON document for one planned file.
 #[derive(Serialize)]
@@ -27,6 +80,9 @@ struct PlanReport<'a> {
     grid_edited: bool,
     /// The user confirmed the grid in the app.
     grid_confirmed: bool,
+    /// What exporting would do, with `--batch-mode`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    export: Option<&'a ExportOutcome>,
 }
 
 /// Row counts, as the app's filter chips show them.
@@ -51,11 +107,12 @@ impl Counts {
     }
 }
 
-/// Plans every file with the edits saved in `edits`, printing in the order given; returns how
-/// many failed.
+/// Plans every file with the edits saved in `edits` (and, with `export`, its export), printing
+/// in the order given; returns how many failed.
 pub fn plan_all(
     settings: &BatchSettings,
     decide_settings: &DecideSettings,
+    export: Option<&ExportSettings>,
     edits: Option<&EditStore>,
     files: &[PathBuf],
     json: bool,
@@ -72,7 +129,23 @@ pub fn plan_all(
                 let codec = Codec::from_path(file);
                 let plan = decide(&report.record, codec, decide_settings, edit.confirmed);
                 counts.add(&plan);
-                print_plan(file, &report.record, &plan, edit, decide_settings, json)
+                let export = export.map(|s| {
+                    let source = ExportSource::read(file);
+                    let input = ExportInput {
+                        record: &report.record,
+                        plan: &plan,
+                        decide: decide_settings,
+                        source: &source,
+                    };
+                    (plan_export(&input, s), s.batch_mode)
+                });
+                let printed = Printed {
+                    record: &report.record,
+                    plan: &plan,
+                    edit,
+                    export: export.as_ref(),
+                };
+                print_plan(file, &printed, decide_settings, json)
             }
             Err(err) => {
                 failed += 1;
@@ -99,14 +172,26 @@ pub fn plan_all(
     Ok(failed)
 }
 
+/// What is printed for one planned file.
+struct Printed<'a> {
+    record: &'a AnalysisRecord,
+    plan: &'a Plan,
+    edit: EditState,
+    export: Option<&'a (ExportOutcome, BatchMode)>,
+}
+
 fn print_plan(
     file: &Path,
-    record: &AnalysisRecord,
-    plan: &Plan,
-    edit: EditState,
+    printed: &Printed<'_>,
     settings: &DecideSettings,
     json: bool,
 ) -> anyhow::Result<()> {
+    let Printed {
+        record,
+        plan,
+        edit,
+        export,
+    } = *printed;
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     if json {
@@ -116,6 +201,7 @@ fn print_plan(
             plan,
             grid_edited: edit.edited,
             grid_confirmed: edit.confirmed,
+            export: export.map(|(outcome, _)| outcome),
         };
         serde_json::to_writer_pretty(&mut out, &doc)?;
         writeln!(out)?;
@@ -155,6 +241,9 @@ fn print_plan(
         (false, false) => {}
     }
     writeln!(out)?;
+    if let Some((outcome, mode)) = export {
+        crate::export_plan::write_outcome(&mut out, outcome, *mode)?;
+    }
     Ok(())
 }
 

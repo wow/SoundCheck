@@ -1,6 +1,6 @@
 # sc-cli
 
-The headless SoundCheck binary. `sc-cli analyze <file> --json` prints exactly the fields the desktop table shows; `plan` says what processing would do to each file; `labels`, `eval` and `bench` serve the evaluation; `cache path|clear` manages the analysis cache; `--version` prints the version with the git revision and build date.
+The headless SoundCheck binary. `sc-cli analyze <file> --json` prints exactly the fields the desktop table shows; `plan` says what processing would do to each file (with `--batch-mode prepare|library [--grid-only] [--lead-ms N] [--no-xml]`, also what exporting would do: gain, head cut, tags, XML only or skipped, and why; with `--json` as the document's `export` field, an `ExportOutcome` as the app receives it); `labels`, `eval` and `bench` serve the evaluation; `cache path|clear` manages the analysis cache; `--version` prints the version with the git revision and build date.
 
 ## File changes
 

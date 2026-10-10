@@ -91,10 +91,20 @@ impl Codec {
         }
     }
 
-    /// Whether v0.1 can write this codec; the others are analysed only.
+    /// Whether this version writes files of this codec (WAV, AIFF, FLAC). MP3 and AAC are not
+    /// written yet: exporting them leaves the file as it is and only the rekordbox XML carries
+    /// their grid.
     #[must_use]
     pub fn is_writable(self) -> bool {
-        matches!(self, Self::Wav | Self::Aiff | Self::Flac | Self::Mp3)
+        matches!(self, Self::Wav | Self::Aiff | Self::Flac)
+    }
+
+    /// Whether a level change is planned for this codec: the ones written, and MP3, whose
+    /// change is whole `global_gain` steps (lossless, no re-encode). The others are analysed
+    /// only.
+    #[must_use]
+    pub fn has_gain_plan(self) -> bool {
+        self.is_writable() || self == Self::Mp3
     }
 
     /// The short label the table shows.
@@ -227,7 +237,7 @@ pub enum GainPlan {
     rename_all_fields = "camelCase"
 )]
 pub enum SkipReason {
-    /// The codec is analysed but not written in this version.
+    /// The codec is analysed only: no level change is planned for it in this version.
     AnalyseOnly {
         /// The codec.
         codec: Codec,

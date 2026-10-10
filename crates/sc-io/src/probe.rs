@@ -78,10 +78,10 @@ pub fn probe(path: &Path) -> FileInfo {
 }
 
 /// The first way `info`'s format is not DJ-safe (44.1 or 48 kHz, 16- or 24-bit integer PCM,
-/// stereo); `None` for codecs that are analysed only, which export converts anyway.
+/// stereo); `None` for codecs without a gain plan (analysed only), which export converts anyway.
 #[must_use]
 pub fn dj_unsafe(info: &FileInfo) -> Option<DjUnsafe> {
-    if !info.codec.is_writable() {
+    if !info.codec.has_gain_plan() {
         return None;
     }
     if info.sample_rate.is_some_and(|r| r != 44_100 && r != 48_000) {

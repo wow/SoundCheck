@@ -2,13 +2,16 @@
 //! loudness written into an existing Broadcast Wave `bext` chunk, and tag edits.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
+use crate::error::{Error, Result};
 use crate::units::{DbTp, Lu, Lufs};
 
 /// The five loudness fields of a `bext` chunk, version 2 (EBU Tech 3285 v2, 2011, bytes
 /// 412..422): each value x 100, rounded, as a little-endian signed 16-bit integer; a field that
 /// was not measured holds [`BextLoudness::UNMEASURED`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct BextLoudness {
     /// `LoudnessValue`: integrated loudness, LUFS x 100.
     pub integrated_lufs_x100: i16,
@@ -86,6 +89,46 @@ fn field(value: Option<f64>) -> i16 {
         f
     } else {
         BextLoudness::UNMEASURED
+    }
+}
+
+/// A tag item to add or replace, by its container-neutral name: `BPM`, `INITIALKEY`, or any
+/// other `NAME` of upper-case letters, digits and `_` (`REPLAYGAIN_TRACK_GAIN`, `SOUNDCHECK`).
+/// The engine maps it to an ID3 frame or a Vorbis comment field.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Tag {
+    /// The neutral name.
+    pub name: String,
+    /// The text value.
+    pub value: String,
+}
+
+impl Tag {
+    /// A tag item.
+    #[must_use]
+    pub fn new(name: &str, value: impl Into<String>) -> Self {
+        Self {
+            name: name.to_owned(),
+            value: value.into(),
+        }
+    }
+
+    /// Parses `NAME=VALUE` (split at the first `=`); the name is upper-cased.
+    ///
+    /// # Errors
+    /// [`Error::InvalidArgument`] without `=` or a name.
+    pub fn parse(text: &str) -> Result<Self> {
+        let (name, value) = text
+            .split_once('=')
+            .ok_or_else(|| Error::InvalidArgument(format!("tag {text:?} is not NAME=VALUE")))?;
+        if name.is_empty() {
+            return Err(Error::InvalidArgument(format!("tag {text:?} has no name")));
+        }
+        Ok(Self {
+            name: name.to_ascii_uppercase(),
+            value: value.to_owned(),
+        })
     }
 }
 

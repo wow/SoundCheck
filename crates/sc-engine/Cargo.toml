@@ -38,6 +38,10 @@ name = "decide"
 harness = false
 
 [[bench]]
+name = "export_plan"
+harness = false
+
+[[bench]]
 name = "track"
 harness = false
 

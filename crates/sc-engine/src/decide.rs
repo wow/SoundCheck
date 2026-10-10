@@ -32,7 +32,7 @@ pub fn decide(
         LoudnessMode::Dj => loudness.short_term_p95,
         LoudnessMode::Streaming => loudness.integrated,
     };
-    let skip = if !codec.is_writable() {
+    let skip = if !codec.has_gain_plan() {
         Some(SkipReason::AnalyseOnly { codec })
     } else if measured.is_none() {
         Some(SkipReason::Silent)
