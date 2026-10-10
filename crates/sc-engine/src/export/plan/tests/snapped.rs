@@ -300,7 +300,7 @@ fn the_serato_in_place_skip_follows_the_cut_made() {
         (0, Some(30))
     );
     assert!(matches!(plan.cut, Cut::OnBar { .. }), "{:?}", plan.cut);
-    assert!(plan.notices.is_empty());
+    assert_eq!(plan.notices, Vec::<ExportNotice>::new());
     // A real cut is still refused, by the cut made: 12,965 frames.
     for (serato, expect) in [
         (

@@ -54,7 +54,7 @@ fn containers(samples: &[i32]) -> Vec<(&'static str, Vec<u8>, &'static str, &'st
         .chunk(b"COMM", &comm(2, frames, 24, RATE, None))
         .chunk(b"SSND", &ssnd(0, &be_bytes(&x24, 3)))
         .build();
-    let aifc = Form::aifc()
+    let aiff_c = Form::aifc()
         .chunk(b"FVER", &0xA280_5140_u32.to_be_bytes())
         .chunk(b"COMM", &comm(2, frames, 16, RATE, Some(b"NONE")))
         .chunk(b"SSND", &ssnd(0, &be_bytes(samples, 2)))
@@ -80,7 +80,7 @@ fn containers(samples: &[i32]) -> Vec<(&'static str, Vec<u8>, &'static str, &'st
             "TXXX:SOUNDCHECK",
         ),
         ("AIFF 24", aiff, "aif", "TXXX:SOUNDCHECK"),
-        ("AIFF-C", aifc, "aifc", "TXXX:SOUNDCHECK"),
+        ("AIFF-C", aiff_c, "aifc", "TXXX:SOUNDCHECK"),
         ("FLAC 16", flac(samples, 16), "flac", "SOUNDCHECK"),
         ("FLAC 24", flac(&x24, 24), "flac", "SOUNDCHECK"),
     ]
@@ -111,10 +111,13 @@ fn rf64(data: &[u8]) -> Vec<u8> {
     out
 }
 
+/// A requested cut, the quiet frames (frame, left value) and the snap expected.
+type Case = (u64, Vec<(u64, i32)>, u64);
+
 #[test]
 fn the_snap_picks_the_quietest_frame_ties_late_across_blocks_on_every_container() {
     // (requested cut, quiet frames, the snap). The window of a cut T is [T - 44, T].
-    let cases: [(u64, Vec<(u64, i32)>, u64); 4] = [
+    let cases: [Case; 4] = [
         // Strictly inside: the quietest of two quiet frames; a silent frame after the request
         // is never taken.
         (5_000, vec![(4_970, 7), (4_983, 3), (5_003, 0)], 4_983),
