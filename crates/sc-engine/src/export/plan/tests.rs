@@ -259,6 +259,7 @@ fn float_grid_only_is_xml_only() {
 
 #[test]
 fn mp3_is_xml_only() {
+    // A trusted grid: the XML carries it.
     for codec in [Codec::Mp3, Codec::Aac] {
         let source = ExportSource {
             codec,
@@ -276,6 +277,42 @@ fn mp3_is_xml_only() {
                 }
             );
         }
+    }
+    // The review gate comes first: the XML would carry nothing for these rows.
+    for codec in [Codec::Mp3, Codec::Aac] {
+        let source = ExportSource {
+            codec,
+            ..ExportSource::default()
+        };
+        let mut amber = record(44_100, 0);
+        amber.grid.as_mut().expect("grid").confidence = Confidence::Amber;
+        let mut no_grid = record(44_100, 0);
+        no_grid.grid = None;
+        for grid_only in [false, true] {
+            let settings = ExportSettings {
+                grid_only,
+                ..prepare()
+            };
+            assert_eq!(
+                plan_with(&amber, &source, &settings),
+                ExportOutcome::Skip {
+                    reason: ExportSkip::XmlGridNeedsReview { codec }
+                }
+            );
+            assert_eq!(
+                plan_with(&no_grid, &source, &settings),
+                ExportOutcome::Skip {
+                    reason: ExportSkip::XmlNoGrid { codec }
+                }
+            );
+        }
+        // Confirmed by the user: it needs no review, and the XML carries it.
+        assert_eq!(
+            plan_decided(&amber, &source, &prepare(), true),
+            ExportOutcome::XmlOnly {
+                reason: XmlOnlyReason::Mp3OrAac { codec }
+            }
+        );
     }
     let alac = ExportSource {
         codec: Codec::Alac,

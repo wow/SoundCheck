@@ -13,8 +13,12 @@
 //! [`txn`] wraps the renders in write transactions: preflight checks, a temp file synced and
 //! verified, a backup, an atomic rename, the original's metadata restored, a sidecar, a journal
 //! that crash recovery and undo read.
+//! A batch's artefacts are written here too: [`rekordbox`] writes the rekordbox XML that carries
+//! the grids, [`report`] the grid report CSV, and [`artefacts`] says where they go and writes them
+//! atomically.
 #![forbid(unsafe_code)]
 
+pub mod artefacts;
 pub mod cache;
 pub mod decode;
 pub mod edits;
@@ -22,7 +26,9 @@ pub mod flac;
 pub mod id3;
 pub mod iff;
 pub mod probe;
+pub mod rekordbox;
 pub mod render;
+pub mod report;
 pub mod tags;
 pub mod txn;
 

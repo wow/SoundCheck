@@ -20,7 +20,8 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 use sc_core::analysis::AnalysisSettings;
-use sc_core::export::{ExportOutcome, ExportPlan};
+use sc_core::export::{ExportOutcome, ExportPlan, XmlGrid};
+use sc_core::plan::Codec;
 use sc_core::{Error, Result, Seconds};
 use sc_io::cache::Cache;
 use sc_io::txn::TxnReport;
@@ -135,6 +136,11 @@ pub enum EngineEvent {
         outcome: Box<ExportOutcome>,
         /// Its playing time.
         duration: Seconds,
+        /// Its codec.
+        codec: Codec,
+        /// The grid the batch's rekordbox XML carries for it, as analysed (the file is not
+        /// changed): a file left to the XML is listed with it.
+        grid: Box<XmlGrid>,
     },
     /// Terminal (export): written, then the grid edit carried over and the output analysed.
     Done {
