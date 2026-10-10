@@ -369,7 +369,12 @@ fn applied_doc<'a>(
 }
 
 /// Prints a refusal: three lines on stderr, and the JSON document on stdout with `--json`.
-fn print_failed(file: &Path, err: Error, action: Action, json: bool) -> anyhow::Result<()> {
+pub(crate) fn print_failed(
+    file: &Path,
+    err: Error,
+    action: Action,
+    json: bool,
+) -> anyhow::Result<()> {
     let why = refusal::explain(&err, action);
     refusal::write(&mut std::io::stderr().lock(), file, action, &why)?;
     if json {
@@ -387,9 +392,11 @@ fn print_failed(file: &Path, err: Error, action: Action, json: bool) -> anyhow::
     Ok(())
 }
 
-/// Runs recovery before a command that writes, saying on stderr what it found.
-pub fn recover_first(root: &Path) {
-    match sc_engine::recover_at_start(root) {
+/// Runs recovery before a command that writes, saying on stderr what it found; returns it.
+#[must_use]
+pub fn recover_first(root: &Path) -> RecoveryStatus {
+    let status = sc_engine::recover_at_start(root);
+    match &status {
         RecoveryStatus::Finished { recovered, pending } => {
             if !recovered.is_empty() {
                 eprintln!(
@@ -409,6 +416,7 @@ pub fn recover_first(root: &Path) {
         }
         RecoveryStatus::Running | RecoveryStatus::Skipped { .. } => {}
     }
+    status
 }
 
 /// Stops the run before any file when the tags are not valid (exit code 2).
@@ -426,7 +434,7 @@ fn check_tags_or_exit(tags: &[Tag]) {
 pub fn run_apply(args: ApplyArgs) -> anyhow::Result<usize> {
     check_tags_or_exit(&args.tags);
     let root = args.backup.resolve()?;
-    recover_first(&root);
+    let _ = recover_first(&root);
     let req = ApplyRequest {
         gain_db: args.gain_db,
         trim_frames: args.trim_samples,
@@ -530,7 +538,7 @@ fn undone_doc<'a>(file: &Path, r: &'a UndoReport, total: Duration) -> UndoneDoc<
 /// When the backup root cannot be named or the output cannot be written.
 pub fn run_undo(args: &UndoArgs) -> anyhow::Result<usize> {
     let root = args.backup.resolve()?;
-    recover_first(&root);
+    let _ = recover_first(&root);
     let refused = check_inputs(&args.files, &Place::InPlace);
     let mut failed = 0;
     for (file, refusal) in args.files.iter().zip(refused) {

@@ -36,7 +36,7 @@ pub struct ExportArgs {
     no_xml: bool,
 }
 
-fn parse_lead_ms(text: &str) -> Result<f64, String> {
+pub(crate) fn parse_lead_ms(text: &str) -> Result<f64, String> {
     let ms: f64 = text
         .parse()
         .map_err(|e| format!("{text:?} is not a number: {e}"))?;
@@ -109,7 +109,7 @@ pub const GRID_WITHHELD: &str =
     "its BPM and bar 1 are not written, because the grid needs review (confirm it in the app)";
 
 /// `Gain -2.0 dB, Cut 0.29 s; tags BPM, ...`.
-fn write_text(plan: &ExportPlan) -> String {
+pub(crate) fn write_text(plan: &ExportPlan) -> String {
     let gain = if plan.gain_db.abs() < sc_core::plan::NEGLIGIBLE_DB {
         "No gain".to_owned()
     } else {
@@ -164,7 +164,7 @@ fn write_text(plan: &ExportPlan) -> String {
     format!("{head}{depth}; tags {}", names.join(", "))
 }
 
-fn notice_text(notice: ExportNotice) -> String {
+pub(crate) fn notice_text(notice: ExportNotice) -> String {
     match notice {
         ExportNotice::SeratoCuesShifted { cut_s } => format!(
             "the copy keeps its Serato cue points and beat grid as they are, so in Serato they sit \
@@ -174,7 +174,7 @@ fn notice_text(notice: ExportNotice) -> String {
     }
 }
 
-fn xml_only_text(reason: XmlOnlyReason) -> String {
+pub(crate) fn xml_only_text(reason: XmlOnlyReason) -> String {
     match reason {
         XmlOnlyReason::Mp3OrAac { codec } => {
             format!("{} (file writes arrive later)", codec.label())
@@ -194,7 +194,7 @@ fn xml_only_text(reason: XmlOnlyReason) -> String {
 }
 
 /// Why a file is skipped, and what to do.
-fn skip_text(reason: ExportSkip) -> (String, String) {
+pub(crate) fn skip_text(reason: ExportSkip) -> (String, String) {
     match reason {
         ExportSkip::SeratoInPlaceCut { cut_s } => (
             format!(
