@@ -91,6 +91,8 @@ pub struct Applied {
     /// Whether the requested tag edits were written (false when the tag cannot be edited
     /// safely, e.g. tag-level unsynchronisation; the tag is then carried unchanged).
     pub tags_added: bool,
+    /// Frames the writer reports it cut from the start (the cut made, not the one requested).
+    pub trim_frames: u64,
 }
 
 /// The `SOUNDCHECK` record value: longer than 200 bytes, so its frame size differs between
@@ -250,6 +252,7 @@ pub fn apply_with_tags(
     rendered
         .map(|report| Applied {
             tags_added: report.tags_added,
+            trim_frames: report.trim_frames,
         })
         .map_err(Refusal::from)
 }

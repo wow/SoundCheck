@@ -42,8 +42,10 @@ pub(super) struct Target {
     pub bits: u16,
     /// Frames written.
     pub frames_out: u64,
-    /// Frames dropped from the start.
+    /// Frames dropped from the start: the cut made (see `super::head`).
     pub trim_frames: u64,
+    /// Frames the request asked to drop (named in refusals).
+    pub trim_requested_frames: u64,
     /// The source holds floats (its `fact` chunk is dropped).
     pub float_source: bool,
     /// What happens to the loudness fields of an existing `bext`.
@@ -256,7 +258,13 @@ fn decide<R: Read + Seek>(
                 *held -= chunk.payload_len();
                 Ok(Decision::Carry)
             }
-            Err(e) => Err(patch_error(path, chunk, trim, &e)),
+            Err(e) => Err(patch_error(
+                path,
+                chunk,
+                trim,
+                target.trim_requested_frames,
+                &e,
+            )),
         }
     };
     let always = |r: std::result::Result<(), PatchError>| r.map(|()| true);
@@ -281,7 +289,7 @@ fn decide<R: Read + Seek>(
 /// A patch's outcome: whether the payload changed.
 type PatchResult = std::result::Result<bool, PatchError>;
 
-fn patch_error(path: &Path, chunk: &Chunk, trim: u64, e: &PatchError) -> Error {
+fn patch_error(path: &Path, chunk: &Chunk, trim: u64, requested: u64, e: &PatchError) -> Error {
     match *e {
         PatchError::Malformed(why) => Error::Corrupt {
             path: path.to_path_buf(),
@@ -291,11 +299,19 @@ fn patch_error(path: &Path, chunk: &Chunk, trim: u64, e: &PatchError) -> Error {
                 chunk.header_offset
             ),
         },
-        PatchError::LoopInTrim { start, end } => Error::InvalidArgument(format!(
-            "{}: a head trim of {trim} samples would cut the sampler loop from sample {start} \
-             to {end}",
-            path.display()
-        )),
+        PatchError::LoopInTrim { start, end } => {
+            let cut = if requested == trim {
+                format!("a head trim of {trim} samples")
+            } else {
+                format!(
+                    "a head trim of {requested} samples ({trim} after snapping to a quiet frame)"
+                )
+            };
+            Error::InvalidArgument(format!(
+                "{}: {cut} would cut the sampler loop from sample {start} to {end}",
+                path.display()
+            ))
+        }
     }
 }
 

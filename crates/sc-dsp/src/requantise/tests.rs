@@ -4,6 +4,7 @@
 //! f64 reference < 1e-6 of full scale.
 #![allow(clippy::float_cmp)] // exact values are intended where compared exactly
 use super::*;
+use crate::fade::FadeIn;
 use crate::gain::db_to_linear;
 use sc_core::{AudioSpec, testsig};
 
@@ -194,4 +195,74 @@ fn invalid_settings_and_mismatched_input_are_errors() {
     assert!(q.push_int(&[1], &mut [0]).is_err());
     let mut q = Requantiser::new(SourceDepth::Int { bits: 16 }, 24, -1.0, 0).expect("valid");
     assert!(q.push_float(&[0.1], &mut [0]).is_err());
+}
+
+/// Pushes `input` through `q` in blocks of `size` samples.
+fn push_blocks(q: &mut Requantiser, input: &[i32], size: usize) -> Vec<i32> {
+    let mut out = vec![0; input.len()];
+    for (i, o) in input.chunks(size).zip(out.chunks_mut(size)) {
+        q.push_int(i, o).expect("integer source");
+    }
+    out
+}
+
+#[test]
+// Rounded values inside the 24-bit range: the casts are exact.
+#[allow(clippy::cast_possible_truncation)]
+fn a_fade_in_rounds_the_ramp_once_and_leaves_the_rest_exact() {
+    let input = noise24();
+    let mut q = Requantiser::new(SourceDepth::Int { bits: 24 }, 24, 0.0, 11).expect("valid");
+    q.set_fade_in(FadeIn::new(96, 2).expect("valid"));
+    assert!(!q.is_exact() && !q.is_dithered());
+    let out = push_blocks(&mut q, &input, 4096);
+    assert_eq!(out[..2], [0, 0], "the first frame is silent");
+    for (i, (y, x)) in out.iter().zip(&input).enumerate() {
+        let w = crate::fade::raised_cosine_in(i / 2, 96);
+        assert_eq!(
+            *y,
+            (f64::from(*x) * w).round_ties_even() as i32,
+            "sample {i}"
+        );
+    }
+    assert_eq!(out[192..], input[192..], "exact after the ramp");
+}
+
+#[test]
+fn a_fade_in_streams_across_any_block_size_with_dither() {
+    let input = noise24();
+    let run = |size: usize, fade: bool| {
+        let mut q = Requantiser::new(SourceDepth::Int { bits: 24 }, 16, -3.2, 7).expect("valid");
+        if fade {
+            q.set_fade_in(FadeIn::new(88, 2).expect("valid"));
+        }
+        push_blocks(&mut q, &input, size)
+    };
+    let whole = run(input.len(), true);
+    for size in [1, 7, 175, 176, 177, 4096] {
+        assert_eq!(run(size, true), whole, "block size {size}");
+    }
+    // The fade only changes the ramp: the dither sequence after it is the same.
+    assert_eq!(run(4096, false)[176..], whole[176..]);
+    let k = db_to_linear(-3.2) / 256.0;
+    for i in 0..176 {
+        let r = f64::from(input[i]) * k * crate::fade::raised_cosine_in(i / 2, 88);
+        assert!((f64::from(whole[i]) - r).abs() <= 1.5, "sample {i}");
+    }
+}
+
+#[test]
+// Rounded values inside the 24-bit range: the casts are exact.
+#[allow(clippy::cast_possible_truncation)]
+fn a_fade_in_on_a_float_source_starts_from_zero() {
+    let input: Vec<f64> = (0..400).map(|i| 0.5 + f64::from(i % 3) * 0.1).collect();
+    let mut q = Requantiser::new(SourceDepth::Float, 24, 0.0, 1).expect("valid");
+    q.set_fade_in(FadeIn::new(96, 1).expect("valid"));
+    let mut out = vec![0; input.len()];
+    q.push_float(&input, &mut out).expect("float source");
+    assert_eq!(out[0], 0);
+    for i in 0..96 {
+        let r = input[i] * 8_388_608.0 * crate::fade::raised_cosine_in(i, 96);
+        assert_eq!(out[i], r.round_ties_even() as i32, "sample {i}");
+    }
+    assert_eq!(out[96], (input[96] * 8_388_608.0).round_ties_even() as i32);
 }

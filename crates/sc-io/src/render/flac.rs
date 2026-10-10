@@ -1,9 +1,12 @@
 //! Rendering a FLAC file with a new level (and an optional head trim) into a FLAC file that
 //! keeps everything else (RFC 9639; see [`crate::flac`] for the pieces).
 //!
-//! [`apply_flac`] streams `source frames -> decode -> trim -> gain -> requantise -> encode ->
-//! writer`, with memory bounded by one frame of audio and the list of frame offsets:
+//! [`apply_flac`] streams `source frames -> decode -> trim -> fade-in -> gain -> requantise ->
+//! encode -> writer`, with memory bounded by one frame of audio and the list of frame offsets:
 //!
+//! - **Head cut**: snapped back by up to 1 ms to the quietest frame and faded in over 2 ms as
+//!   for WAV/AIFF (see [`super::head`]); the CUESHEET shift and the new total use the cut
+//!   actually made.
 //! - **Around the stream**: `ID3v2` tags in front of `fLaC` and whatever follows the last frame
 //!   (an `ID3v1` or `APEv2` tag) are carried byte for byte at the same ends of the output.
 //! - **STREAMINFO** is rebuilt: block size 4096 (the minimum and the maximum; only the last
@@ -56,6 +59,7 @@ use std::sync::atomic::AtomicBool;
 use sc_core::{Error, RenderRequest, Result};
 
 use super::audio::{Peaks, SEED_FRAMES, SeedRequest, check_cancel, seed_hasher, seed_of};
+use super::head::{self, HeadSnap};
 use super::{
     OutputGuard, RenderReport, check_full_scale, check_rate, check_request, io_error, output_bits,
 };
@@ -137,6 +141,9 @@ pub(crate) fn render_flac_unverified(
     let info = layout.streaminfo;
     let mut target = target(&mut src, input, &layout, req, cancel)?;
     let frames_in = target.frames_in;
+    target.trim_frames =
+        snapped_trim(&mut src, input, &layout, req.trim_frames, frames_in, cancel)?;
+    target.frames_out = frames_in - target.trim_frames;
     let plan = plan::plan(
         &mut src,
         input,
@@ -149,7 +156,7 @@ pub(crate) fn render_flac_unverified(
         },
     )?;
     if req.gain_db > 0.0 {
-        let peaks = peaks_after_trim(&mut src, input, &layout, req.trim_frames, cancel)?;
+        let peaks = peaks_after_trim(&mut src, input, &layout, target.trim_frames, cancel)?;
         check_full_scale(peaks, req.gain_db)?;
     }
     target.seed = dither_seed(&mut src, input, &layout, &target, cancel)?;
@@ -173,7 +180,8 @@ pub(crate) fn render_flac_unverified(
         path = %input.display(),
         output = %output.display(),
         gain_db = req.gain_db,
-        trim_frames = req.trim_frames,
+        trim_frames = target.trim_frames,
+        trim_requested_frames = req.trim_frames,
         bits = target.bits_out,
         frames = target.frames_out,
         bytes = done.output_bytes,
@@ -192,6 +200,8 @@ pub(crate) fn render_flac_unverified(
         vorbis_edit,
         frames_in,
         frames_out: target.frames_out,
+        trim_frames: target.trim_frames,
+        trim_requested_frames: req.trim_frames,
         sample_rate_hz: info.sample_rate_hz,
         channels: u16::from(info.channels),
         bits_out: target.bits_out,
@@ -263,6 +273,33 @@ fn count_frames(
         }
     }
     Ok(pcm.finish()?.frames)
+}
+
+/// The head cut actually made for a requested cut of `requested` frames of a source of
+/// `frames_in` frames (see [`super::head`]).
+fn snapped_trim(
+    src: &mut File,
+    path: &Path,
+    layout: &FlacLayout,
+    requested: u64,
+    frames_in: u64,
+    cancel: &AtomicBool,
+) -> Result<u64> {
+    if requested == 0 || requested >= frames_in {
+        return Ok(requested);
+    }
+    let info = &layout.streaminfo;
+    let mut snap = HeadSnap::new(requested, info.sample_rate_hz, u16::from(info.channels));
+    let mut pcm = FlacPcm::open(src, path, layout, false)?;
+    let mut block = Vec::new();
+    while snap.wants_more() {
+        check_cancel(cancel)?;
+        if pcm.next_block(&mut block)? == 0 {
+            break;
+        }
+        snap.push(&block, head::int_magnitude);
+    }
+    Ok(snap.finish())
 }
 
 /// The signed peaks of the samples after the trim, as fractions of full scale.

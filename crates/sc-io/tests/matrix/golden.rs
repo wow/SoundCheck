@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::apply::{ApplyArgs, grid};
 use super::cases::{Expect, Fixture};
-use super::expect::patched;
+use super::expect::{effective, patched};
 use super::parse::{self, sha256_hex};
 
 /// Manifest schema version; bump when the layout of the JSON changes.
@@ -68,9 +68,10 @@ fn patched_entries(fixtures: &[Fixture]) -> Vec<PatchedEntry> {
     for fx in fixtures {
         let input = parse::parse(&fx.bytes).expect("fixtures parse");
         for args in grid() {
+            let want = effective(fx, &args);
             for (block, e) in input.blocks.iter().zip(&fx.expected) {
                 if let Expect::Patched { .. } = e.expect {
-                    let payload = patched(&block.id, &block.bytes, fx, &args).expect("patch");
+                    let payload = patched(&block.id, &block.bytes, fx, &want).expect("patch");
                     out.push(PatchedEntry {
                         fixture: fx.name.into(),
                         row: row_label(&args),

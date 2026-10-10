@@ -17,6 +17,7 @@ fn target(container: OutContainer, frames_out: u64, trim_frames: u64) -> Target 
         bits: 16,
         frames_out,
         trim_frames,
+        trim_requested_frames: trim_frames,
         float_source: false,
         bext_update: BextUpdate::Keep,
         tag_edits: Vec::new(),

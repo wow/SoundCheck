@@ -2,6 +2,13 @@
 //! edits. Positions are parsed exactly from the layouts in the RIFF `cue `/`smpl` chunks, the
 //! AIFF `MARK` chunk, the FLAC CUESHEET (RFC 9639 section 8.7), the `fact` chunk and EBU Tech
 //! 3285 `bext` (`TimeReference` at byte 338, Version at 346, loudness at 412..422).
+//!
+//! A requested head trim is not the cut a correct writer makes: it moves the cut earlier by up
+//! to 1 ms (rounded to whole frames: 44 at 44.1 kHz, 48 at 48 kHz) to the frame whose largest
+//! absolute sample across channels is smallest, the latest on a tie, never later, and fades
+//! the first 2 ms (88 / 96 frames) after a cut in with `w(n) = 0.5 - 0.5 cos(pi n / N)`.
+//! [`effective`] turns the requested arguments into ones whose `trim_samples` is that cut;
+//! every other function here takes effective arguments.
 
 use super::apply::{ApplyArgs, BextLoudness, Refusal, TagEdit, gain_factor};
 use super::cases::Fixture;
@@ -41,7 +48,59 @@ fn u64_be(p: &[u8], at: usize) -> Result<u64, String> {
     Ok(u64::from_be_bytes(a))
 }
 
-/// Output frames for `args` on `fx`.
+/// `ms` milliseconds in frames at `rate`, rounded half up.
+fn ms_frames(rate: u32, ms: u32) -> usize {
+    usize::try_from((u64::from(rate) * u64::from(ms) + 500) / 1000).expect("small")
+}
+
+/// The cut a correct writer makes for the requested `args` on `fx` (see the module
+/// documentation): the requested trim itself when it is 0 or leaves no audio.
+#[must_use]
+pub fn actual_trim(fx: &Fixture, args: &ApplyArgs) -> u64 {
+    let requested = usize::try_from(args.trim_samples).expect("small trims");
+    if requested == 0 || requested >= fx.frames {
+        return args.trim_samples;
+    }
+    let ch = usize::from(fx.channels);
+    let loudest = |f: usize| {
+        (0..ch)
+            .map(|c| fx.source.normalised(f * ch + c).abs())
+            .fold(0.0_f64, f64::max)
+    };
+    let first = requested.saturating_sub(ms_frames(fx.sample_rate, 1));
+    let mut best = first;
+    for f in first..=requested {
+        if loudest(f) <= loudest(best) {
+            best = f;
+        }
+    }
+    best as u64
+}
+
+/// `args` with the requested trim replaced by the cut a correct writer makes.
+#[must_use]
+pub fn effective(fx: &Fixture, args: &ApplyArgs) -> ApplyArgs {
+    ApplyArgs {
+        trim_samples: actual_trim(fx, args),
+        ..*args
+    }
+}
+
+/// Gain of output frame `frame` under effective `args`: the raised-cosine fade-in over the
+/// first 2 ms after a cut, 1 elsewhere and without a cut.
+#[must_use]
+pub fn fade_gain(fx: &Fixture, args: &ApplyArgs, frame: usize) -> f64 {
+    let len = ms_frames(fx.sample_rate, 2);
+    if args.trim_samples == 0 || frame >= len {
+        return 1.0;
+    }
+    // A few hundred frames: exact in f64.
+    #[allow(clippy::cast_precision_loss)]
+    let phase = std::f64::consts::PI * frame as f64 / len as f64;
+    0.5 - 0.5 * libm::cos(phase)
+}
+
+/// Output frames for effective `args` on `fx`.
 #[must_use]
 pub fn out_frames(fx: &Fixture, args: &ApplyArgs) -> usize {
     fx.frames - usize::try_from(args.trim_samples).expect("small trims")

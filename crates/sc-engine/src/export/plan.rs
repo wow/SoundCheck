@@ -10,10 +10,13 @@
 //!   two decimals): the tempo the tags and the XML carry, so a DJ app that lays its grid from
 //!   the exported bar line at that tempo meets bar 1). Let `B` be the first bar line at or after the start. When
 //!   `B` lies before the lead, the file already starts on a bar line and nothing is cut (no
-//!   silence is ever added). Otherwise `floor(B - lead)` frames are cut, so `B` lands at the lead
-//!   or less than one sample after it (never before); when that would remove more than the
-//!   bar's last beat (the pulses of its last group), nothing is cut, because removing more
-//!   would remove music. Library mode never cuts.
+//!   silence is ever added). Otherwise `floor(B - lead)` frames are asked to be cut, so `B`
+//!   would land at the lead or less than one sample after it (never before); the renderer then
+//!   moves the cut up to 1 ms earlier to the quietest frame (never later) and fades the first
+//!   2 ms in, so `B` lands between the lead and 1 ms (plus that sample) after it, by the cut
+//!   its report gives. When the cut would remove more than the bar's last beat (the pulses of
+//!   its last group), nothing is cut, because removing more would remove music. Library mode
+//!   never cuts.
 //! - **Tags** (by neutral name, only into a tag the file has): `BPM` at the meter's unit with
 //!   two decimals when the tempo tag is on; Replay Gain 2.0 track gain `-18 - (I + g)` dB and
 //!   track peak `10^((TP + g) / 20)` when a gain is written; the `SOUNDCHECK` record always.

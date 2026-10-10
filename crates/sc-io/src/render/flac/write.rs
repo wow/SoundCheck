@@ -174,6 +174,14 @@ fn write_frames<W: Write>(src: &mut File, w: &mut W, job: &Job<'_>) -> Result<(E
         target.gain_db,
         target.seed,
     )?;
+    let fade = super::super::audio::head_fade(
+        target.trim_frames,
+        info.sample_rate_hz,
+        u16::from(info.channels),
+    )?;
+    if let Some(fade) = fade {
+        quant.set_fade_in(fade);
+    }
     let mut flac_encoder = FrameEncoder::new(
         info.sample_rate_hz,
         u16::from(info.channels),

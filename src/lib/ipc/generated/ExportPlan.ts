@@ -13,11 +13,13 @@ export type ExportPlan = {
  */
 gainDb: number, 
 /**
- * Frames removed from the start.
+ * Frames to cut from the start, as asked of the renderer, which makes the cut up to 1 ms
+ * earlier at the quietest frame and reports the cut it made.
  */
 trimFrames: number, 
 /**
- * Frames the output must have: the source's minus the trim (Library: the source's).
+ * Frames the output must have: the source's minus the trim (Library: the source's). A cut
+ * the renderer makes earlier leaves as many frames more as it moved.
  */
 expectFrames: number, 
 /**

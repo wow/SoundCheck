@@ -34,6 +34,13 @@ pub fn check_output(
                 applied.tags_added
             ));
         }
+        // `args` are effective: their trim is the cut a correct writer makes.
+        if applied.trim_frames != args.trim_samples {
+            return Err(format!(
+                "reported trim_frames {}, the cut made is {}",
+                applied.trim_frames, args.trim_samples
+            ));
+        }
         if fx.is_iff() {
             check_iff_header(fx, &parsed, args)?;
             check_pcm(fx, out, args).map(drop)

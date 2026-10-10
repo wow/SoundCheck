@@ -6,7 +6,7 @@ SoundCheck is a free, open-source desktop app for DJs and producers. Drop a fold
 
 > **Status: in development, no usable release yet.** What works today, from source:
 > - **The app** analyses a dropped library (loudness, BPM, meter and bar 1, with a Needs-review queue) and opens any track in a grid view to inspect and fix its grid while a click plays along, with live IN/OUT meters, an original/processed A/B and a volume control. It does not write files yet.
-> - **`sc-cli apply`** already changes WAV, AIFF and FLAC files: gain and an optional head trim, every other chunk, block and tag carried byte for byte, verified, with a backup in `~/Music/SoundCheck Backups` and `sc-cli undo`.
+> - **`sc-cli apply`** already changes WAV, AIFF and FLAC files: gain and an optional head trim (snapped back up to 1 ms to the quietest frame and faded in over 2 ms), every other chunk, block and tag carried byte for byte, verified, with a backup in `~/Music/SoundCheck Backups` and `sc-cli undo`.
 > - **`sc-cli plan --batch-mode prepare|library`** previews what an export will do to each file: the gain, the head cut (`Cut 0.21 s`, `Starts on bar 1`, `Starts on a bar line (bar 1 at 8.00 s)`, or `Not cut: bar 1 1.00 s in`), the tags, or why a file is left to the rekordbox XML (MP3/AAC for now) or skipped.
 >
 > Exporting from the app, the rekordbox XML and MP3 output come next. The first pre-release, `v0.1.0-alpha.1`, follows once exported files pass rekordbox 7's own analysis; `v0.1.0` is the first release for everyone. Watch the releases page or the changelog.
