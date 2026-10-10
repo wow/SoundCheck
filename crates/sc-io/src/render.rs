@@ -7,7 +7,8 @@
 //! - **Head cut** ([`RenderRequest::trim_frames`]): moved earlier by up to 1 ms to the quietest
 //!   frame, never later, and the first 2 ms after it faded in (see [`head`]); every position
 //!   shift below uses the cut actually made, which [`RenderReport::trim_frames`] reports next to
-//!   the requested one.
+//!   the requested one. A cut already snapped by [`snap_head_cut`] (flagged by
+//!   [`RenderRequest::trim_snapped_from`]) is made exactly, with the same fade.
 //! - **Container**: WAV and RF64 (EBU Tech 3306) become `RIFF`/`WAVE`; AIFF and AIFF-C become
 //!   `FORM`/`AIFF` (AIFF 1.3). The container size is recomputed; chunks a stale size left
 //!   outside the container are carried inside it.
@@ -61,12 +62,14 @@ mod flac;
 pub mod head;
 mod layout;
 pub mod patch;
+mod snap;
 mod tag;
 
 pub(crate) use audio::check_cancel;
 pub use flac::apply_flac;
 pub(crate) use flac::{FlacCheck, render_flac_unverified};
 pub use head::{HEAD_FADE_MS, HEAD_SNAP_MAX_MS, head_fade_frames, head_snap_frames};
+pub use snap::snap_head_cut;
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
@@ -251,7 +254,10 @@ pub fn apply_iff(
     let header = iff::read_header(&mut src, input)?;
     let (table, format) = (&header.table, &header.format);
     let mut target = target(input, table, format, req, tag_edits)?;
-    target.trim_frames = audio::snapped_trim(&mut src, input, format, req.trim_frames, cancel)?;
+    (target.trim_frames, target.trim_requested_frames) =
+        snap::head_cut(req, format.sample_rate, || {
+            audio::snapped_trim(&mut src, input, format, req.trim_frames, cancel)
+        })?;
     target.frames_out = format.frames - target.trim_frames;
     let layout = layout::plan(&mut src, input, table, format, &target)?;
     tracing::debug!(
@@ -309,7 +315,7 @@ pub fn apply_iff(
         output = %output.display(),
         gain_db = req.gain_db,
         trim_frames = target.trim_frames,
-        trim_requested_frames = req.trim_frames,
+        trim_requested_frames = target.trim_requested_frames,
         bits = target.bits,
         frames = target.frames_out,
         bytes = layout.total_bytes,
@@ -329,7 +335,7 @@ pub fn apply_iff(
         frames_in: format.frames,
         frames_out: target.frames_out,
         trim_frames: target.trim_frames,
-        trim_requested_frames: req.trim_frames,
+        trim_requested_frames: target.trim_requested_frames,
         sample_rate_hz: format.sample_rate,
         channels: format.channels,
         bits_out: target.bits,
@@ -427,14 +433,7 @@ fn target(
         });
     }
     check_rate(path, format.sample_rate)?;
-    if req.trim_frames >= format.frames {
-        return Err(Error::InvalidArgument(format!(
-            "{}: a head trim of {} samples leaves no audio ({} frames)",
-            path.display(),
-            req.trim_frames,
-            format.frames
-        )));
-    }
+    snap::check_leaves_audio(path, req.trim_frames, format.frames)?;
     let float_source = format.encoding.is_float();
     let bits = output_bits(req, float_source, format.valid_bits);
     let bext_update = match (req.loudness, req.gain_db != 0.0) {

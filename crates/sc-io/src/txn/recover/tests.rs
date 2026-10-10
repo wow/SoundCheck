@@ -304,8 +304,8 @@ fn record() -> crate::txn::sidecar::Record {
         render: RenderSummary {
             frames_in: 7,
             frames_out: 7,
-            trim_frames: 0,
-            trim_requested_frames: 0,
+            trim_frames: Some(0),
+            trim_requested_frames: Some(0),
             sample_rate_hz: 44_100,
             channels: 2,
             bits_out: 16,

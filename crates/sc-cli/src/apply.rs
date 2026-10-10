@@ -337,8 +337,8 @@ fn applied_doc<'a>(
         render: RenderDoc {
             frames_in: summary.frames_in,
             frames_out: summary.frames_out,
-            trim_frames: summary.trim_frames,
-            trim_requested_frames: summary.trim_requested_frames,
+            trim_frames: summary.trim_frames(),
+            trim_requested_frames: summary.trim_requested_frames(),
             sample_rate_hz: summary.sample_rate_hz,
             channels: summary.channels,
             bits_out: summary.bits_out,
@@ -430,6 +430,7 @@ pub fn run_apply(args: ApplyArgs) -> anyhow::Result<usize> {
     let req = ApplyRequest {
         gain_db: args.gain_db,
         trim_frames: args.trim_samples,
+        trim_snapped_from: None,
         bits: args.bits,
         loudness: None,
         tags: args.tags,

@@ -71,6 +71,14 @@ fn outcomes_serialise_as_tagged_unions() {
         serde_json::to_string(&cut).unwrap(),
         r#"{"type":"cut","frames":13009,"seconds":0.295}"#
     );
+    let review = Cut::NeedsReview {
+        bar1: SampleIndex(44_100),
+        bar1_s: Seconds(1.0),
+    };
+    assert_eq!(
+        serde_json::to_string(&review).unwrap(),
+        r#"{"type":"needsReview","bar1":44100,"bar1S":1.0}"#
+    );
     let settings = serde_json::to_string(&ExportSettings::default()).unwrap();
     assert_eq!(
         settings,

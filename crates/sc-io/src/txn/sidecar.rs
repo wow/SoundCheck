@@ -45,13 +45,15 @@ pub struct RenderSummary {
     pub frames_in: u64,
     /// Frames written.
     pub frames_out: u64,
-    /// Frames cut from the start (the requested cut snapped back by up to 1 ms); absent in
-    /// records written before it was recorded, read as 0.
+    /// Frames cut from the start (the requested cut snapped back by up to 1 ms). Always
+    /// written; `None` only in records written before it was recorded, whose cut
+    /// [`Self::trim_frames`] derives from the frame counts.
     #[serde(default)]
-    pub trim_frames: u64,
-    /// Frames the request asked to cut; absent in older records, read as 0.
+    pub trim_frames: Option<u64>,
+    /// Frames the request asked to cut. Always written; `None` only in records written before
+    /// cuts were snapped, which cut exactly what was asked ([`Self::trim_requested_frames`]).
     #[serde(default)]
-    pub trim_requested_frames: u64,
+    pub trim_requested_frames: Option<u64>,
     /// Sample rate, Hz.
     pub sample_rate_hz: u32,
     /// Channels.
@@ -83,8 +85,8 @@ impl RenderSummary {
         Self {
             frames_in: report.frames_in,
             frames_out: report.frames_out,
-            trim_frames: report.trim_frames,
-            trim_requested_frames: report.trim_requested_frames,
+            trim_frames: Some(report.trim_frames),
+            trim_requested_frames: Some(report.trim_requested_frames),
             sample_rate_hz: report.sample_rate_hz,
             channels: report.channels,
             bits_out: report.bits_out,
@@ -103,6 +105,22 @@ impl RenderSummary {
             tags_not_added: report.tags_not_added.as_ref().map(ToString::to_string),
             stale_loudness_tags: report.stale_loudness_tags.clone(),
         }
+    }
+
+    /// Frames cut from the start: as recorded, or, in a record from before the cut was
+    /// recorded, `frames_in - frames_out` (a render changes the length by its cut alone).
+    #[must_use]
+    pub fn trim_frames(&self) -> u64 {
+        self.trim_frames
+            .unwrap_or_else(|| self.frames_in.saturating_sub(self.frames_out))
+    }
+
+    /// Frames the request asked to cut: as recorded, or, in a record from before cuts were
+    /// snapped, the cut made ([`Self::trim_frames`]).
+    #[must_use]
+    pub fn trim_requested_frames(&self) -> u64 {
+        self.trim_requested_frames
+            .unwrap_or_else(|| self.trim_frames())
     }
 }
 

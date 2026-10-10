@@ -14,7 +14,7 @@ use sc_core::plan::{
 };
 use sc_engine::{
     BatchSettings, EditState, ExportInput, ExportSource, REPORT_SCHEMA, apply_saved, decide,
-    plan_export,
+    plan_export_snapped,
 };
 use sc_io::edits::EditStore;
 use serde::Serialize;
@@ -130,6 +130,8 @@ pub fn plan_all(
                 let plan = decide(&report.record, codec, decide_settings, edit.confirmed);
                 counts.add(&plan);
                 let export = export.map(|s| {
+                    // Read now, not when the file was added: a tag that failed to read then
+                    // (Serato data not ruled out) is read again.
                     let source = ExportSource::read(file);
                     let input = ExportInput {
                         record: &report.record,
@@ -137,15 +139,23 @@ pub fn plan_all(
                         decide: decide_settings,
                         source: &source,
                     };
-                    (plan_export(&input, s), s.batch_mode)
+                    plan_export_snapped(file, &input, s).map(|outcome| (outcome, s.batch_mode))
                 });
-                let printed = Printed {
-                    record: &report.record,
-                    plan: &plan,
-                    edit,
-                    export: export.as_ref(),
-                };
-                print_plan(file, &printed, decide_settings, json)
+                match export.transpose() {
+                    Ok(export) => {
+                        let printed = Printed {
+                            record: &report.record,
+                            plan: &plan,
+                            edit,
+                            export: export.as_ref(),
+                        };
+                        print_plan(file, &printed, decide_settings, json)
+                    }
+                    Err(err) => {
+                        failed += 1;
+                        print_error(file, err, json)
+                    }
+                }
             }
             Err(err) => {
                 failed += 1;

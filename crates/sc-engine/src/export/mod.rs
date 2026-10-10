@@ -1,8 +1,14 @@
 //! Exporting a batch. [`plan_export`] says what exporting does to one analysed file (write it
 //! with a gain, a head cut and tags; leave it to the rekordbox XML; or skip it, and why);
-//! [`ExportSource`] holds what the planner needs to know about the source file.
+//! [`plan_snapped_cut`] plans every value that depends on the head cut from the cut the
+//! renderer makes, and [`plan_export_snapped`] does both for a file on disk; [`ExportSource`]
+//! holds what the planner needs to know about the source file.
 
 mod plan;
+mod snap;
 mod source;
 
-pub use plan::{ExportInput, ExportSource, SeratoPresence, plan_export, replaygain};
+pub use plan::{
+    ExportInput, ExportSource, SeratoPresence, plan_export, plan_snapped_cut, replaygain,
+};
+pub use snap::plan_export_snapped;

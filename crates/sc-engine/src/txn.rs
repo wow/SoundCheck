@@ -27,8 +27,13 @@ pub struct ApplyRequest {
     /// Gain applied to every sample, dB (finite; 0 keeps the samples bit for bit).
     pub gain_db: f64,
     /// Frames to cut from the start; the render makes the cut up to 1 ms earlier at the
-    /// quietest frame and fades it in over 2 ms (the cut made is in the report's render).
+    /// quietest frame and fades it in over 2 ms (the cut made is in the report's render),
+    /// unless [`Self::trim_snapped_from`] says it already was.
     pub trim_frames: u64,
+    /// Set when `trim_frames` is already the snapped cut (`sc_io::render::snap_head_cut`) of
+    /// this requested cut: the render cuts exactly `trim_frames` (see
+    /// [`RenderRequest::trim_snapped_from`]).
+    pub trim_snapped_from: Option<u64>,
     /// Output bits per sample, 16 or 24; `None` keeps the source depth.
     pub bits: Option<u8>,
     /// Loudness written into an existing `bext` chunk.
@@ -98,6 +103,7 @@ pub fn apply_file(
     let render = RenderRequest {
         gain_db: req.gain_db,
         trim_frames: req.trim_frames,
+        trim_snapped_from: req.trim_snapped_from,
         bits: req.bits,
         loudness: req.loudness,
         tag_edits,

@@ -147,18 +147,72 @@ fn prepare_not_cut_when_first_bar_line_more_than_a_beat_in() {
 #[test]
 fn odd_meter_bar_length() {
     // 9/8 counted in eighths at 300 per minute, 48 kHz: a pulse is 9,600 samples, the bar
-    // 86,400, and the last beat (the group of three) 28,800.
+    // 86,400, and the last beat (the group of three) 28,800. 300 lies outside the DJ app's BPM
+    // range, so the row needs review: the grid is confirmed here, else nothing would be cut.
     let mut r = record(48_000, 240 + 86_400 + 28_800);
     let grid = r.grid.as_mut().expect("grid");
     grid.meter = Meter::new(BeatUnit::Eighth, &[2, 2, 2, 3]);
     grid.bpm = Bpm(300.0);
     let bars = Bars::of(grid, 48_000).expect("bars");
     assert!((bars.bar - 86_400.0).abs() < 1e-9 && (bars.last_beat - 28_800.0).abs() < 1e-9);
-    let plan = written(plan_with(&r, &wav(), &prepare()));
+    let plan = written(plan_decided(&r, &wav(), &prepare(), true));
     assert_eq!(plan.trim_frames, 28_800);
     assert_eq!(tag(&plan, "BPM"), Some("300.00"));
     // With the long group first, the last beat is two pulses: the same cut is too long.
     r.grid.as_mut().expect("grid").meter = Meter::new(BeatUnit::Eighth, &[3, 2, 2, 2]);
-    let plan = written(plan_with(&r, &wav(), &prepare()));
+    let plan = written(plan_decided(&r, &wav(), &prepare(), true));
     assert!(matches!(plan.cut, Cut::NotCut { .. }), "{:?}", plan.cut);
+}
+
+#[test]
+fn a_grid_that_needs_review_is_not_cut_unless_confirmed() {
+    // The grid that is cut at 13,009 frames above, with amber confidence: the row needs review.
+    let mut r = record(44_100, 101_430);
+    r.grid.as_mut().expect("grid").confidence = Confidence::Amber;
+    let decide_settings = DecideSettings::dj();
+    let source = wav();
+    let plan_of = |confirmed: bool| {
+        let plan = decide(&r, source.codec, &decide_settings, confirmed);
+        let input = ExportInput {
+            record: &r,
+            plan: &plan,
+            decide: &decide_settings,
+            source: &source,
+        };
+        (plan.status, written(plan_export(&input, &prepare())))
+    };
+    let (status, plan) = plan_of(false);
+    assert_eq!(status, JobStage::NeedsReview);
+    assert_eq!(
+        plan.cut,
+        Cut::NeedsReview {
+            bar1: SampleIndex(101_430),
+            bar1_s: SampleIndex(101_430).to_seconds(44_100),
+        }
+    );
+    assert_eq!((plan.trim_frames, plan.expect_frames), (0, r.frames));
+    // Gain and tags are still written; the record says nothing was cut.
+    assert!((plan.gain_db + 2.0).abs() < 1e-12, "{}", plan.gain_db);
+    let rec = tag(&plan, "SOUNDCHECK").expect("record");
+    assert!(
+        rec.contains(";trim=0;rate=44100;bpm=120.00;bar1=13230"),
+        "{rec}"
+    );
+    // Confirmed by ear: the same grid is cut.
+    let (status, plan) = plan_of(true);
+    assert_eq!(status, JobStage::Analysed);
+    assert_eq!(plan.cut, cut(13_009, 44_100));
+    // Any reason to review counts (here a BPM tag that disagrees), and Library and grid only
+    // keep their own wording.
+    let mut tagged = record(44_100, 101_430);
+    tagged.tags.bpm = Some(Bpm(126.0));
+    assert!(matches!(
+        written(plan_with(&tagged, &wav(), &prepare())).cut,
+        Cut::NeedsReview { .. }
+    ));
+    let library = ExportSettings::new(BatchMode::Library);
+    assert_eq!(
+        written(plan_with(&tagged, &wav(), &library)).cut,
+        Cut::Library
+    );
 }
