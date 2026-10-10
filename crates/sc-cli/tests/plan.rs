@@ -256,24 +256,23 @@ fn export_flags_need_a_batch_mode_and_a_lead_in_range() {
 }
 
 #[test]
-fn mp3_is_left_to_the_xml() {
+fn mp3_without_a_grid_is_not_left_to_the_xml() {
+    // Loudness only (no grid): only the XML could carry an MP3, and it would carry nothing, so
+    // the file is skipped with or without the XML. With a grid it is left to the XML (the
+    // planner's unit tests cover that).
     let dir = tempfile::tempdir().unwrap();
     let mp3 = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/audio/lame-2s.mp3");
-    let (ok, text) = plan(
-        dir.path(),
-        &[mp3.to_str().unwrap(), "--batch-mode", "library"],
-    );
-    assert!(ok, "{text}");
-    assert!(
-        text.contains("  Export (library): XML only: MP3 (file writes arrive later)"),
-        "{text}"
-    );
-    // Without the XML nothing would carry it.
-    let (ok, text) = plan(
-        dir.path(),
-        &[mp3.to_str().unwrap(), "--batch-mode", "library", "--no-xml"],
-    );
-    assert!(ok, "{text}");
-    assert!(text.contains("  Export (library): skipped\n"), "{text}");
-    assert!(text.contains("and the XML is off"), "{text}");
+    for extra in [None, Some("--no-xml")] {
+        let mut args = vec![mp3.to_str().unwrap(), "--batch-mode", "library"];
+        args.extend(extra);
+        let (ok, text) = plan(dir.path(), &args);
+        assert!(ok, "{text}");
+        assert!(text.contains("  Export (library): skipped\n"), "{text}");
+        assert!(
+            text.contains(
+                "MP3 files are carried by the rekordbox XML alone, and no beats were found"
+            ),
+            "{text}"
+        );
+    }
 }
