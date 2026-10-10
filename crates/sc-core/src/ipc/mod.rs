@@ -104,9 +104,15 @@ pub struct FileInfo {
     pub serato: bool,
     /// The kinds of Serato data found, each once, in [`SeratoTag`] order.
     pub serato_tags: Vec<SeratoTag>,
+    /// The file or one of its tags could not be read, so Serato data cannot be ruled out; an
+    /// in-place cut treats the file as holding it.
+    pub serato_unknown: bool,
     /// What SoundCheck recorded when it last exported the file (its `SOUNDCHECK` tag), when the
     /// tag is present and readable.
     pub soundcheck: Option<SoundcheckRecord>,
+    /// Why a `SOUNDCHECK` tag that is present could not be read (a later format version, a
+    /// damaged value): the file was processed before, but what was done is not known.
+    pub soundcheck_unreadable: Option<String>,
 }
 
 /// A kind of Serato data in a file's tags: ID3 `GEOB` objects described `Serato <name>`

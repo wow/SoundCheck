@@ -9,7 +9,7 @@ use sc_core::ipc::FileInfo;
 use sc_core::plan::Codec;
 use sc_io::iff::{self, ChunkTable};
 
-use super::ExportSource;
+use super::{ExportSource, SeratoPresence};
 
 impl ExportSource {
     /// What the headers and tags in `info` say, Serato data included; `has_tag` stays unset.
@@ -19,7 +19,13 @@ impl ExportSource {
             codec: info.codec,
             bits_per_sample: info.bits_per_sample,
             float: info.float,
-            serato: info.serato,
+            serato: if info.serato {
+                SeratoPresence::Present
+            } else if info.serato_unknown {
+                SeratoPresence::Unknown
+            } else {
+                SeratoPresence::Absent
+            },
             ..Self::default()
         }
     }

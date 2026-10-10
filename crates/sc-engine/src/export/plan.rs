@@ -46,11 +46,24 @@ pub struct ExportSource {
     /// The file holds the one tag SoundCheck edits (WAV/AIFF: exactly one ID3 chunk); tags are
     /// never created. Only grid-only exports depend on it.
     pub has_tag: bool,
-    /// The file holds Serato data (its cue points are positions in the audio), as
+    /// Whether the file holds Serato data (its cue points are positions in the audio), as
     /// [`sc_io::probe`] detects it.
-    pub serato: bool,
+    pub serato: SeratoPresence,
     /// BLAKE3 of the source file, when known; the `SOUNDCHECK` record names it.
     pub blake3: Option<[u8; 32]>,
+}
+
+/// Whether a file holds Serato data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SeratoPresence {
+    /// None was found and every tag was read.
+    #[default]
+    Absent,
+    /// Serato data was found.
+    Present,
+    /// The file or one of its tags could not be read, so Serato data cannot be ruled out: a cut
+    /// in place is refused as if it held some.
+    Unknown,
 }
 
 /// One file to plan.
@@ -73,7 +86,8 @@ pub struct ExportInput<'a> {
 /// players refuse, more than two channels and silence are skipped; grid only needs a grid, and
 /// leaves FLAC, sources it would requantise and files without a tag to the XML; with the XML
 /// off, what only the XML could carry is skipped; a Prepare cut in place of a file with Serato
-/// data is skipped (a cut copy gets a notice); everything else is written.
+/// data, or whose tags could not be read to rule it out, is skipped (a cut copy of a file with
+/// Serato data gets a notice); everything else is written.
 #[must_use]
 pub fn plan_export(input: &ExportInput<'_>, settings: &ExportSettings) -> ExportOutcome {
     let ExportInput { record, source, .. } = *input;
@@ -105,11 +119,19 @@ pub fn plan_export(input: &ExportInput<'_>, settings: &ExportSettings) -> Export
     let (cut, trim_frames) = head(record, settings);
     let cut_s = SampleIndex(trim_frames).to_seconds(sample_rate_hz);
     let mut notices = Vec::new();
-    if source.serato && trim_frames > 0 {
-        if settings.place == Place::InPlace {
-            return skip(ExportSkip::SeratoInPlaceCut { cut_s });
+    if trim_frames > 0 {
+        match (source.serato, settings.place) {
+            (SeratoPresence::Present, Place::InPlace) => {
+                return skip(ExportSkip::SeratoInPlaceCut { cut_s });
+            }
+            (SeratoPresence::Present, Place::Folder) => {
+                notices.push(ExportNotice::SeratoCuesShifted { cut_s });
+            }
+            (SeratoPresence::Unknown, Place::InPlace) => {
+                return skip(ExportSkip::SeratoUnknownInPlaceCut { cut_s });
+            }
+            (SeratoPresence::Unknown, Place::Folder) | (SeratoPresence::Absent, _) => {}
         }
-        notices.push(ExportNotice::SeratoCuesShifted { cut_s });
     }
     let gain_db = if settings.grid_only {
         0.0

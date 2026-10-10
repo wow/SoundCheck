@@ -286,6 +286,12 @@ pub enum ExportSkip {
         /// The cut that was planned, seconds.
         cut_s: Seconds,
     },
+    /// Prepare in place would cut a file whose tags could not be read, so Serato data (whose
+    /// cue points would move) cannot be ruled out. Export to a folder or use Library mode.
+    SeratoUnknownInPlaceCut {
+        /// The cut that was planned, seconds.
+        cut_s: Seconds,
+    },
     /// The sample rate is not one DJ players accept (44.1 or 48 kHz); converting it comes later.
     NotDjSafeRate {
         /// The file's sample rate, Hz.

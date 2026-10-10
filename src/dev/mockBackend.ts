@@ -90,7 +90,9 @@ function fileEntry(s: Synthetic, folder: string, fileId: number): FileEntry {
       djUnsafe: s.float ? 'float' : null,
       serato: false,
       seratoTags: [],
+      seratoUnknown: false,
       soundcheck: null,
+      soundcheckUnreadable: null,
     },
   };
 }

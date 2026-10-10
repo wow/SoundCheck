@@ -62,7 +62,8 @@ fn serato_tags_in_the_file_block_an_in_place_cut() {
         "serato.wav",
         &[geob("Serato Markers2"), geob("Serato BeatGrid")],
     );
-    assert!(serato.serato && serato.has_tag);
+    assert_eq!(serato.serato, SeratoPresence::Present);
+    assert!(serato.has_tag);
     assert_eq!(serato.bits_per_sample, Some(24));
     // Bar 1 at 2.300 s: Prepare would cut 13,009 frames.
     let r = record(44_100, 101_430);
@@ -91,7 +92,8 @@ fn serato_tags_in_the_file_block_an_in_place_cut() {
 fn other_objects_are_not_serato_data() {
     let dir = tempfile::tempdir().expect("temp dir");
     let traktor = read(dir.path(), "traktor.wav", &[geob("Traktor4")]);
-    assert!(!traktor.serato && traktor.has_tag);
+    assert_eq!(traktor.serato, SeratoPresence::Absent);
+    assert!(traktor.has_tag);
     let r = record(44_100, 101_430);
     let cut = written(plan_with(&r, &traktor, &prepare()));
     assert_eq!((cut.trim_frames, cut.notices.len()), (13_009, 0));
@@ -108,7 +110,7 @@ fn the_probe_answer_carries_serato_data() {
         ..FileInfo::default()
     };
     let source = ExportSource::from_info(&info);
-    assert!(source.serato);
+    assert_eq!(source.serato, SeratoPresence::Present);
     let r = record(44_100, 101_430);
     assert!(matches!(
         plan_with(&r, &source, &prepare()),
@@ -116,4 +118,38 @@ fn the_probe_answer_carries_serato_data() {
             reason: ExportSkip::SeratoInPlaceCut { .. }
         }
     ));
+}
+
+#[test]
+fn tags_that_could_not_be_read_block_an_in_place_cut() {
+    let info = FileInfo {
+        codec: Codec::Wav,
+        bits_per_sample: Some(24),
+        serato_unknown: true,
+        ..FileInfo::default()
+    };
+    let source = ExportSource::from_info(&info);
+    assert_eq!(source.serato, SeratoPresence::Unknown);
+    let r = record(44_100, 101_430);
+    let cut_s = SampleIndex(13_009).to_seconds(44_100);
+    assert_eq!(
+        plan_with(&r, &source, &prepare()),
+        ExportOutcome::Skip {
+            reason: ExportSkip::SeratoUnknownInPlaceCut { cut_s }
+        }
+    );
+    // A copy leaves the original as it is; Library mode and a file already on a bar line move
+    // nothing.
+    let folder = ExportSettings {
+        place: Place::Folder,
+        ..prepare()
+    };
+    assert_eq!(written(plan_with(&r, &source, &folder)).trim_frames, 13_009);
+    let library = ExportSettings::new(BatchMode::Library);
+    assert!(matches!(
+        plan_with(&r, &source, &library),
+        ExportOutcome::Write { .. }
+    ));
+    let on_bar = written(plan_with(&record(48_000, 240), &source, &prepare()));
+    assert_eq!(on_bar.trim_frames, 0);
 }

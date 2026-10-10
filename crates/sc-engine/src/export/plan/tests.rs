@@ -278,7 +278,7 @@ fn mp3_is_xml_only() {
 #[test]
 fn serato_blocks_in_place_cut() {
     let serato = ExportSource {
-        serato: true,
+        serato: SeratoPresence::Present,
         ..wav()
     };
     let r = record(44_100, 101_430);

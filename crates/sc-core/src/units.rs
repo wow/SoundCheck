@@ -80,13 +80,15 @@ impl DbFs {
 }
 
 impl Bpm {
-    /// The tempo as SoundCheck writes it: rounded to two decimals (halves away from zero). Every
-    /// place that carries a tempo out of the app uses this value, so they agree with each other
-    /// and with the bar lines laid from it: the tempo tags (`TBPM`/`TXXX:BPM`, Vorbis `BPM`),
-    /// the `SOUNDCHECK` record, the rekordbox XML `Bpm`, the sidecar, the export planner's bar
-    /// lines and the check of an exported file's grid. A fitted 127.996 BPM is written as
-    /// 128.00; laying bars at the unrounded value instead would put them up to 0.005 BPM apart
-    /// from what a DJ app reads (about 14 ms over six minutes at 128 BPM).
+    /// The tempo as SoundCheck writes it: the `f64` value rounded to two decimals,
+    /// `(bpm * 100).round() / 100`. The rounding acts on the binary value, so a decimal half that
+    /// is stored just below it rounds down (1.005 is stored as 1.00499..., giving 1.00) and one
+    /// stored exactly rounds away from zero (174.125 gives 174.13). Today the tempo tags
+    /// (`TBPM`/`TXXX:BPM`, Vorbis `BPM`), the `SOUNDCHECK` record and the export planner's bar
+    /// lines use it; the rekordbox XML `Bpm`, the sidecar's exported grid and the check of an
+    /// exported file's grid must use it too, so every artefact carries one tempo. A fitted
+    /// 127.996 BPM is written as 128.00; bars laid at the unrounded value would sit up to
+    /// 0.005 BPM apart from what a DJ app reads (about 14 ms over six minutes at 128 BPM).
     #[must_use]
     pub fn written(self) -> Self {
         Self((self.0 * 100.0).round() / 100.0)

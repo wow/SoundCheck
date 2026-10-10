@@ -26,7 +26,9 @@ pub fn probe(path: &Path) -> FileInfo {
     let tags = crate::tags::scan(path, info.codec);
     info.serato = !tags.serato.is_empty();
     info.serato_tags = tags.serato;
+    info.serato_unknown = tags.serato_unknown;
     info.soundcheck = tags.soundcheck;
+    info.soundcheck_unreadable = tags.soundcheck_unreadable;
     info
 }
 

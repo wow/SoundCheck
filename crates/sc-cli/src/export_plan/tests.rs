@@ -89,6 +89,9 @@ fn every_skip_has_three_lines() {
         ExportSkip::SeratoInPlaceCut {
             cut_s: Seconds(0.29),
         },
+        ExportSkip::SeratoUnknownInPlaceCut {
+            cut_s: Seconds(0.29),
+        },
         ExportSkip::NotDjSafeRate {
             sample_rate_hz: 96_000,
         },
@@ -113,6 +116,20 @@ fn every_skip_has_three_lines() {
             "{t}"
         );
     }
+}
+
+#[test]
+fn unreadable_tags_say_serato_could_not_be_ruled_out() {
+    let t = text(&ExportOutcome::Skip {
+        reason: ExportSkip::SeratoUnknownInPlaceCut {
+            cut_s: Seconds(0.29),
+        },
+    });
+    assert!(
+        t.contains("why: its tags could not be read to rule out Serato data, and cutting 0.29 s"),
+        "{t}"
+    );
+    assert!(t.contains("what to do: export it to a folder"), "{t}");
 }
 
 #[test]

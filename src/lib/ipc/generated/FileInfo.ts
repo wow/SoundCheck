@@ -64,7 +64,17 @@ serato: boolean,
  */
 seratoTags: Array<SeratoTag>, 
 /**
+ * The file or one of its tags could not be read, so Serato data cannot be ruled out; an
+ * in-place cut treats the file as holding it.
+ */
+seratoUnknown: boolean, 
+/**
  * What SoundCheck recorded when it last exported the file (its `SOUNDCHECK` tag), when the
  * tag is present and readable.
  */
-soundcheck: SoundcheckRecord | null, };
+soundcheck: SoundcheckRecord | null, 
+/**
+ * Why a `SOUNDCHECK` tag that is present could not be read (a later format version, a
+ * damaged value): the file was processed before, but what was done is not known.
+ */
+soundcheckUnreadable: string | null, };

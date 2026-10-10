@@ -19,7 +19,9 @@ export function entry(fileId: number, title = `Track ${fileId}`): FileEntry {
       djUnsafe: null,
       serato: false,
       seratoTags: [],
+      seratoUnknown: false,
       soundcheck: null,
+      soundcheckUnreadable: null,
     },
   };
 }

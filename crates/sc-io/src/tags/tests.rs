@@ -12,6 +12,7 @@ use sc_core::{RenderRequest, TagEdit};
 
 use super::*;
 use crate::flac::test_build::{encode, file as flac_file, samples, vorbis};
+use crate::id3::MAX_TAG_BYTES;
 use crate::id3::test_build::{comm, frame, geob, tag, text, txxx};
 use crate::iff::test_build::{Form, comm as aiff_comm, fmt_pcm, ssnd};
 use crate::render::{apply_flac, apply_iff};
@@ -155,33 +156,136 @@ fn serato_vorbis_detected() {
 }
 
 #[test]
-fn files_without_serato_data_or_a_readable_record() {
+fn files_without_serato_data() {
     let dir = tempfile::tempdir().expect("temp dir");
     let plain = tag(
         4,
         0,
         &[],
-        &[
-            text(4, *b"TIT2", 0, "A"),
-            geob(4, "Traktor4", &[0]),
-            // A record of a later format is not read.
-            txxx(4, 0, "SOUNDCHECK", "v=2;app=9.0.0"),
-        ],
+        &[text(4, *b"TIT2", 0, "A"), geob(4, "Traktor4", &[0])],
         16,
     );
     let path = write(dir.path(), "plain.wav", &wav(&plain));
     assert_eq!(scan(&path, Codec::Wav), TagScan::default());
     let info = crate::probe(&path);
-    assert!(!info.serato && info.serato_tags.is_empty() && info.soundcheck.is_none());
+    assert!(!info.serato && !info.serato_unknown && info.serato_tags.is_empty());
+    assert!(info.soundcheck.is_none() && info.soundcheck_unreadable.is_none());
     let path = write(dir.path(), "plain.flac", &flac(&["TITLE=y"]));
     assert_eq!(scan(&path, Codec::Flac), TagScan::default());
-    // A file that is not what its codec says, or is missing, reads as nothing.
-    assert_eq!(scan(&path, Codec::Wav), TagScan::default());
-    assert_eq!(
-        scan(&dir.path().join("gone.wav"), Codec::Wav),
-        TagScan::default()
-    );
+    // Codecs that are never written are not read.
     assert_eq!(scan(&path, Codec::Aac), TagScan::default());
+}
+
+#[test]
+fn serato_is_not_ruled_out_when_the_file_or_a_tag_cannot_be_read() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let unknown = |path: &Path, codec| {
+        let found = scan(path, codec);
+        assert!(found.serato_unknown, "{}: {found:?}", path.display());
+        assert_eq!(found.serato, Vec::<SeratoTag>::new());
+    };
+    // Missing, or not the container its codec says.
+    unknown(&dir.path().join("gone.wav"), Codec::Wav);
+    let flac_path = write(dir.path(), "plain.flac", &flac(&["TITLE=y"]));
+    unknown(&flac_path, Codec::Wav);
+    unknown(&write(dir.path(), "x.flac", &wav(&[0; 16])), Codec::Flac);
+    // An ID3 chunk cut short by the end of the file is read as far as it goes: the tag no
+    // longer parses, and its bytes are searched for Serato's objects.
+    let mut cut_short = wav(&serato_tag(3));
+    cut_short.truncate(cut_short.len() - 40);
+    let short = scan(&write(dir.path(), "short.wav", &cut_short), Codec::Wav);
+    assert_eq!(short.serato.len(), 4, "{short:?}");
+    // An MP3 tag header whose size is not syncsafe, and one declaring more than the file.
+    unknown(
+        &write(
+            dir.path(),
+            "bad.mp3",
+            b"ID3\x03\x00\x00\x80\x00\x00\x00\xFF\xFB",
+        ),
+        Codec::Mp3,
+    );
+    unknown(
+        &write(
+            dir.path(),
+            "long.mp3",
+            b"ID3\x03\x00\x00\x00\x00\x10\x00\xFF\xFB",
+        ),
+        Codec::Mp3,
+    );
+    // The probe carries it to the row.
+    assert!(crate::probe(&dir.path().join("bad.mp3")).serato_unknown);
+}
+
+#[test]
+fn a_tag_over_the_index_limit_is_searched_in_windows() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let len = usize::try_from(MAX_TAG_BYTES).expect("16 MiB") + 100;
+    let mut big = vec![0_u8; len];
+    big[..3].copy_from_slice(b"ID3");
+    // Straddles the first 1 MiB window boundary of the chunk's payload.
+    let object = b"Serato Markers2\0";
+    let at = (1 << 20) - 6;
+    big[at..at + object.len()].copy_from_slice(object);
+    let path = write(dir.path(), "big.wav", &wav(&big));
+    let found = scan(&path, Codec::Wav);
+    assert_eq!(
+        (found.serato, found.serato_unknown),
+        (vec![SeratoTag::Markers], false)
+    );
+    big[at..at + object.len()].fill(0);
+    let path = write(dir.path(), "big-plain.aiff", &aiff(&big));
+    assert_eq!(scan(&path, Codec::Aiff), TagScan::default());
+}
+
+#[test]
+fn a_vorbis_comment_that_does_not_index_is_searched_for_serato_names() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (frames, info) = encode(&samples(5000, 1, 16, 7), 44_100, 1, 16);
+    let mut comment = vorbis("v", &["TITLE=x", "serato_markers_v2=AQE"]);
+    comment.extend_from_slice(b"junk");
+    let path = write(
+        dir.path(),
+        "junk.flac",
+        &flac_file(&[], &info, &[(4, comment)], &frames, &[]),
+    );
+    let found = scan(&path, Codec::Flac);
+    assert_eq!(
+        (found.serato, found.serato_unknown),
+        (vec![SeratoTag::Markers], false)
+    );
+    let mut plain = vorbis("v", &["TITLE=x"]);
+    plain.extend_from_slice(b"junk");
+    let path = write(
+        dir.path(),
+        "junk-plain.flac",
+        &flac_file(&[], &info, &[(4, plain)], &frames, &[]),
+    );
+    assert_eq!(scan(&path, Codec::Flac), TagScan::default());
+}
+
+#[test]
+fn an_unreadable_record_is_not_taken_for_none() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    for (name, value, why) in [
+        ("v2.wav", "v=2;app=9.0.0", "record version 2"),
+        (
+            "garbage.wav",
+            "processed, honest",
+            "is not a key=value pair",
+        ),
+    ] {
+        let t = tag(3, 0, &[], &[txxx(3, 0, "SOUNDCHECK", value)], 16);
+        let path = write(dir.path(), name, &wav(&t));
+        let found = scan(&path, Codec::Wav);
+        assert_eq!(found.soundcheck, None, "{name}");
+        let reason = found.soundcheck_unreadable.expect(name);
+        assert!(reason.contains(why), "{name}: {reason}");
+        let info = crate::probe(&path);
+        assert!(info.soundcheck.is_none() && info.soundcheck_unreadable.is_some());
+    }
+    let path = write(dir.path(), "v2.flac", &flac(&["SOUNDCHECK=v=2;app=9.0.0"]));
+    let found = scan(&path, Codec::Flac);
+    assert!(found.soundcheck.is_none() && found.soundcheck_unreadable.is_some());
 }
 
 #[test]

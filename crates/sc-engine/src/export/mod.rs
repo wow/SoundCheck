@@ -5,4 +5,4 @@
 mod plan;
 mod source;
 
-pub use plan::{ExportInput, ExportSource, plan_export, replaygain};
+pub use plan::{ExportInput, ExportSource, SeratoPresence, plan_export, replaygain};

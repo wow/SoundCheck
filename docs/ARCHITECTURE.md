@@ -23,8 +23,10 @@ ADD (on drop): collect_audio_files (folders walked in natural order; dot-files (
   NFC duplicates dropped) -> probe in parallel (lofty headers and tags, cover art not read: codec incl. ALAC vs AAC, rate, depth,
   float WAV, bitrate, duration, title/artist/album, first DJ-unsafe reason; then `sc_io::tags::scan` with our own parsers: WAV/AIFF ID3 chunks,
   the MP3 leading ID3v2 tag and FLAC Vorbis comments -> Serato data (`GEOB` `Serato <name>` / `SERATO_*`, as `SeratoTag` kinds; a tag the
-  ID3 index refuses is still searched for Serato's object descriptions), the `SOUNDCHECK` record parsed back (`SoundcheckRecord::parse`),
-  and the loudness items present) -> FileEntry rows before any decoding
+  ID3 index refuses or that is over 16 MiB (in 1 MiB windows) is still searched for Serato's object descriptions, a Vorbis comment that does
+  not index for `SERATO_` names, and anything unreadable sets serato_unknown, which the planner treats as Serato for an in-place cut), the
+  `SOUNDCHECK` record parsed back (`SoundcheckRecord::parse`; an unreadable one kept as soundcheck_unreadable with its reason), and the
+  loudness items present) -> FileEntry rows before any decoding
 
 ANALYSE (streamed; cached)
   decode (delay/padding applied) -> f32 interleaved blocks
@@ -54,13 +56,14 @@ EXPORT PLAN (pure, under 1 us per row with DECIDE; `sc_engine::export::plan_expo
   plan_export(ExportInput{record (grid as shown), plan (DECIDE's), decide settings, ExportSource{codec, bits, float, has_tag, serato, blake3}}, ExportSettings{batch_mode: Prepare|Library, place, depth, grid_only, tbpm, xml, lead_ms})
   -> ExportOutcome: Write{ExportPlan{gain_db, trim_frames, expect_frames, bits, tags (neutral names), bext, cut, notices: [SeratoCuesShifted{cut_s}]}}
      | XmlOnly{Mp3OrAac | GridOnlyFlac | GridOnlyWouldRequantise | NoTagToWriteGridOnly}
-     | Skip{SeratoInPlaceCut | NotDjSafeRate | UnsupportedChannels | Unsupported | Silent | NoGrid | NothingToWrite{xml-only reason, when the XML is off}}
+     | Skip{SeratoInPlaceCut | SeratoUnknownInPlaceCut | NotDjSafeRate | UnsupportedChannels | Unsupported | Silent | NoGrid | NothingToWrite{xml-only reason, when the XML is off}}
   gain = DECIDE's (0 and the source depth for grid only, which needs 16- or 24-bit integer PCM, so the samples stay bit for bit);
   Prepare: bar lines extrapolated from bar 1 by whole bars (meter pulses x 60 sr / bpm, at `Bpm::written()`, the two-decimal BPM that the tags,
   the XML, the sidecar and grid-check all use, fractional samples); F = the first bar line at or after the start: F before the lead -> Cut::OnBar{bar_line, bar1}
   (no cut, never added silence); else cut floor(F - lead) frames so F lands at the lead or under a sample after it (Cut::Cut); more than the bar's last beat ->
   Cut::NotCut{bar1, first_bar_line} (no music removed); Library never cuts and expects the source's frame count; a cut copy of a file with
-  Serato data (ExportSource.serato from the probe's detection) carries its Serato tags unchanged, so the plan notes SeratoCuesShifted; in place it is skipped;
+  Serato data (ExportSource.serato from the probe's detection) carries its Serato tags unchanged, so the plan notes SeratoCuesShifted; in place it is skipped,
+  as is an in-place cut of a file whose tags could not be read (serato_unknown);
   tags: BPM (2 decimals, at the meter's unit) when tbpm, REPLAYGAIN_TRACK_GAIN = -18 - (I + g) dB and _PEAK = 10^((TP + g)/20) unless grid only,
   SOUNDCHECK `v=1;app;mode;stat;target;gain;trim;rate;bpm;bar1;src` (grid only: `gain=none`, no stat/target; trim and bar1 in samples at rate);
   bext (WAV) = the measurements moved by g; its JSON keys stay snake_case (`integrated_lufs_x100`, ...) inside the camelCase ExportPlan, as
@@ -110,7 +113,7 @@ RENDER (streamed)
 - `AudioSpec { sample_rate, channels }`, `AudioBuffer { spec, data: Vec<f32> }` interleaved; `SampleIndex(u64)`.
 - `LoudnessReport { integrated, momentary_max, short_term_max, short_term_p95, short_term_top30, lra, true_peak, sample_peak, plr, dual_mono, timeline }`.
 - `Meter { beats_per_bar, unit, grouping: Vec<u8> }` and `Grid { anchor, bpm, meter, first_downbeat_index, segments, residual_p95_ms, residual_max_ms, local_bpm_range, drift_ppm, verdict: Static|StaticWarn|Drifts, confidence: Green|Amber|Red, reasons, alternatives: { octave_up, octave_down, downbeat_shift } }`.
-- `Plan`, `GainPlan`, `ReviewReason`, `DecideSettings`, `Codec` (sc-core `plan`; `is_writable`: WAV, AIFF, FLAC; `has_gain_plan` adds MP3), `BatchMode`, `Place`, `ExportSettings`, `ExportPlan`, `Cut`, `ExportOutcome`, `XmlOnlyReason`, `ExportSkip`, `SoundcheckRecord` (owned; `to_value` and `parse` round-trip exactly, unknown keys ignored, `v` other than 1 refused) (sc-core `export`), `FileInfo { ..., serato, serato_tags: [SeratoTag], soundcheck }` (sc-core `ipc`), `Tag` (neutral tag name and value, sc-core `render`), `LengthPolicy`, `SkipReason` (`AnalyseOnly`, `Silent`; with export: `WouldGetQuieter`, `UnsupportedFormat`, `UnsupportedChannels`, `DrmProtected`, `RekordboxUsbExport`, `SeratoTagsPresentInPlaceCut`, `GainFieldRange`, `Corrupt`, `Cancelled`), `JobEvent`, `IpcError`.
+- `Plan`, `GainPlan`, `ReviewReason`, `DecideSettings`, `Codec` (sc-core `plan`; `is_writable`: WAV, AIFF, FLAC; `has_gain_plan` adds MP3), `BatchMode`, `Place`, `ExportSettings`, `ExportPlan`, `Cut`, `ExportOutcome`, `XmlOnlyReason`, `ExportSkip`, `SoundcheckRecord` (owned; `to_value` and `parse` round-trip exactly, unknown keys ignored, `v` other than 1 refused) (sc-core `export`), `FileInfo { ..., serato, serato_tags: [SeratoTag], serato_unknown, soundcheck, soundcheck_unreadable }` (sc-core `ipc`), `Tag` (neutral tag name and value, sc-core `render`), `LengthPolicy`, `SkipReason` (`AnalyseOnly`, `Silent`; with export: `WouldGetQuieter`, `UnsupportedFormat`, `UnsupportedChannels`, `DrmProtected`, `RekordboxUsbExport`, `SeratoTagsPresentInPlaceCut`, `GainFieldRange`, `Corrupt`, `Cancelled`), `JobEvent`, `IpcError`.
 - `RenderRequest { gain_db, trim_frames, bits, loudness: Option<BextLoudness>, tag_edits }` (sc-core `render`) is what a lossless render is asked to do; `sc_io::render::RenderReport` says what it did (frames in/out, the head cut made and the one requested, depth, exact/dithered, saturated samples, BLAKE3 of the written PCM, each source chunk's or FLAC block's fate, output size, leading/trailing bytes carried, whether tags were added and if not why (`sc_io::id3::NotEditable`), frames or fields replaced/appended, loudness tags a gain left stale: ID3 `TXXX:REPLAYGAIN_*`, `RVA2`, `COMM:iTunNORM`, `GEOB:Serato Autotags`; Vorbis `REPLAYGAIN_*`, `R128_*`, `ITUNNORM`, `SERATO_AUTOGAIN`/`SERATO_AUTOTAGS`; classified by `sc_io::tags`, reported, never edited). A render that cannot be DJ-safe fails with `Error::NotDjSafe` (IPC kind `notDjSafe`). The write transaction adds `RekordboxUsbExport`, `InPlaceRefused { reason: InPlaceRefusal }` (symlink, Finder-locked, ACL, read-only file or folder, hard links), `NoSpace`, `VerifyFailed`, `FileChanged`, `NothingToUndo` and `AlreadyExists`, each its own IPC kind.
 
 ## Threading and IPC

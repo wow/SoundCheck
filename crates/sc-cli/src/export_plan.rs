@@ -194,6 +194,15 @@ fn skip_text(reason: ExportSkip) -> (String, String) {
             "export it to a folder (the original keeps its cues), or use --batch-mode library"
                 .to_owned(),
         ),
+        ExportSkip::SeratoUnknownInPlaceCut { cut_s } => (
+            format!(
+                "its tags could not be read to rule out Serato data, and cutting {:.2} s in place \
+                 would move Serato cue points if it has any",
+                cut_s.0
+            ),
+            "export it to a folder (the original stays as it is), or use --batch-mode library"
+                .to_owned(),
+        ),
         ExportSkip::NotDjSafeRate { sample_rate_hz } => (
             format!(
                 "its sample rate, {sample_rate_hz} Hz, is not one DJ players accept (44.1 or 48 kHz)"

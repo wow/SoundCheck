@@ -35,6 +35,9 @@ fn written_bpm_rounds_to_two_decimals() {
     assert_eq!(Bpm(119.996).written(), Bpm(120.0));
     assert_eq!(Bpm(127.984_9).written(), Bpm(127.98));
     assert_eq!(Bpm(174.125).written(), Bpm(174.13));
+    // Rounding acts on the binary value: 1.005 is stored just below the half.
+    assert_eq!(Bpm(1.005).written(), Bpm(1.0));
+    assert_eq!(Bpm(93.455).written(), Bpm(93.46));
     assert_eq!(Bpm(128.0).written(), Bpm(128.0));
     // Already two decimals: unchanged, so writing twice is the same as writing once.
     let once = Bpm(93.456).written();
