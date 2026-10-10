@@ -8,13 +8,16 @@
 //! footer (`3DI`) instead of padding.
 //!
 //! - [`parse_tag`] indexes a tag: header, extended header, and every frame's id, flags and byte
-//!   range. Frame bodies are not decoded, except the description of a `TXXX` frame (text
-//!   encodings 0-3: ISO-8859-1, UTF-16 with a byte-order mark (little-endian when it has none),
-//!   UTF-16BE, UTF-8; up to its terminator), read after the frame's grouping byte and v2.4
-//!   data-length indicator are skipped and v2.4 frame-level unsynchronisation is undone; UTF-16
-//!   without a byte-order mark is matched in both byte orders. A compressed or encrypted
-//!   frame's description cannot be read, so a `TXXX` edit on a tag holding one is not made
-//!   (appending could duplicate it).
+//!   range. Frame bodies are not decoded, except the head of three frames: the description of
+//!   a `TXXX` frame, the language and short content description of a `COMM` frame, and the
+//!   MIME type, file name and content description of a `GEOB` frame (where DJ apps such as
+//!   Serato keep their data). Text uses encodings 0-3: ISO-8859-1, UTF-16 with a byte-order
+//!   mark (little-endian when it has none), UTF-16BE, UTF-8, each string up to its terminator;
+//!   it is read after the frame's grouping byte and v2.4 data-length indicator are skipped and
+//!   v2.4 frame-level unsynchronisation is undone; UTF-16 without a byte-order mark is matched
+//!   in both byte orders. [`TagIndex::txxx_value`] reads a `TXXX` value. A compressed or
+//!   encrypted frame's head cannot be read, so a `TXXX` edit on a tag holding such a `TXXX`
+//!   frame is not made (appending could duplicate it).
 //! - [`edit_tag`] writes SoundCheck's text frames ([`Edit`]: `TBPM`, `TXXX:SOUNDCHECK`,
 //!   `TXXX:REPLAYGAIN_TRACK_GAIN`, ...). A frame with the same label (the same id, or for `TXXX`
 //!   the same description compared ASCII case-insensitively) is replaced in place, every one if

@@ -113,12 +113,21 @@ fn write_text(plan: &ExportPlan) -> String {
         Cut::OnBar {
             bar_line,
             bar_line_s,
+            bar1,
+            bar1_s,
         } => {
-            if bar_line.0 == 0 {
-                format!("{gain}, Starts on bar 1")
+            // "bar 1" only when the line is bar 1 itself, else the line and where bar 1 is.
+            let (line, anchor, sep) = if bar_line == bar1 {
+                ("bar 1", String::new(), ",")
             } else {
-                format!("{gain}, Starts on a bar line {:.3} s in", bar_line_s.0)
-            }
+                ("a bar line", format!(" (bar 1 at {:.2} s)", bar1_s.0), "")
+            };
+            let at = if bar_line.0 == 0 {
+                String::new()
+            } else {
+                format!("{sep} {:.3} s in", bar_line_s.0)
+            };
+            format!("{gain}, Starts on {line}{at}{anchor}")
         }
         Cut::NotCut {
             bar1,

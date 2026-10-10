@@ -1,6 +1,7 @@
 //! What a file is before it is decoded: codec, sample rate, depth, channels, bitrate, duration
-//! and the title, artist and album tags, read with lofty (read-only, cover art skipped), so a
-//! dropped file shows its row at once. Anything unreadable leaves the field empty; the decoder
+//! and the title, artist and album tags, read with lofty (read-only, cover art skipped), plus
+//! the Serato data and `SOUNDCHECK` record its tags hold, so a dropped file shows its row at
+//! once. Anything unreadable leaves the field empty; the decoder
 //! is the authority once analysis runs.
 
 use std::fs::File;
@@ -17,9 +18,20 @@ use sc_core::ipc::{DjUnsafe, FileInfo};
 use sc_core::plan::Codec;
 
 /// Reads `path`'s headers and tags; never fails, an unreadable file gives the codec its name
-/// suggests and nothing else.
+/// suggests and nothing else. Serato data and the `SOUNDCHECK` record come from
+/// [`crate::tags::scan`].
 #[must_use]
 pub fn probe(path: &Path) -> FileInfo {
+    let mut info = headers(path);
+    let tags = crate::tags::scan(path, info.codec);
+    info.serato = !tags.serato.is_empty();
+    info.serato_tags = tags.serato;
+    info.soundcheck = tags.soundcheck;
+    info
+}
+
+/// What lofty reads: format, properties, title, artist and album.
+fn headers(path: &Path) -> FileInfo {
     let mut info = FileInfo {
         codec: Codec::from_path(path),
         ..FileInfo::default()

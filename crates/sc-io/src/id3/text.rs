@@ -1,6 +1,7 @@
-//! Text in `ID3v2` frames: reading a `TXXX` description (ID3v2.3.0 sections 3.3 and 4.2.2,
-//! ID3v2.4.0 Main Structure section 4 and Native Frames section 4.2.6) and writing SoundCheck's
-//! text frames ([`Edit`]).
+//! Text in `ID3v2` frames: reading the head of a `TXXX`, `COMM` or `GEOB` frame and a `TXXX`
+//! value (ID3v2.3.0 sections 3.3, 4.2.2, 4.11 and 4.16; ID3v2.4.0 Main Structure section 4 and
+//! Native Frames sections 4.2.6, 4.10 and 4.15) and writing SoundCheck's text frames
+//! ([`Edit`]).
 
 use sc_core::{Error, Result, TagEdit};
 
@@ -85,25 +86,102 @@ pub(crate) fn decode_text(encoding: u8, b: &[u8]) -> Option<String> {
     }
 }
 
-/// The description of a `TXXX` frame with these flags and body, when it can be read.
+/// Splits `b` at the terminator of text in `encoding` (one zero byte for ISO-8859-1 and UTF-8,
+/// an aligned zero pair for UTF-16): the text, for UTF-16 without a byte-order mark also its
+/// big-endian reading, and the bytes after the terminator (none when it is missing). `None`
+/// for an unknown encoding byte.
+fn split_text(encoding: u8, b: &[u8]) -> Option<(String, Option<String>, &[u8])> {
+    let (end, next) = if matches!(encoding, 1 | 2) {
+        let pair = b.as_chunks::<2>().0.iter().position(|p| *p == [0, 0]);
+        pair.map_or((b.len(), b.len()), |k| (2 * k, 2 * k + 2))
+    } else {
+        let zero = b.iter().position(|c| *c == 0);
+        zero.map_or((b.len(), b.len()), |n| (n, n + 1))
+    };
+    let text = decode_text(encoding, &b[..end])?;
+    let bom = b.starts_with(&[0xFF, 0xFE]) || b.starts_with(&[0xFE, 0xFF]);
+    let big_endian = (encoding == 1 && !bom)
+        .then(|| decode_text(2, &b[..end]))
+        .flatten();
+    Some((text, big_endian, &b[next..]))
+}
+
+/// The head of a `TXXX`, `COMM` or `GEOB` frame: what comes before its value or object.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct FrameHead {
+    /// The text encoding byte, 0-3.
+    pub encoding: u8,
+    /// The description (`TXXX`), short content description (`COMM`) or content description
+    /// (`GEOB`); UTF-16 without a byte-order mark read little-endian.
+    pub description: String,
+    /// The description read big-endian, for UTF-16 without a byte-order mark.
+    pub description_be: Option<String>,
+    /// `COMM`: the ISO 639-2 language code as stored (three bytes).
+    pub language: Option<[u8; 3]>,
+    /// `GEOB`: the MIME type (always ISO-8859-1).
+    pub mime: Option<String>,
+    /// `GEOB`: the file name.
+    pub file_name: Option<String>,
+}
+
+/// The head of a `TXXX`, `COMM` or `GEOB` frame with these flags and body (ID3v2.3.0
+/// sections 4.2.2, 4.11 and 4.16; ID3v2.4.0 Native Frames 4.2.6, 4.10 and 4.15), when it can
+/// be read: `None` for another frame id, a compressed or encrypted frame, an unknown text
+/// encoding, or a `COMM`/`GEOB` body too short for its encoding byte (and language). Strings
+/// without their terminator end with the body. An empty `TXXX` body reads as an empty
+/// description.
+pub(crate) fn frame_head(major: u8, id: [u8; 4], flags: [u8; 2], body: &[u8]) -> Option<FrameHead> {
+    if !matches!(&id, b"TXXX" | b"COMM" | b"GEOB") {
+        return None;
+    }
+    let content = content(major, flags, body)?;
+    let Some((&encoding, rest)) = content.split_first() else {
+        return (&id == b"TXXX").then(FrameHead::default);
+    };
+    let mut head = FrameHead {
+        encoding,
+        ..FrameHead::default()
+    };
+    let described = match &id {
+        b"COMM" => {
+            let (lang, rest) = rest.split_first_chunk::<3>()?;
+            head.language = Some(*lang);
+            rest
+        }
+        b"GEOB" => {
+            let (mime, _, rest) = split_text(0, rest)?;
+            let (file_name, _, rest) = split_text(encoding, rest)?;
+            head.mime = Some(mime);
+            head.file_name = Some(file_name);
+            rest
+        }
+        _ => rest,
+    };
+    let (description, description_be, _) = split_text(encoding, described)?;
+    head.description = description;
+    head.description_be = description_be;
+    Some(head)
+}
+
 /// The description of a `TXXX` frame with these flags and body, when it can be read, and for
 /// UTF-16 without a byte-order mark also its big-endian reading. An empty body reads as an
-/// empty description.
+/// empty description. (The tests' view of [`frame_head`].)
+#[cfg(test)]
 pub(crate) fn txxx_descriptions(
     major: u8,
     flags: [u8; 2],
     body: &[u8],
 ) -> Option<(String, Option<String>)> {
+    frame_head(major, *b"TXXX", flags, body).map(|h| (h.description, h.description_be))
+}
+
+/// The value of a `TXXX` frame with these flags and body: the text after the description, up
+/// to its terminator or the end. `None` when the frame cannot be read.
+pub(crate) fn txxx_value(major: u8, flags: [u8; 2], body: &[u8]) -> Option<String> {
     let content = content(major, flags, body)?;
-    let Some((&encoding, rest)) = content.split_first() else {
-        return Some((String::new(), None));
-    };
-    let text = decode_text(encoding, rest)?;
-    let bom = rest.starts_with(&[0xFF, 0xFE]) || rest.starts_with(&[0xFE, 0xFF]);
-    let big_endian = (encoding == 1 && !bom)
-        .then(|| decode_text(2, rest))
-        .flatten();
-    Some((text, big_endian))
+    let (&encoding, rest) = content.split_first()?;
+    let (_, _, value) = split_text(encoding, rest)?;
+    decode_text(encoding, value)
 }
 
 /// What an edit writes: a text frame by id, or a `TXXX` frame by description.
@@ -191,11 +269,7 @@ impl Edit {
     pub fn matches(&self, frame: &FrameRef) -> bool {
         match &self.label {
             Label::Frame(id) => frame.id == *id,
-            Label::Txxx(desc) => {
-                let same =
-                    |d: &Option<String>| d.as_ref().is_some_and(|d| d.eq_ignore_ascii_case(desc));
-                &frame.id == b"TXXX" && (same(&frame.description) || same(&frame.description_be))
-            }
+            Label::Txxx(desc) => frame.is(b"TXXX", desc),
         }
     }
 

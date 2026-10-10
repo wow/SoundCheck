@@ -1,6 +1,12 @@
-//! Tag hints read with lofty, which SoundCheck uses read-only: BPM, genre, title and artist.
-//! They are hints for the octave and meter choice and for display, never trusted over the audio;
-//! a missing or unreadable tag is simply `None`.
+//! Reading tags. Hints read with lofty, which SoundCheck uses read-only: BPM, genre, title and
+//! artist, hints for the octave and meter choice and for display, never trusted over the audio
+//! (a missing or unreadable tag is simply `None`), and the embedded cover. [`scan`] reads what
+//! lofty does not expose with SoundCheck's own parsers: Serato data, the `SOUNDCHECK` record
+//! and the loudness items a level change makes stale ([`id3_loudness_label`],
+//! [`is_vorbis_loudness`]).
+
+mod loudness;
+mod scan;
 
 use std::path::Path;
 
@@ -8,6 +14,9 @@ use lofty::file::TaggedFileExt;
 use lofty::tag::ItemKey;
 use sc_core::Bpm;
 use sc_core::analysis::TagHints;
+
+pub use loudness::{id3_loudness_label, is_vorbis_loudness};
+pub use scan::{TagScan, scan};
 
 /// Reads the hints from `path`; any read or parse problem yields the empty default.
 #[must_use]
@@ -76,3 +85,6 @@ pub fn cover(path: &Path) -> Option<Cover> {
         bytes: bytes.to_vec(),
     })
 }
+
+#[cfg(test)]
+mod tests;

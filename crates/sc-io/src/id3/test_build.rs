@@ -57,6 +57,53 @@ pub fn txxx(major: u8, encoding: u8, desc: &str, value: &str) -> Vec<u8> {
     frame(major, *b"TXXX", [0, 0], &body)
 }
 
+/// A `GEOB` body in `encoding`: MIME type (ISO-8859-1), file name, description, object.
+pub fn geob_body(encoding: u8, mime: &str, file_name: &str, desc: &str, object: &[u8]) -> Vec<u8> {
+    let mut body = vec![encoding];
+    body.extend(encode(0, mime, true));
+    body.extend(encode(encoding, file_name, true));
+    body.extend(encode(encoding, desc, true));
+    body.extend_from_slice(object);
+    body
+}
+
+/// A `GEOB` frame shaped like Serato's: ISO-8859-1, `application/octet-stream`, no file name.
+pub fn geob(major: u8, desc: &str, object: &[u8]) -> Vec<u8> {
+    let body = geob_body(0, "application/octet-stream", "", desc, object);
+    frame(major, *b"GEOB", [0, 0], &body)
+}
+
+/// A `COMM` body in `encoding`: language, short description, text.
+pub fn comm_body(encoding: u8, language: [u8; 3], desc: &str, value: &str) -> Vec<u8> {
+    let mut body = vec![encoding];
+    body.extend_from_slice(&language);
+    body.extend(encode(encoding, desc, true));
+    body.extend(encode(encoding, value, false));
+    body
+}
+
+/// A `COMM` frame in `encoding`, language `eng`.
+pub fn comm(major: u8, encoding: u8, desc: &str, value: &str) -> Vec<u8> {
+    frame(
+        major,
+        *b"COMM",
+        [0, 0],
+        &comm_body(encoding, *b"eng", desc, value),
+    )
+}
+
+/// `body` with a zero byte after every 0xFF (ID3v2.4 frame-level unsynchronisation).
+pub fn unsynchronise(body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(body.len() * 2);
+    for &b in body {
+        out.push(b);
+        if b == 0xFF {
+            out.push(0);
+        }
+    }
+    out
+}
+
 /// Header (`ID3`, `major`, revision 0, `flags`), extended header, frames, `padding` zero bytes.
 pub fn tag(major: u8, flags: u8, ext: &[u8], frames: &[Vec<u8>], padding: usize) -> Vec<u8> {
     let body: Vec<u8> = frames.concat();

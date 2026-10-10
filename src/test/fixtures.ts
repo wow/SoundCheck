@@ -17,6 +17,9 @@ export function entry(fileId: number, title = `Track ${fileId}`): FileEntry {
       artist: 'Artist',
       album: null,
       djUnsafe: null,
+      serato: false,
+      seratoTags: [],
+      soundcheck: null,
     },
   };
 }

@@ -4071,6 +4071,7 @@ name = "sc-core"
 version = "0.0.3"
 dependencies = [
  "approx",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

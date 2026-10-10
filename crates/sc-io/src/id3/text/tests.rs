@@ -176,6 +176,10 @@ fn txxx_matches_ignore_ascii_case_and_text_frames_match_by_id() {
         range: 0..10,
         description: desc.map(str::to_string),
         description_be: None,
+        encoding: None,
+        language: None,
+        mime: None,
+        file_name: None,
     };
     let rg = Edit::new("TXXX:REPLAYGAIN_TRACK_GAIN", "x").expect("valid");
     assert!(rg.matches(&frame(b"TXXX", Some("replaygain_track_gain"))));
@@ -206,6 +210,10 @@ fn utf16_without_a_byte_order_mark_is_read_in_both_orders() {
         range: 0..10,
         description: Some(little),
         description_be: big,
+        encoding: None,
+        language: None,
+        mime: None,
+        file_name: None,
     };
     assert!(bpm.matches(&frame));
     // With a byte-order mark the order is known: no second reading.

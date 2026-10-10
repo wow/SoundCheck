@@ -9,10 +9,13 @@ fn cut(frames: u64, rate: u32) -> Cut {
     }
 }
 
-fn on_bar(line: u64, rate: u32) -> Cut {
+/// Starts on the bar line `line`, with bar 1 at `bar1`.
+fn on_bar(line: u64, bar1: u64, rate: u32) -> Cut {
     Cut::OnBar {
         bar_line: SampleIndex(line),
         bar_line_s: SampleIndex(line).to_seconds(rate),
+        bar1: SampleIndex(bar1),
+        bar1_s: SampleIndex(bar1).to_seconds(rate),
     }
 }
 
@@ -77,9 +80,12 @@ fn bar_lines_use_the_written_bpm() {
 #[test]
 fn prepare_trim_zero_when_bar1_at_lead() {
     // Bar 1 exactly at the lead (240 samples at 48 kHz): it already starts there.
-    assert_eq!(cut_of(48_000, 240), on_bar(240, 48_000));
+    assert_eq!(cut_of(48_000, 240), on_bar(240, 240, 48_000));
     // Two bars later: the extrapolated bar line is at the lead.
-    assert_eq!(cut_of(48_000, 240 + 2 * 96_000), on_bar(240, 48_000));
+    assert_eq!(
+        cut_of(48_000, 240 + 2 * 96_000),
+        on_bar(240, 240 + 2 * 96_000, 48_000)
+    );
     let plan = written(plan_with(&record(48_000, 240), &wav(), &prepare()));
     assert_eq!((plan.trim_frames, plan.expect_frames), (0, 48_000 * 240));
 }
@@ -87,11 +93,17 @@ fn prepare_trim_zero_when_bar1_at_lead() {
 #[test]
 fn a_file_that_starts_on_a_bar_line_is_not_cut() {
     // Bar 1 on the first sample (a promo that starts on the downbeat).
-    assert_eq!(cut_of(48_000, 0), on_bar(0, 48_000));
+    assert_eq!(cut_of(48_000, 0), on_bar(0, 0, 48_000));
     // One sample before the lead.
-    assert_eq!(cut_of(48_000, 239), on_bar(239, 48_000));
-    // Bar 1 at 8.000 s at 120 BPM: four whole bars before it, a bar line on the first sample.
-    assert_eq!(cut_of(44_100, 352_800), on_bar(0, 44_100));
+    assert_eq!(cut_of(48_000, 239), on_bar(239, 239, 48_000));
+    // Bar 1 at 8.000 s at 120 BPM: four whole bars before it, a bar line on the first sample;
+    // the cut names that line and bar 1 itself, which is not where the file starts.
+    let at_8s = cut_of(44_100, 352_800);
+    assert_eq!(at_8s, on_bar(0, 352_800, 44_100));
+    let Cut::OnBar { bar1_s, .. } = at_8s else {
+        panic!("{at_8s:?}");
+    };
+    assert!((bar1_s.0 - 8.0).abs() < 1e-12);
     let plan = written(plan_with(&record(44_100, 352_800), &wav(), &prepare()));
     assert_eq!((plan.trim_frames, plan.expect_frames), (0, 44_100 * 240));
     assert!(

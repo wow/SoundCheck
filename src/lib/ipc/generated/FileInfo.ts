@@ -2,6 +2,8 @@
 import type { Codec } from "./Codec";
 import type { DjUnsafe } from "./DjUnsafe";
 import type { Seconds } from "./Seconds";
+import type { SeratoTag } from "./SeratoTag";
+import type { SoundcheckRecord } from "./SoundcheckRecord";
 
 /**
  * What a file is before it is decoded, read from its headers and tags.
@@ -50,4 +52,19 @@ album: string | null,
 /**
  * The first way the format is not DJ-safe, if any.
  */
-djUnsafe: DjUnsafe | null, };
+djUnsafe: DjUnsafe | null, 
+/**
+ * The file holds Serato data (cue points, beat grid, auto gain, ...), whose positions are
+ * stored in the audio's own time: cutting the start would move them. Same as
+ * `!serato_tags.is_empty()`.
+ */
+serato: boolean, 
+/**
+ * The kinds of Serato data found, each once, in [`SeratoTag`] order.
+ */
+seratoTags: Array<SeratoTag>, 
+/**
+ * What SoundCheck recorded when it last exported the file (its `SOUNDCHECK` tag), when the
+ * tag is present and readable.
+ */
+soundcheck: SoundcheckRecord | null, };

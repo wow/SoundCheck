@@ -79,6 +79,20 @@ impl DbFs {
     }
 }
 
+impl Bpm {
+    /// The tempo as SoundCheck writes it: rounded to two decimals (halves away from zero). Every
+    /// place that carries a tempo out of the app uses this value, so they agree with each other
+    /// and with the bar lines laid from it: the tempo tags (`TBPM`/`TXXX:BPM`, Vorbis `BPM`),
+    /// the `SOUNDCHECK` record, the rekordbox XML `Bpm`, the sidecar, the export planner's bar
+    /// lines and the check of an exported file's grid. A fitted 127.996 BPM is written as
+    /// 128.00; laying bars at the unrounded value instead would put them up to 0.005 BPM apart
+    /// from what a DJ app reads (about 14 ms over six minutes at 128 BPM).
+    #[must_use]
+    pub fn written(self) -> Self {
+        Self((self.0 * 100.0).round() / 100.0)
+    }
+}
+
 /// A position in samples (frames) at the file's native sample rate. The source of truth for every
 /// beat, grid and cue position.
 #[derive(
