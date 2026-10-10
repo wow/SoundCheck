@@ -7,7 +7,8 @@ import type { Seconds } from "./Seconds";
  */
 export type Cut = { "type": "cut", 
 /**
- * Frames removed from the start (at least 1).
+ * Frames removed from the start (at least 1): the cut asked of the renderer, or, once
+ * the plan is snapped ([`ExportPlan::trim_snapped_from`]), the cut it makes.
  */
 frames: number, 
 /**
@@ -45,4 +46,12 @@ firstBarLine: SampleIndex,
 /**
  * `first_bar_line` in seconds.
  */
-firstBarLineS: Seconds, } | { "type": "noGrid" } | { "type": "gridOnly" } | { "type": "library" };
+firstBarLineS: Seconds, } | { "type": "needsReview", 
+/**
+ * Bar 1 as shown (the grid's anchor).
+ */
+bar1: SampleIndex, 
+/**
+ * `bar1` in seconds.
+ */
+bar1S: Seconds, } | { "type": "noGrid" } | { "type": "gridOnly" } | { "type": "library" };

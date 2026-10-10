@@ -254,10 +254,9 @@ pub fn apply_iff(
     let header = iff::read_header(&mut src, input)?;
     let (table, format) = (&header.table, &header.format);
     let mut target = target(input, table, format, req, tag_edits)?;
+    let quietest = || audio::snapped_trim(&mut src, input, format, req.trim_frames, cancel);
     (target.trim_frames, target.trim_requested_frames) =
-        snap::head_cut(req, format.sample_rate, || {
-            audio::snapped_trim(&mut src, input, format, req.trim_frames, cancel)
-        })?;
+        snap::head_cut(req, format.sample_rate, quietest)?;
     target.frames_out = format.frames - target.trim_frames;
     let layout = layout::plan(&mut src, input, table, format, &target)?;
     tracing::debug!(

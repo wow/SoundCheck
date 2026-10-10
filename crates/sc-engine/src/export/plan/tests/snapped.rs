@@ -238,7 +238,8 @@ fn rendering_the_snapped_plan_puts_bar1_exactly_where_it_says() {
     // so the bar line at source 13,230 is output frame 265, the planned bar 1.
     let fade = sc_io::render::head_fade_frames(44_100);
     for (k, v) in out.iter().enumerate().skip(fade) {
-        assert_eq!(i64::from(*v) / 16 - k as i64, 12_965, "output frame {k}");
+        let source = usize::try_from(*v / 16).expect("a frame index");
+        assert_eq!(source - k, 12_965, "output frame {k}");
     }
     let sidecar = std::fs::read_to_string(sc_io::txn::sidecar_path(&out_dir.join("track.wav")))
         .expect("sidecar");
