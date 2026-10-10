@@ -106,7 +106,7 @@ fn out_writes_a_copy_and_leaves_the_file() {
         &lib,
         &[
             arg(&wav),
-            "--mode",
+            "--batch-mode",
             "prepare",
             "--out",
             arg(&out),
