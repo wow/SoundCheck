@@ -42,3 +42,35 @@ fn a_file_without_a_resource_fork_carries_none() {
         meta.xattrs
     );
 }
+
+/// The system stamps a new file with the writer's `com.apple.provenance` (when it has one) and
+/// ignores a write of another value, so it is not carried and no note says it differs; other
+/// attributes still are.
+#[test]
+fn provenance_is_left_to_the_system_without_a_note() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (source, target) = (dir.path().join("a.flac"), dir.path().join("b.flac"));
+    std::fs::write(&source, b"source").expect("source");
+    std::fs::write(&target, b"target").expect("target");
+    xattr::set(&source, "com.example.kept", b"kept").expect("an ordinary attribute");
+    let mut meta = snapshot(&source).expect("snapshot");
+    let provenance = (
+        OsString::from("com.apple.provenance"),
+        vec![1, 0, 0, 0x5f, 0x3e, 0x88, 0x88, 0xda, 0x67, 0x79, 0xe0],
+    );
+    let at = meta
+        .xattrs
+        .binary_search_by(|(n, _)| n.cmp(&provenance.0))
+        .unwrap_or_else(|i| i);
+    if meta.xattrs.get(at).is_some_and(|(n, _)| *n == provenance.0) {
+        meta.xattrs[at] = provenance;
+    } else {
+        meta.xattrs.insert(at, provenance);
+    }
+    let notes = restore(&target, &meta, true).expect("restored");
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(
+        xattr::get(&target, "com.example.kept").expect("readable"),
+        Some(b"kept".to_vec())
+    );
+}
