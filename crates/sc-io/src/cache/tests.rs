@@ -19,7 +19,6 @@ fn a_schema_1_record_is_served_without_its_evidence() {
     let key = CacheKey {
         size: 1,
         mtime_ns: 2,
-        dev: 4,
         ino: 5,
         ctime_ns: 6,
         settings_hash: 3,
@@ -76,7 +75,6 @@ fn an_entry_of_the_first_wrapper_schema_misses() {
     let key = CacheKey {
         size: 1,
         mtime_ns: 2,
-        dev: 0,
         ino: 0,
         ctime_ns: 0,
         settings_hash: 3,
@@ -106,4 +104,16 @@ fn a_file_replaced_at_the_same_length_and_time_gets_another_key() {
     let (_, after) = Cache::key_for(&path, &settings).unwrap();
     assert_eq!((after.size, after.mtime_ns), (before.size, before.mtime_ns));
     assert_ne!(after, before);
+}
+
+#[test]
+fn an_entry_is_removed_by_its_file_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = Cache::open(dir.path().join("cache"));
+    let file = dir.path().join("a.wav");
+    std::fs::create_dir_all(cache.dir()).unwrap();
+    std::fs::write(cache.entry_path(&nfc(&file)), b"{}").unwrap();
+    assert!(cache.remove(&file).unwrap());
+    assert!(!cache.entry_path(&nfc(&file)).exists());
+    assert!(!cache.remove(&file).unwrap(), "nothing left");
 }

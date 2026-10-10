@@ -298,7 +298,7 @@ fn after_undo_the_cache_describes_the_original() {
     );
     let events = run(&batch(std::slice::from_ref(&path)), &s, &CancelToken::new());
     assert_eq!(names(&events, 1).last(), Some(&"done"));
-    sc_engine::undo_file(&path, &lib.backups()).expect("undone");
+    sc_engine::undo_file(&path, &lib.backups(), Some(&lib.cache())).expect("undone");
     let cached = sc_engine::Analyzer::load(
         common::loudness_only(),
         Some(lib.cache()),

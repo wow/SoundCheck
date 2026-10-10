@@ -24,6 +24,7 @@ use sc_core::export::{
 };
 use sc_core::plan::{DecideSettings, Plan};
 use sc_core::{Error, Result, Seconds};
+use sc_io::cache::Cache;
 use sc_io::edits::{EditStore, SavedEdit};
 
 use super::plan::{Bars, ExportInput, ExportSource, bar1_after};
@@ -75,7 +76,7 @@ impl ProcessSettings {
 
     /// How the transaction writes: Library keeps the modification time (DJ apps then do not
     /// see a changed file), Prepare does not (a new track is analysed again anyway).
-    fn apply_options(&self) -> ApplyOptions {
+    fn apply_options(&self, cache: Option<Cache>) -> ApplyOptions {
         ApplyOptions {
             place: match &self.out_dir {
                 Some(dir) => Place::Folder(dir.clone()),
@@ -84,6 +85,7 @@ impl ProcessSettings {
             backup_root: self.backup_root.clone(),
             keep_mtime: self.export.batch_mode == sc_core::export::BatchMode::Library,
             sidecar: true,
+            cache,
         }
     }
 }
@@ -171,7 +173,12 @@ pub(crate) fn process_file(
         export: Some(export),
         source_blake3: source.blake3,
     };
-    let report = apply_file(path, &request, &settings.apply_options(), &analyzer.cancel)?;
+    let report = apply_file(
+        path,
+        &request,
+        &settings.apply_options(analyzer.cache.clone()),
+        &analyzer.cancel,
+    )?;
     // The output as the caller spells it (the transaction reports the path the file system
     // resolves), so the cache and the grid edits find it under the name the user knows.
     let output = match (&settings.out_dir, report.output.file_name()) {

@@ -1,12 +1,14 @@
 //! The analysis cache: one JSON file per audio file under the user's cache directory.
 //!
-//! An entry is valid only when the file's identity (device, inode and status change time), size
-//! and modification time, the analysis settings and the SoundCheck version all match, so a
-//! changed file, changed settings or a new release never serve a stale record. The identity
-//! matters because SoundCheck itself writes files at the same length with their modification
-//! time put back: such a write replaces the file by a new one (a new inode), and the status
-//! change time cannot be set back, so the original's record never serves the written file, or
-//! the written file's record the original put back by an undo. The file name is the BLAKE3 hash of the NFC-normalised absolute path:
+//! An entry is valid only when the file's inode and status change time, its size and
+//! modification time, the analysis settings and the SoundCheck version all match, so a changed
+//! file, changed settings or a new release never serve a stale record. The inode and change
+//! time matter because SoundCheck itself writes files at the same length with their
+//! modification time put back: such a write replaces the file by a new one (a new inode), and
+//! the change time cannot be set back. The device is left out: it changes when another disk
+//! mounts first, and the path already names the volume. On FAT and exFAT the change time is the
+//! modification time and inodes are reusable slot numbers, so the writers also remove a file's
+//! entry ([`Cache::remove`]) before and after every change they make. The file name is the BLAKE3 hash of the NFC-normalised absolute path:
 //! macOS stores names in NFD while rekordbox and most tools use NFC, so every path comparison in
 //! SoundCheck normalises first. Analysis never writes next to the music; the cache lives under
 //! `~/Library/Caches/app.soundcheck.desktop/analysis` on macOS (`SC_CACHE_DIR` overrides it).
@@ -34,8 +36,6 @@ pub struct CacheKey {
     pub size: u64,
     /// Modification time in nanoseconds since the Unix epoch.
     pub mtime_ns: i64,
-    /// Device of the file system holding the file.
-    pub dev: u64,
     /// Inode: a file replaced by a rename has a new one.
     pub ino: u64,
     /// Status change time in nanoseconds since the Unix epoch, which no write can set back.
@@ -54,7 +54,7 @@ struct CacheEntry {
 }
 
 /// A cache directory.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cache {
     dir: PathBuf,
 }
@@ -103,7 +103,6 @@ impl Cache {
         let key = CacheKey {
             size: meta.len(),
             mtime_ns,
-            dev: meta.dev(),
             ino: meta.ino(),
             ctime_ns: meta
                 .ctime()
@@ -155,6 +154,27 @@ impl Cache {
         std::fs::write(&temp, json).map_err(io)?;
         std::fs::rename(&temp, &target).map_err(io)?;
         Ok(())
+    }
+
+    /// Removes the entry of the file at `path` (made absolute and NFC-normalised as
+    /// [`Cache::key_for`] does); whether there was one.
+    ///
+    /// # Errors
+    /// [`Error::Io`] when the path cannot be made absolute or the entry cannot be removed.
+    pub fn remove(&self, path: &Path) -> Result<bool> {
+        let absolute = std::path::absolute(path).map_err(|source| Error::Io {
+            path: path.into(),
+            source,
+        })?;
+        let entry = self.entry_path(&nfc(&absolute));
+        match std::fs::remove_file(&entry) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(Error::Io {
+                path: entry,
+                source,
+            }),
+        }
     }
 
     /// Removes every entry; returns how many were removed.

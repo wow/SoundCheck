@@ -121,7 +121,7 @@ impl Shell {
         let spawned = std::thread::Builder::new()
             .name("sc-recover".into())
             .spawn(move || {
-                let status = recover_at_start(&root);
+                let status = recover_at_start(&root, inner.cache.as_ref());
                 tracing::info!(status = ?status, "startup recovery finished");
                 *inner
                     .recovery

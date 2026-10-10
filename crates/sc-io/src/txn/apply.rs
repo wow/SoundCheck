@@ -237,17 +237,6 @@ fn plan<'a>(
             cause: ChangeCause::OtherChangeFirst,
         });
     }
-    if let Some(expected) = opts.expect_original_blake3
-        && hash_file(&c.src.path)?.1 != expected
-    {
-        return Err(Error::FileChanged {
-            path: c.src.path,
-            detail: "since SoundCheck planned it (another change wrote it in between); it was \
-                     left as it is"
-                .into(),
-            cause: ChangeCause::SincePlanned,
-        });
-    }
     let id = new_txn_id();
     let backup = (c.kind == TxnKind::InPlace).then(|| {
         let dest = backup_dest(journal.root(), &c.volume, &c.src.path);
@@ -370,6 +359,7 @@ fn before_rename(
         (None, Some(original)) => (original, None, Vec::new()),
         (None, None) => return Err(Error::Internal("no original hash".into())),
     };
+    check_planned_original(plan, &original.1)?;
     check_cancel(cancel)?;
     Ok(Prepared {
         report,
@@ -398,6 +388,23 @@ fn check_planned(plan: &Plan<'_>, report: &RenderReport) -> Result<()> {
         });
     }
     Ok(())
+}
+
+/// [`Error::FileChanged`] ([`ChangeCause::SincePlanned`]) unless the original hashes to what
+/// the caller planned from ([`TxnOptions::expect_original_blake3`]). Compared with the hash the
+/// backup copy (in place) or the copy's check (to a folder) has just read, so it costs no extra
+/// read; a mismatch wastes the render but still refuses before the rename.
+fn check_planned_original(plan: &Plan<'_>, original: &[u8; 32]) -> Result<()> {
+    match plan.opts.expect_original_blake3 {
+        Some(expected) if expected != *original => Err(Error::FileChanged {
+            path: plan.src.path.clone(),
+            detail: "since SoundCheck planned it (another change wrote it in between); it was \
+                     left as it is"
+                .into(),
+            cause: ChangeCause::SincePlanned,
+        }),
+        _ => Ok(()),
+    }
 }
 
 /// Copies the original to its backup temp with the system's copy (data, extended attributes,

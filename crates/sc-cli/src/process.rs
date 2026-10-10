@@ -150,7 +150,8 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
     decide.validate()?;
     let export = args.export_settings()?;
     let root = args.backup.resolve()?;
-    let recovered = recover_first(&root);
+    let cache = Cache::open(Cache::default_dir()?);
+    let recovered = recover_first(&root, &cache);
     let out_dir = args.out.as_ref().map(std::path::absolute).transpose()?;
     let place = out_dir.clone().map_or(Place::InPlace, Place::Folder);
     let action = if out_dir.is_some() {
@@ -169,7 +170,7 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
     let settings = BatchSettings {
         analysis: crate::settings(&args.analysis),
         workers: args.jobs.unwrap_or_else(default_workers),
-        cache: Some(Cache::open(Cache::default_dir()?)),
+        cache: Some(cache),
         task: Task::Process(Box::new(process)),
     };
     // Files listed twice and copies that would share a name are refused before any write.

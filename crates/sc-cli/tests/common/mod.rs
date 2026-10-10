@@ -134,6 +134,8 @@ impl Library {
         let output = Command::cargo_bin("sc-cli")
             .expect("binary")
             .env("SC_BACKUP_ROOT", &self.backups)
+            .env("SC_CACHE_DIR", self.base.join("cache"))
+            .env("SC_EDITS_DIR", self.base.join("edits"))
             .current_dir(cwd)
             .args(args)
             .output()

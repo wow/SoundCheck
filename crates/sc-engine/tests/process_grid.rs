@@ -131,7 +131,7 @@ fn a_confirmed_edit_comes_back_after_undo() {
     );
     let events = run(&batch(std::slice::from_ref(&path)), &s, &CancelToken::new());
     assert!(done_of(&events).edit.confirmed);
-    sc_engine::undo_file(&path, &lib.backups()).expect("undone");
+    sc_engine::undo_file(&path, &lib.backups(), Some(&lib.cache())).expect("undone");
     let mut again = analysed(&lib, &path);
     let state = apply_saved(&mut again, &lib.edits());
     assert!(state.confirmed, "{state:?}");
