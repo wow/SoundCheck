@@ -19,6 +19,9 @@ fn a_schema_1_record_is_served_without_its_evidence() {
     let key = CacheKey {
         size: 1,
         mtime_ns: 2,
+        dev: 4,
+        ino: 5,
+        ctime_ns: 6,
         settings_hash: 3,
         version: "0.0.3".into(),
     };
@@ -58,4 +61,49 @@ fn entry_names_are_blake3_of_the_path() {
     assert_eq!(name.extension().unwrap(), "json");
     assert_eq!(name.file_stem().unwrap().len(), 64);
     assert_ne!(name, cache.entry_path("/music/b.flac"));
+}
+
+#[test]
+fn an_entry_of_the_first_wrapper_schema_misses() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = Cache::open(dir.path());
+    let entry = serde_json::json!({
+        "schema": 1,
+        "key": {"size": 1, "mtimeNs": 2, "settingsHash": 3, "version": "0.0.3"},
+        "record": {}
+    });
+    std::fs::write(cache.entry_path("/a.wav"), entry.to_string()).unwrap();
+    let key = CacheKey {
+        size: 1,
+        mtime_ns: 2,
+        dev: 0,
+        ino: 0,
+        ctime_ns: 0,
+        settings_hash: 3,
+        version: "0.0.3".into(),
+    };
+    assert!(cache.get("/a.wav", &key).is_none());
+}
+
+#[test]
+fn a_file_replaced_at_the_same_length_and_time_gets_another_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.wav");
+    std::fs::write(&path, b"one").unwrap();
+    let settings = sc_core::analysis::AnalysisSettings::default();
+    let (_, before) = Cache::key_for(&path, &settings).unwrap();
+    let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+    // Replaced by a rename, as a write transaction does, with the modification time put back.
+    let temp = dir.path().join(".a.tmp");
+    std::fs::write(&temp, b"two").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&temp)
+        .unwrap()
+        .set_modified(mtime)
+        .unwrap();
+    std::fs::rename(&temp, &path).unwrap();
+    let (_, after) = Cache::key_for(&path, &settings).unwrap();
+    assert_eq!((after.size, after.mtime_ns), (before.size, before.mtime_ns));
+    assert_ne!(after, before);
 }

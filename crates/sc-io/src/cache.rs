@@ -1,12 +1,17 @@
 //! The analysis cache: one JSON file per audio file under the user's cache directory.
 //!
-//! An entry is valid only when the file's size and modification time, the analysis settings and
-//! the SoundCheck version all match, so a changed file, changed settings or a new release never
-//! serve a stale record. The file name is the BLAKE3 hash of the NFC-normalised absolute path:
+//! An entry is valid only when the file's identity (device, inode and status change time), size
+//! and modification time, the analysis settings and the SoundCheck version all match, so a
+//! changed file, changed settings or a new release never serve a stale record. The identity
+//! matters because SoundCheck itself writes files at the same length with their modification
+//! time put back: such a write replaces the file by a new one (a new inode), and the status
+//! change time cannot be set back, so the original's record never serves the written file, or
+//! the written file's record the original put back by an undo. The file name is the BLAKE3 hash of the NFC-normalised absolute path:
 //! macOS stores names in NFD while rekordbox and most tools use NFC, so every path comparison in
 //! SoundCheck normalises first. Analysis never writes next to the music; the cache lives under
 //! `~/Library/Caches/app.soundcheck.desktop/analysis` on macOS (`SC_CACHE_DIR` overrides it).
 
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use sc_core::analysis::{AnalysisRecord, AnalysisSettings};
@@ -14,8 +19,9 @@ use sc_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
 
-/// Schema of the cache entry wrapper; bumped when the wrapper changes shape.
-pub const CACHE_SCHEMA: u32 = 1;
+/// Schema of the cache entry wrapper; bumped when the wrapper changes shape. Version 2 added the
+/// file identity to the key; entries of version 1 miss (the file is analysed once more).
+pub const CACHE_SCHEMA: u32 = 2;
 
 /// Environment variable that overrides the cache directory (tests, CI).
 pub const CACHE_DIR_ENV: &str = "SC_CACHE_DIR";
@@ -28,6 +34,12 @@ pub struct CacheKey {
     pub size: u64,
     /// Modification time in nanoseconds since the Unix epoch.
     pub mtime_ns: i64,
+    /// Device of the file system holding the file.
+    pub dev: u64,
+    /// Inode: a file replaced by a rename has a new one.
+    pub ino: u64,
+    /// Status change time in nanoseconds since the Unix epoch, which no write can set back.
+    pub ctime_ns: i64,
     /// [`AnalysisSettings::settings_hash`].
     pub settings_hash: u64,
     /// SoundCheck version that wrote the entry.
@@ -91,6 +103,12 @@ impl Cache {
         let key = CacheKey {
             size: meta.len(),
             mtime_ns,
+            dev: meta.dev(),
+            ino: meta.ino(),
+            ctime_ns: meta
+                .ctime()
+                .saturating_mul(1_000_000_000)
+                .saturating_add(meta.ctime_nsec()),
             settings_hash: settings.settings_hash(),
             version: sc_core::VERSION.into(),
         };
