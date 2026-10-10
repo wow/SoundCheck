@@ -11,6 +11,12 @@
 //! `setattrlist(ATTR_CMN_CRTIME)` through std), the modification time when asked, and the mode
 //! last. Access control lists are not carried; files that have one are refused in place
 //! instead ([`has_acl`]).
+//!
+//! On macOS the resource fork is also read through `<file>/..namedfork/rsrc` when the attribute
+//! list lacks it: while a descriptor that wrote the fork there is still open (in another app,
+//! or in a child process that holds a duplicate for the instant it is being spawned), APFS
+//! neither lists nor returns `com.apple.ResourceFork`, yet the named fork reads in full and
+//! `clonefile(2)`/`copyfile(3)` copy it, so the backup would have it and the new file not.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{FileTimes, Metadata, OpenOptions};
@@ -165,6 +171,10 @@ pub(crate) fn snapshot(path: &Path) -> Result<FileMeta> {
             Err(e) => return Err(io_err(path, e)),
         }
     }
+    #[cfg(target_os = "macos")]
+    if meta.is_file() {
+        add_unlisted_resource_fork(path, &mut xattrs).map_err(|e| io_err(path, e))?;
+    }
     Ok(FileMeta {
         id: FileId::of(&meta),
         len: meta.len(),
@@ -175,6 +185,47 @@ pub(crate) fn snapshot(path: &Path) -> Result<FileMeta> {
         created: meta.created().ok(),
         xattrs,
     })
+}
+
+/// The extended attribute that holds a file's resource fork (`XATTR_RESOURCEFORK_NAME`,
+/// sys/xattr.h).
+#[cfg(target_os = "macos")]
+const RESOURCE_FORK: &str = "com.apple.ResourceFork";
+
+/// Adds the resource fork of the regular file at `path` to `xattrs` (sorted by name) when they
+/// lack it but `<path>/..namedfork/rsrc` reads non-empty (see the module documentation). No
+/// fork reads as "not found" (an empty one on HFS+); a volume without named forks may refuse
+/// the path instead.
+///
+/// # Errors
+/// The system's error for any other failure to read the fork.
+#[cfg(target_os = "macos")]
+fn add_unlisted_resource_fork(
+    path: &Path,
+    xattrs: &mut Vec<(OsString, Vec<u8>)>,
+) -> std::io::Result<()> {
+    use rustix::io::Errno;
+    let name = OsStr::new(RESOURCE_FORK);
+    let Err(at) = xattrs.binary_search_by(|(n, _)| n.as_os_str().cmp(name)) else {
+        return Ok(());
+    };
+    let fork = match std::fs::read(path.join("..namedfork/rsrc")) {
+        Ok(fork) => fork,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e)
+            if [Errno::NOTDIR, Errno::NOTSUP, Errno::OPNOTSUPP, Errno::INVAL]
+                .iter()
+                .any(|n| e.raw_os_error() == Some(n.raw_os_error())) =>
+        {
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+    if !fork.is_empty() {
+        tracing::debug!(path = %path.display(), bytes = fork.len(), "resource fork not listed yet; read through its named fork");
+        xattrs.insert(at, (name.to_os_string(), fork));
+    }
+    Ok(())
 }
 
 /// Writes `meta` onto the file at `path`: every extended attribute (each read back and

@@ -22,9 +22,12 @@ pub(super) fn finish(
     timings: &mut Vec<(State, Duration)>,
 ) -> Result<TxnReport> {
     let t = Instant::now();
-    let notes = metadata_step(&plan.target, &plan.meta, plan.opts.keep_mtime);
+    let restored = metadata_step(&plan.target, &plan.meta, plan.opts.keep_mtime);
     let mut line = Line::new(&plan.id, State::MetadataDone);
-    line.notes.clone_from(&notes);
+    line.notes.clone_from(&restored);
+    // The backup's notes are on its own journal line.
+    let mut notes = prepared.backup_notes.clone();
+    notes.extend(restored);
     plan.journal.append(&line)?;
     crash::after(State::MetadataDone);
     timings.push((State::MetadataDone, t.elapsed()));
@@ -44,7 +47,6 @@ pub(super) fn finish(
     } else {
         None
     };
-    let mut notes = notes;
     notes.extend(line.notes.iter().cloned());
     plan.journal.append(&line)?;
     timings.push((State::Done, t.elapsed()));

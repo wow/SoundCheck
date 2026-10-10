@@ -27,7 +27,7 @@ Every document has `"schema": 1`. Keys are camelCase; the journal's kinds, state
 - success: `file` (as given), `ok: true`, `txn`, `kind`, `output`, `backup` (in place) or null, `sidecar` or null, `request` {`gainDb`, `trimFrames`, `bits`, `tags`: [{`name`, `value`}]}, `render` {`framesIn`, `framesOut`, `trimFrames` (the cut made), `trimRequestedFrames`, `sampleRateHz`, `channels`, `bitsOut`, `exact`, `dithered`, `samplesSaturated`, `pcmBlake3`, `blocks` {`carried`, `patched`, `edited`, `replaced`, `dropped`}, `tagsAdded`, `tagsReplaced`, `tagsNotAdded`, `staleLoudnessTags`}, `originalBlake3`, `outputBlake3`, `outputBytes`, `notes`, `timings`: [{`step` (a state), `ms`}], `totalMs`.
 - failure (also `undo`): `file`, `ok: false`, `error` {`kind` (the IPC error class, e.g. `inPlaceRefused`, `listedTwice`, `sameOutputName`), `message`, `fileId`}, `why`, `whatToDo`.
 
-`undo --json`, one document per file: `file`, `ok: true`, `txn`, `undone` (the change undone), `path`, `backup`, `restoredBlake3`, `sidecar` (`removed`, `restored` or `absent`), `earlierChanges`, `totalMs`.
+`undo --json`, one document per file: `file`, `ok: true`, `txn`, `undone` (the change undone), `path`, `backup`, `restoredBlake3`, `sidecar` (`removed`, `restored` or `absent`), `earlierChanges`, `notes` (metadata of the original that could not be restored), `totalMs`.
 
 `journal --json`: `backupRoot`, `entries` (newest first): [{`txn`, `startedAt`, `kind`, `state`, `reached`, `outcome`, `undone`, `path`, `source`, `backup`, `error`, `notes`}]. With `--forget`: `ok`, `txn`, `kind`, `path`, `reached`, `backup`, `kept` (files left in place), or `ok: false` with `error`.
 

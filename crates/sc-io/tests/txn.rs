@@ -466,25 +466,72 @@ fn undo_walks_back_through_two_changes_and_refuses_an_edited_file() {
     assert!(!sidecar_path(&path).exists());
 }
 
+/// The resource fork of `p`, read through its named fork.
+#[cfg(target_os = "macos")]
+fn read_fork(p: &Path) -> Vec<u8> {
+    std::fs::read(p.join("..namedfork/rsrc"))
+        .unwrap_or_else(|e| panic!("resource fork of {}: {e}", p.display()))
+}
+
+/// A resource fork of `len` bytes, larger than one 64 KiB read.
+#[cfg(target_os = "macos")]
+fn test_fork(len: u32) -> Vec<u8> {
+    (0..len).map(|i| (i % 253) as u8).collect()
+}
+
 /// macOS: a 70,000-byte resource fork (reads of it are cut to the buffer unless sized first).
 #[cfg(target_os = "macos")]
 #[test]
 fn a_large_resource_fork_survives_in_the_output_the_backup_and_the_undo() {
     let lib = Library::new();
     let path = lib.add("fork.wav", &wav(3000, 31));
-    let fork: Vec<u8> = (0..70_000_u32).map(|i| (i % 253) as u8).collect();
+    let fork = test_fork(70_000);
     std::fs::write(path.join("..namedfork/rsrc"), &fork).expect("resource fork written");
+    assert_eq!(read_fork(&path), fork, "before apply");
     let original = blake3_of(&path);
     let report =
         txn::apply_in_place(&path, &gain(-2.0), &opts(&lib), &NOT_CANCELLED).expect("applied");
     assert!(report.notes.is_empty(), "{:?}", report.notes);
-    let read_fork = |p: &Path| std::fs::read(p.join("..namedfork/rsrc")).expect("fork");
     assert_eq!(read_fork(&path).len(), fork.len());
     assert_eq!(read_fork(&path), fork, "output");
     let backup = report.backup.expect("backup");
     assert_eq!(read_fork(&backup), fork, "backup");
-    txn::undo(&path, &lib.backups).expect("undone");
+    let undone = txn::undo(&path, &lib.backups).expect("undone");
+    assert!(undone.notes.is_empty(), "{:?}", undone.notes);
     assert_eq!(blake3_of(&path), original);
+    assert_eq!(read_fork(&path), fork, "after undo");
+}
+
+/// macOS: while a descriptor that wrote the resource fork through its named fork is still open
+/// (another app's, or a duplicate a child process holds for the instant it is being spawned,
+/// which is how the fork written by the test above could still be pending when a test running
+/// in parallel started a process), the volume neither lists nor returns the fork as an
+/// extended attribute, but the system copy that makes the backup copies it. The output must
+/// carry it too, not lose it without a note.
+#[cfg(target_os = "macos")]
+#[test]
+fn regression_a_resource_fork_still_open_for_writing_reaches_the_output() {
+    use std::io::Write as _;
+    let lib = Library::new();
+    let path = lib.add("pending.wav", &wav(3000, 35));
+    let fork = test_fork(70_000);
+    let mut writer = std::fs::File::create(path.join("..namedfork/rsrc")).expect("fork opened");
+    writer.write_all(&fork).expect("resource fork written");
+    let listed = xattr::list(&path)
+        .expect("extended attributes")
+        .any(|n| n.as_os_str() == "com.apple.ResourceFork");
+    assert!(
+        !listed,
+        "precondition: a fork open for writing is not listed as an extended attribute"
+    );
+    let report =
+        txn::apply_in_place(&path, &gain(-2.0), &opts(&lib), &NOT_CANCELLED).expect("applied");
+    drop(writer);
+    assert!(report.notes.is_empty(), "{:?}", report.notes);
+    assert_eq!(read_fork(&path), fork, "output");
+    assert_eq!(read_fork(&report.backup.expect("backup")), fork, "backup");
+    let undone = txn::undo(&path, &lib.backups).expect("undone");
+    assert!(undone.notes.is_empty(), "{:?}", undone.notes);
     assert_eq!(read_fork(&path), fork, "after undo");
 }
 

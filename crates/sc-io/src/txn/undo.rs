@@ -53,6 +53,8 @@ pub struct UndoReport {
     /// Earlier changes of the file that are still in effect (another undo goes one further
     /// back).
     pub earlier_changes: usize,
+    /// What of the original's metadata (kept by the backup) could not be restored.
+    pub notes: Vec<String>,
 }
 
 /// Whether `e` is a finished in-place change of `path` that no undo has reversed.
@@ -142,7 +144,7 @@ pub(super) fn undo(tx: &Transaction<'_>, path: &Path, backup_root: &Path) -> Res
     crash::after(State::Renamed);
     let notes = metadata_step(&full, &backup_meta, true);
     let mut line = Line::new(&id, State::MetadataDone);
-    line.notes = notes;
+    line.notes.clone_from(&notes);
     journal.append(&line)?;
     crash::after(State::MetadataDone);
     let (sidecar, earlier_changes) = settle_after(&journal, &full, &target.txn)?;
@@ -157,6 +159,7 @@ pub(super) fn undo(tx: &Transaction<'_>, path: &Path, backup_root: &Path) -> Res
         restored_blake3: restored,
         sidecar,
         earlier_changes,
+        notes,
     })
 }
 
