@@ -1,24 +1,30 @@
 //! Fading allocates nothing per block: [`FadeIn::push`] and a [`Requantiser`] with a fade-in
 //! run here under a global allocator that counts every allocation made while counting is
 //! switched on, over blocks of 1, 7 and 4096 frames that start inside and after the ramp. This
-//! binary holds this one test, so no other test allocates while the count runs.
+//! binary holds this one test, and only allocations on its thread are counted.
 #![allow(unsafe_code)] // a global allocator is an unsafe trait; each method only forwards
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sc_dsp::{FadeIn, Requantiser, SourceDepth};
 
 struct Counting;
 
-static COUNTING: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    /// Set only on the thread under test: the harness's own thread formats and prints the test's
+    /// progress meanwhile, and its allocations are not the code's.
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+}
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 
 // SAFETY: every method forwards to the system allocator with the caller's arguments unchanged,
-// so `Counting` upholds exactly the contract `System` does; the counters are plain atomics.
+// so `Counting` upholds exactly the contract `System` does; the count is an atomic and the
+// switch a const thread-local without a destructor, neither of which allocates.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
+        if COUNTING.try_with(Cell::get).unwrap_or(false) {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
         // SAFETY: the caller's layout, passed on as `GlobalAlloc::alloc` requires.
@@ -31,7 +37,7 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
+        if COUNTING.try_with(Cell::get).unwrap_or(false) {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
         // SAFETY: as for `dealloc`; `new_size` is the caller's, checked by the caller.
@@ -53,7 +59,16 @@ fn fading_never_allocates_per_block() {
     quant.set_fade_in(FadeIn::new(88, 2).expect("valid"));
     let mut quant_f = Requantiser::new(SourceDepth::Float, 24, 0.0, 5).expect("valid");
     quant_f.set_fade_in(FadeIn::new(88, 2).expect("valid"));
-    COUNTING.store(true, Ordering::Relaxed);
+    // The count sees this thread's allocations, so a zero below means none were made.
+    COUNTING.set(true);
+    drop(std::hint::black_box(Vec::<u8>::with_capacity(1)));
+    COUNTING.set(false);
+    assert_eq!(
+        ALLOCATIONS.swap(0, Ordering::SeqCst),
+        1,
+        "one allocation counted"
+    );
+    COUNTING.set(true);
     let mut at = 0;
     for size in [2, 14, 8192].iter().cycle().take(6) {
         let end = (at + size).min(input.len());
@@ -66,7 +81,7 @@ fn fading_never_allocates_per_block() {
             .expect("float source");
         at = end;
     }
-    COUNTING.store(false, Ordering::Relaxed);
+    COUNTING.set(false);
     assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), 0);
     assert!(fade.is_done() && at > 192);
 }
