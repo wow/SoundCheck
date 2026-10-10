@@ -1,11 +1,12 @@
 //! The audio callback never allocates: it runs here under a global allocator that counts every
 //! allocation made while counting is switched on, through playing, switching versions (the gain
 //! ramp), level matching, volume changes down to mute, a seek and a pause. This binary holds this
-//! one test, so no other test allocates while the count runs.
+//! one test, and only allocations on its thread are counted.
 #![allow(unsafe_code)] // a global allocator is an unsafe trait; each method only forwards
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 
 use sc_core::DbFs;
@@ -15,14 +16,19 @@ use sc_engine::{Track, TrackProgress};
 
 struct Counting;
 
-static COUNTING: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    /// Set only on the thread under test: the harness's own thread formats and prints the test's
+    /// progress meanwhile, and its allocations are not the code's.
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+}
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 
 // SAFETY: every method forwards to the system allocator with the caller's arguments unchanged,
-// so `Counting` upholds exactly the contract `System` does; the counters are plain atomics.
+// so `Counting` upholds exactly the contract `System` does; the count is an atomic and the
+// switch a const thread-local without a destructor, neither of which allocates.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
+        if COUNTING.try_with(Cell::get).unwrap_or(false) {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
         // SAFETY: the caller's layout, passed on as `GlobalAlloc::alloc` requires.
@@ -35,7 +41,7 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
+        if COUNTING.try_with(Cell::get).unwrap_or(false) {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
         // SAFETY: as for `dealloc`; `new_size` is the caller's, checked by the caller.
@@ -88,12 +94,21 @@ fn the_callback_never_allocates() {
     let mut buffer = vec![0.0_f32; 512];
     feeder.play();
 
+    // The count sees this thread's allocations, so a zero below means none were made.
+    COUNTING.set(true);
+    drop(std::hint::black_box(Vec::<u8>::with_capacity(1)));
+    COUNTING.set(false);
+    assert_eq!(
+        ALLOCATIONS.swap(0, Ordering::SeqCst),
+        1,
+        "one allocation counted"
+    );
     let mut measured = |feeder: &mut Feeder, calls: usize| {
         for _ in 0..calls {
             feeder.pump();
-            COUNTING.store(true, Ordering::SeqCst);
+            COUNTING.set(true);
             callback.fill(&mut buffer);
-            COUNTING.store(false, Ordering::SeqCst);
+            COUNTING.set(false);
         }
     };
     measured(&mut feeder, 50);
