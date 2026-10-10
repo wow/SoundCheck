@@ -11,6 +11,16 @@
 //! `setattrlist(ATTR_CMN_CRTIME)` through std), the modification time when asked, and the mode
 //! last. Access control lists are not carried; files that have one are refused in place
 //! instead ([`has_acl`]).
+//!
+//! On macOS the resource fork of a regular file is always read through `<file>/..namedfork/rsrc`,
+//! never trusted from the attribute calls alone: while a descriptor that wrote the fork there is
+//! still open (in another app, or in a child process that holds a duplicate for the instant it
+//! is being spawned), APFS answers `listxattr(2)`/`getxattr(2)` from the last committed state
+//! (a new fork is not listed; a fork extended from 3,000 to 83,000 bytes still reads 3,000),
+//! while the named fork reads the current bytes and `clonefile(2)`/`copyfile(3)` copy them, so
+//! the backup would have them and the new file not. Writing a fork does not shorten a longer
+//! one already there (`setxattr(2)` at position 0 overwrites the start only), so [`restore`]
+//! removes a fork that differs before writing it.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{FileTimes, Metadata, OpenOptions};
@@ -165,6 +175,10 @@ pub(crate) fn snapshot(path: &Path) -> Result<FileMeta> {
             Err(e) => return Err(io_err(path, e)),
         }
     }
+    #[cfg(target_os = "macos")]
+    if meta.is_file() {
+        take_resource_fork(path, &mut xattrs).map_err(|e| io_err(path, e))?;
+    }
     Ok(FileMeta {
         id: FileId::of(&meta),
         len: meta.len(),
@@ -175,6 +189,89 @@ pub(crate) fn snapshot(path: &Path) -> Result<FileMeta> {
         created: meta.created().ok(),
         xattrs,
     })
+}
+
+/// The extended attribute that holds a file's resource fork (`XATTR_RESOURCEFORK_NAME`,
+/// sys/xattr.h).
+#[cfg(target_os = "macos")]
+const RESOURCE_FORK: &str = "com.apple.ResourceFork";
+
+/// The current resource fork of the regular file at `path`, read through its named fork (see
+/// the module documentation), empty when it has none (HFS+ shows every file an empty one);
+/// `None` when the named fork does not answer: not found, or a volume without named forks.
+///
+/// # Errors
+/// The system's error, saying the named fork was read, for any other failure.
+#[cfg(target_os = "macos")]
+fn named_fork(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    use rustix::io::Errno;
+    match std::fs::read(path.join("..namedfork/rsrc")) {
+        Ok(fork) => Ok(Some(fork)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e)
+            if [
+                NO_ATTR,
+                Errno::NOTDIR,
+                Errno::NOTSUP,
+                Errno::OPNOTSUPP,
+                Errno::INVAL,
+            ]
+            .iter()
+            .any(|n| e.raw_os_error() == Some(n.raw_os_error())) =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(std::io::Error::new(
+            e.kind(),
+            format!("its resource fork (read through ..namedfork/rsrc) is not readable: {e}"),
+        )),
+    }
+}
+
+/// Puts the current resource fork of the regular file at `path` into `xattrs` (sorted by
+/// name), replacing what the attribute calls returned for it, or removes it there when the
+/// named fork is empty. When the named fork does not answer, `xattrs` stays as listed.
+///
+/// # Errors
+/// The system's error for any other failure to read the named fork.
+#[cfg(target_os = "macos")]
+fn take_resource_fork(path: &Path, xattrs: &mut Vec<(OsString, Vec<u8>)>) -> std::io::Result<()> {
+    let name = OsStr::new(RESOURCE_FORK);
+    let Some(fork) = named_fork(path)? else {
+        return Ok(());
+    };
+    match xattrs.binary_search_by(|(n, _)| n.as_os_str().cmp(name)) {
+        Ok(i) if fork.is_empty() => {
+            xattrs.remove(i);
+        }
+        Ok(i) => {
+            if xattrs[i].1 != fork {
+                tracing::debug!(path = %path.display(), listed = xattrs[i].1.len(), bytes = fork.len(), "resource fork read through its named fork (the attribute is stale)");
+                xattrs[i].1 = fork;
+            }
+        }
+        Err(_) if fork.is_empty() => {}
+        Err(at) => {
+            tracing::debug!(path = %path.display(), bytes = fork.len(), "resource fork read through its named fork (not listed yet)");
+            xattrs.insert(at, (name.to_os_string(), fork));
+        }
+    }
+    Ok(())
+}
+
+/// The value of the extended attribute `name` of `path` as readers see it: on macOS the
+/// resource fork of a regular file through its named fork (see the module documentation;
+/// `None` when it is empty), anything else, or a fork the named fork does not answer for,
+/// through [`read_xattr`].
+fn read_current(path: &Path, name: &OsStr) -> std::io::Result<Option<Vec<u8>>> {
+    #[cfg(target_os = "macos")]
+    if name == RESOURCE_FORK
+        && std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
+        && let Some(fork) = named_fork(path)?
+    {
+        return Ok(Some(fork).filter(|f| !f.is_empty()));
+    }
+    read_xattr(path, name)
 }
 
 /// Writes `meta` onto the file at `path`: every extended attribute (each read back and
@@ -189,7 +286,16 @@ pub(crate) fn restore(path: &Path, meta: &FileMeta, keep_mtime: bool) -> Result<
     let mut notes = Vec::new();
     for (name, value) in &meta.xattrs {
         let shown = name.to_string_lossy();
-        if matches!(read_xattr(path, name), Ok(Some(v)) if v == *value) {
+        let current = read_current(path, name);
+        if matches!(&current, Ok(Some(v)) if v == value) {
+            continue;
+        }
+        // A fork is overwritten from its start, never shortened: remove a different one first.
+        if is_resource_fork(name)
+            && matches!(current, Ok(Some(_)))
+            && let Err(e) = xattr::remove(path, name)
+        {
+            notes.push(format!("extended attribute not restored: {shown} ({e})"));
             continue;
         }
         if let Err(e) = xattr::set(path, name, value) {
@@ -197,7 +303,7 @@ pub(crate) fn restore(path: &Path, meta: &FileMeta, keep_mtime: bool) -> Result<
             notes.push(format!("extended attribute not restored: {shown} ({e})"));
             continue;
         }
-        match read_xattr(path, name) {
+        match read_current(path, name) {
             Ok(Some(v)) if v == *value => {}
             Ok(v) => notes.push(format!(
                 "extended attribute {shown} reads back as {} bytes, {} were written",
@@ -227,6 +333,19 @@ pub(crate) fn restore(path: &Path, meta: &FileMeta, keep_mtime: bool) -> Result<
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(meta.mode))
         .map_err(|e| io_err(path, e))?;
     Ok(notes)
+}
+
+/// Whether `name` is the resource fork's attribute (macOS only).
+fn is_resource_fork(name: &OsStr) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        name == RESOURCE_FORK
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = name;
+        false
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -289,3 +408,6 @@ pub(crate) fn has_acl(path: &Path) -> Result<bool> {
         Ok(Some(_))
     ))
 }
+
+#[cfg(test)]
+mod tests;

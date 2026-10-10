@@ -212,6 +212,7 @@ struct UndoneDoc<'a> {
     restored_blake3: String,
     sidecar: &'static str,
     earlier_changes: usize,
+    notes: &'a [String],
     total_ms: f64,
 }
 
@@ -476,6 +477,7 @@ pub fn run_apply(args: ApplyArgs) -> anyhow::Result<usize> {
 /// The one line printed for a file `undo` restored.
 #[must_use]
 pub fn undone_line(file: &Path, r: &UndoReport) -> String {
+    use std::fmt::Write as _;
     let sidecar = match &r.sidecar {
         SidecarAfterUndo::Removed => "; sidecar removed",
         SidecarAfterUndo::Restored(_) => "; sidecar describes the previous change again",
@@ -488,11 +490,15 @@ pub fn undone_line(file: &Path, r: &UndoReport) -> String {
             plural(n as u64, "earlier change remains", "earlier changes remain")
         ),
     };
-    format!(
+    let mut s = format!(
         "{}: previous version restored from {}; verified{sidecar}{earlier}",
         file.display(),
         r.backup.display()
-    )
+    );
+    for note in &r.notes {
+        let _ = write!(s, "; note: {note}");
+    }
+    s
 }
 
 fn undone_doc<'a>(file: &Path, r: &'a UndoReport, total: Duration) -> UndoneDoc<'a> {
@@ -511,6 +517,7 @@ fn undone_doc<'a>(file: &Path, r: &'a UndoReport, total: Duration) -> UndoneDoc<
             SidecarAfterUndo::Absent => "absent",
         },
         earlier_changes: r.earlier_changes,
+        notes: &r.notes,
         total_ms: ms(total),
     }
 }

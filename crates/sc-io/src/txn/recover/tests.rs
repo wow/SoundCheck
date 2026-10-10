@@ -292,3 +292,69 @@ fn an_entry_whose_id_cannot_name_a_lock_stays_pending() {
     );
     assert!(!s.root.join("escape.lock").exists());
 }
+
+/// A render record as the `verified` line carries it.
+fn record() -> crate::txn::sidecar::Record {
+    use crate::txn::sidecar::{BlockCounts, Record, RenderSummary};
+    Record {
+        request: sc_core::RenderRequest {
+            gain_db: -2.0,
+            ..sc_core::RenderRequest::default()
+        },
+        render: RenderSummary {
+            frames_in: 7,
+            frames_out: 7,
+            trim_frames: 0,
+            trim_requested_frames: 0,
+            sample_rate_hz: 44_100,
+            channels: 2,
+            bits_out: 16,
+            exact: false,
+            dithered: true,
+            samples_saturated: 0,
+            pcm_blake3: "cc".into(),
+            blocks: BlockCounts {
+                carried: 0,
+                patched: 0,
+                edited: 0,
+                replaced: 2,
+                dropped: 0,
+            },
+            tags_added: false,
+            tags_not_added: None,
+            stale_loudness_tags: Vec::new(),
+        },
+    }
+}
+
+#[test]
+fn a_sidecar_written_by_recovery_keeps_what_the_backup_lacks() {
+    let s = scene();
+    let backup_note = "backup: extended attribute not restored: com.example.x (refused)";
+    // The run journaled a backup note, renamed, then crashed before its metadata step.
+    let mut planned = Line::new("t", State::Planned);
+    planned.sidecar = Some(true);
+    s.journal.append(&planned).expect("sidecar wanted");
+    let mut verified = Line::new("t", State::Verified);
+    verified.record = Some(record());
+    s.journal.append(&verified).expect("record");
+    let mut backed = Line::new("t", State::BackedUp);
+    backed.notes = vec![backup_note.to_owned()];
+    s.journal.append(&backed).expect("backup note");
+    std::fs::write(&s.target, OUTPUT).expect("output in place");
+    s.journal
+        .append(&Line::new("t", State::Renamed))
+        .expect("renamed");
+
+    let r = recover(&s.root).expect("recovered").recovered;
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].outcome, Outcome::Completed);
+    let doc: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(crate::txn::sidecar_path(&s.target)).expect("sidecar written"),
+    )
+    .expect("JSON");
+    // A run without the crash lists the backup's notes, then the metadata step's (none here).
+    assert_eq!(doc["metadata"]["notes"], serde_json::json!([backup_note]));
+    let e = s.journal.entry("t").expect("read").expect("entry");
+    assert_eq!(e.notes, vec![backup_note.to_owned()], "journaled once");
+}

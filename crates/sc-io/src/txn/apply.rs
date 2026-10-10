@@ -34,6 +34,9 @@ use super::volume::{Volume, volume_identity};
 use super::{Transaction, TxnOptions, TxnReport};
 use crate::render::{self, RenderReport, check_cancel};
 
+/// What starts each note about metadata the backup lacks.
+pub(crate) const BACKUP_NOTE_PREFIX: &str = "backup: ";
+
 /// Most numbered names tried for a backup whose name is taken.
 const MAX_BACKUP_SUFFIX: u32 = 10_000;
 
@@ -72,6 +75,18 @@ pub(super) struct Prepared {
     pub output: (u64, [u8; 32]),
     pub original: (u64, [u8; 32]),
     pub backup: Option<PathBuf>,
+    /// What the backup lacks of the original's metadata.
+    pub backup_notes: Vec<String>,
+}
+
+/// What [`back_up`] made.
+struct BackedUp {
+    /// Length and BLAKE3 of the original (and the backup).
+    original: (u64, [u8; 32]),
+    /// The backup's final path.
+    path: PathBuf,
+    /// What the backup lacks of the original's metadata (`backup: ...`).
+    notes: Vec<String>,
 }
 
 /// Runs an in-place (`out_dir` `None`) or copy-to-folder transaction.
@@ -326,14 +341,14 @@ fn before_rename(
     timings.push((State::Verified, t.elapsed()));
     check_cancel(cancel)?;
 
-    let (original, backup) = match (&plan.backup, folder_original) {
+    let (original, backup, backup_notes) = match (&plan.backup, folder_original) {
         (Some((dest, temp)), _) => {
             let t = Instant::now();
-            let (original, backup) = back_up(plan, dest, temp)?;
+            let b = back_up(plan, dest, temp)?;
             timings.push((State::BackedUp, t.elapsed()));
-            (original, Some(backup))
+            (b.original, Some(b.path), b.notes)
         }
-        (None, Some(original)) => (original, None),
+        (None, Some(original)) => (original, None, Vec::new()),
         (None, None) => return Err(Error::Internal("no original hash".into())),
     };
     check_cancel(cancel)?;
@@ -342,6 +357,7 @@ fn before_rename(
         output,
         original,
         backup,
+        backup_notes,
     })
 }
 
@@ -349,13 +365,16 @@ fn before_rename(
 /// the whole resource fork; synced, hashed by reading it back), gives it the original's
 /// dates and mode, then renames it to the first free name of `dest`, `dest (2)`, ...,
 /// journaling each name before trying it.
-fn back_up(plan: &Plan<'_>, dest: &Path, temp: &Path) -> Result<((u64, [u8; 32]), PathBuf)> {
+fn back_up(plan: &Plan<'_>, dest: &Path, temp: &Path) -> Result<BackedUp> {
     let dir = temp.parent().unwrap_or(plan.journal.root());
     std::fs::create_dir_all(dir).map_err(|e| io_err(dir, e))?;
     check_unchanged(&plan.src.path, &plan.meta, plan.meta.len)?;
     let original = system_copy_hashed(&plan.src.path, temp)?;
     check_unchanged(&plan.src.path, &plan.meta, original.0)?;
-    let notes = restore(temp, &plan.meta, true)?;
+    let notes: Vec<String> = restore(temp, &plan.meta, true)?
+        .into_iter()
+        .map(|n| format!("{BACKUP_NOTE_PREFIX}{n}"))
+        .collect();
     if !notes.is_empty() {
         tracing::warn!(path = %temp.display(), notes = ?notes, "backup lacks some metadata");
     }
@@ -389,10 +408,15 @@ fn back_up(plan: &Plan<'_>, dest: &Path, temp: &Path) -> Result<((u64, [u8; 32])
     line.backup = Some(backup.clone());
     line.original_blake3 = Some(hex(&original.1));
     line.original_bytes = Some(original.0);
+    line.notes.clone_from(&notes);
     plan.journal.append(&line)?;
     crash::after(State::BackedUp);
     tracing::debug!(path = %plan.src.path.display(), stage = "backup", backup = %backup.display(), "backed up");
-    Ok((original, backup))
+    Ok(BackedUp {
+        original,
+        path: backup,
+        notes,
+    })
 }
 
 /// [`Error::FileChanged`] unless the file at `path` still has the identity read under the

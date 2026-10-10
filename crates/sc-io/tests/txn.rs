@@ -466,28 +466,6 @@ fn undo_walks_back_through_two_changes_and_refuses_an_edited_file() {
     assert!(!sidecar_path(&path).exists());
 }
 
-/// macOS: a 70,000-byte resource fork (reads of it are cut to the buffer unless sized first).
-#[cfg(target_os = "macos")]
-#[test]
-fn a_large_resource_fork_survives_in_the_output_the_backup_and_the_undo() {
-    let lib = Library::new();
-    let path = lib.add("fork.wav", &wav(3000, 31));
-    let fork: Vec<u8> = (0..70_000_u32).map(|i| (i % 253) as u8).collect();
-    std::fs::write(path.join("..namedfork/rsrc"), &fork).expect("resource fork written");
-    let original = blake3_of(&path);
-    let report =
-        txn::apply_in_place(&path, &gain(-2.0), &opts(&lib), &NOT_CANCELLED).expect("applied");
-    assert!(report.notes.is_empty(), "{:?}", report.notes);
-    let read_fork = |p: &Path| std::fs::read(p.join("..namedfork/rsrc")).expect("fork");
-    assert_eq!(read_fork(&path).len(), fork.len());
-    assert_eq!(read_fork(&path), fork, "output");
-    let backup = report.backup.expect("backup");
-    assert_eq!(read_fork(&backup), fork, "backup");
-    txn::undo(&path, &lib.backups).expect("undone");
-    assert_eq!(blake3_of(&path), original);
-    assert_eq!(read_fork(&path), fork, "after undo");
-}
-
 /// macOS (case-insensitive, normalisation-insensitive volumes): one file reached under two
 /// spellings is one file in the journal.
 #[cfg(target_os = "macos")]

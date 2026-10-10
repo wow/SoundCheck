@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 
 use sc_core::{Error, Result};
 
+use super::apply::BACKUP_NOTE_PREFIX;
 use super::finish::metadata_step;
 use super::fsx::{exists, hash_file, hex, remove_if_exists};
 use super::journal::{Entry, Journal, Line, Outcome, State, TargetLock, TxnKind, TxnLock};
@@ -367,7 +368,16 @@ fn complete(journal: &Journal, e: &Entry) -> Result<Vec<String>> {
             if entry.backup.is_none() {
                 entry.backup.clone_from(&entry.backup_target);
             }
-            if let Err(err) = sidecar::write(&entry, &notes) {
+            // As a run without the crash writes it: what the backup lacks (journaled with
+            // the backup), then what the metadata step found now.
+            let mut all: Vec<String> = e
+                .notes
+                .iter()
+                .filter(|n| n.starts_with(BACKUP_NOTE_PREFIX))
+                .cloned()
+                .collect();
+            all.extend(notes.iter().cloned());
+            if let Err(err) = sidecar::write(&entry, &all) {
                 notes.push(format!("sidecar not written: {err}"));
             }
         }

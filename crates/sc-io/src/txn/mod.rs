@@ -43,9 +43,10 @@
 //! 5. **Rename**: if the original's identity is still unchanged, the temp file is renamed over
 //!    it (atomic within a folder) and the folder synced (errors ignored). `renamed`. This is
 //!    the only step that changes the path, and nothing before it does.
-//! 6. **Metadata**: every extended attribute (read back to check), the group, the creation
-//!    date, the modification time (with [`TxnOptions::keep_mtime`]) and the mode of the
-//!    original. `metadata_done`.
+//! 6. **Metadata**: every extended attribute (read back to check; on macOS the resource fork
+//!    too while a writer elsewhere keeps it open, which APFS does not list yet), the group, the
+//!    creation date, the modification time (with [`TxnOptions::keep_mtime`]) and the mode of
+//!    the original; what the backup or the new file lacks becomes a note. `metadata_done`.
 //! 7. **Sidecar** `<file>.soundcheck.json` next to the file (see [`sidecar`]), written
 //!    atomically. `done`.
 //!
@@ -167,8 +168,9 @@ pub struct TxnReport {
     pub output_blake3: [u8; 32],
     /// Length of the output file, bytes.
     pub output_bytes: u64,
-    /// What could not be restored or written after the rename (extended attributes the system
-    /// refused, a sidecar that could not be written).
+    /// What of the original's metadata the backup lacks (`backup: ...`), and what could not be
+    /// restored or written after the rename (extended attributes the system refused, a sidecar
+    /// that could not be written).
     pub notes: Vec<String>,
     /// Time spent up to each journaled state.
     pub timings: Vec<(State, Duration)>,
