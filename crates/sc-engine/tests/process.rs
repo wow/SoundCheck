@@ -124,7 +124,7 @@ fn names(events: &[EngineEvent], file: u32) -> Vec<&'static str> {
         .filter(|e| file_of(e) == Some(file))
         .filter_map(|e| match e {
             EngineEvent::Started { .. } => Some("started"),
-            EngineEvent::Progress { .. } => None,
+            EngineEvent::Progress { .. } | EngineEvent::Batch(_) => None,
             EngineEvent::Analysed { .. } => Some("analysed"),
             EngineEvent::Failed { .. } => Some("failed"),
             EngineEvent::Cancelled { .. } => Some("cancelled"),
@@ -132,7 +132,6 @@ fn names(events: &[EngineEvent], file: u32) -> Vec<&'static str> {
             EngineEvent::Written { .. } => Some("written"),
             EngineEvent::ExportSkipped { .. } => Some("exportSkipped"),
             EngineEvent::Done { .. } => Some("done"),
-            EngineEvent::Batch(_) => None,
         })
         .collect()
 }
@@ -453,9 +452,10 @@ fn prepare_puts_bar_1_at_the_lead() {
     assert_eq!(u64::from(frames(&path)), frames_in - trim);
     // Bar 1 lands between the lead (5 ms: 220.5 samples) and 1 ms plus a sample after it.
     let grid = export.grid.expect("grid exported");
-    let lead: f64 = 220.5;
-    let bar1 = grid.first_bar_line.0 as f64;
-    assert!(bar1 >= lead.floor() && bar1 <= lead + 44.1 + 1.0, "{bar1}");
+    // 5 ms is 220.5 samples at 44.1 kHz; 1 ms is 44.1: bar 1 lands at sample 220 or 221 (the
+    // lead rounded) up to 265.
+    let bar1 = grid.first_bar_line.0;
+    assert!((220..=265).contains(&bar1), "{bar1}");
     assert_eq!(grid.bar1, grid.first_bar_line, "bar 1 is the first line");
     assert_eq!(grid.bpm.0, 120.0);
     // The audio moved by exactly the cut.
