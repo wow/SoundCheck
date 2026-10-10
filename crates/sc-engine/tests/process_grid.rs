@@ -34,16 +34,23 @@ fn prepare_puts_bar_1_at_the_lead() {
     assert!(matches!(export.plan.cut, Cut::Cut { frames, .. } if frames == trim));
     assert_eq!(doc.render.trim_frames(), trim);
     assert_eq!(u64::from(frames(&path)), frames_in - trim);
-    // Bar 1 lands between the lead (5 ms: 220.5 samples) and 1 ms plus a sample after it.
+    // In the audio: the first click (bar 1) starts between the lead (5 ms: 220.5 samples at
+    // 44.1 kHz) and 1 ms plus a sample after it, so at sample 220 or 221 up to 265.
+    let onset = first_sound(&path);
+    assert!(
+        (220..=265).contains(&onset),
+        "the first click starts at {onset}"
+    );
+    assert_eq!(onset, sound_in - trim, "the audio moved by exactly the cut");
+    // The record agrees with the audio to the analysis's accuracy (its bar 1 is found to the
+    // millisecond on the attack, which a 1% threshold meets a little later or earlier).
     let grid = export.grid.expect("grid exported");
-    // 5 ms is 220.5 samples at 44.1 kHz; 1 ms is 44.1: bar 1 lands at sample 220 or 221 (the
-    // lead rounded) up to 265.
-    let bar1 = grid.first_bar_line.0;
-    assert!((220..=265).contains(&bar1), "{bar1}");
     assert_eq!(grid.bar1, grid.first_bar_line, "bar 1 is the first line");
+    assert!(
+        grid.first_bar_line.0.abs_diff(onset) <= 44,
+        "onset {onset}, {grid:?}"
+    );
     assert_eq!(grid.bpm.0, 120.0);
-    // The audio moved by exactly the cut.
-    assert_eq!(first_sound(&path), sound_in - trim);
 }
 
 #[test]

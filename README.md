@@ -7,7 +7,7 @@ SoundCheck is a free, open-source desktop app for DJs and producers. Drop a fold
 > **Status: in development, no usable release yet.** What works today, from source:
 > - **The app** analyses a dropped library (loudness, BPM, meter and bar 1, with a Needs-review queue) and opens any track in a grid view to inspect and fix its grid while a click plays along, with live IN/OUT meters, an original/processed A/B and a volume control. It does not write files yet.
 > - **`sc-cli apply`** already changes WAV, AIFF and FLAC files: gain and an optional head trim (snapped back up to 1 ms to the quietest frame and faded in over 2 ms), every other chunk, block and tag carried byte for byte, verified, with a backup in `~/Music/SoundCheck Backups` and `sc-cli undo`.
-> - **`sc-cli process <files> --mode prepare|library`** exports: the planned gain, the Prepare cut and the tags written in place after a backup (or as copies with `--out`), verified against the planned length, with a sidecar recording the exported grid; grid edits and confirmations made in the app carry over to the exported file.
+> - **`sc-cli process <files> --batch-mode prepare|library`** exports: the planned gain, the Prepare cut and the tags written in place after a backup (or as copies with `--out`), verified against the planned length, with a sidecar recording the exported grid; grid edits and confirmations made in the app carry over to the exported file.
 > - **`sc-cli plan --batch-mode prepare|library`** previews what an export will do to each file: the gain, the head cut (`Cut 0.21 s`, `Starts on bar 1`, `Starts on a bar line (bar 1 at 8.00 s)`, `Not cut: bar 1 1.00 s in`, or `Not cut: grid needs review` until the grid is confirmed), the tags, or why a file is left to the rekordbox XML (MP3/AAC for now) or skipped.
 >
 > Exporting from the app, the rekordbox XML, the exported-grid self-check and MP3 output come next. The first pre-release, `v0.1.0-alpha.1`, follows once exported files pass rekordbox 7's own analysis; `v0.1.0` is the first release for everyone. Watch the releases page or the changelog.
@@ -39,7 +39,7 @@ pnpm dev:mock                 # the UI alone in a browser, with synthetic tracks
 cargo run --release -p sc-cli -- analyze <file>          # loudness, BPM, meter and bar 1
 cargo run --release -p sc-cli -- plan <files>            # what processing would do to each file
 cargo run --release -p sc-cli -- plan <files> --batch-mode prepare   # ... and what exporting would write
-cargo run --release -p sc-cli -- process <files> --mode prepare   # export (backup first; --out <dir> for copies)
+cargo run --release -p sc-cli -- process <files> --batch-mode prepare   # export (backup first; --out <dir> for copies)
 cargo run --release -p sc-cli -- apply <files> --gain-db -3   # change files (backup first; --out <dir> for copies)
 cargo run --release -p sc-cli -- undo <files>            # put the previous version back
 cargo run --release -p sc-cli -- journal                 # recorded changes; `recover` finishes interrupted ones

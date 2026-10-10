@@ -58,7 +58,7 @@ fn in_place_writes_backs_up_and_records_the_export() {
     let lib = Library::new();
     let wav = tone(&lib, "a.wav", 44_100);
     let original = bytes(&wav);
-    let run = process(&lib, &[arg(&wav), "--mode", "library"]);
+    let run = process(&lib, &[arg(&wav), "--batch-mode", "library"]);
     assert!(run.ok, "{}", run.text());
     let first = run.stdout.lines().next().expect("a line");
     assert!(
@@ -154,7 +154,7 @@ fn json_has_one_document_per_file() {
     let hi_res = tone(&lib, "b.wav", 96_000);
     let run = process(
         &lib,
-        &[arg(&wav), arg(&hi_res), "--mode", "library", "--json"],
+        &[arg(&wav), arg(&hi_res), "--batch-mode", "library", "--json"],
     );
     assert!(run.ok, "{}", run.text());
     let docs = run.docs();
@@ -178,7 +178,13 @@ fn refusals_print_three_lines_and_fail_the_run() {
     let missing = lib.music.join("missing.wav");
     let run = process(
         &lib,
-        &[arg(&wav), arg(&wav), arg(&missing), "--mode", "library"],
+        &[
+            arg(&wav),
+            arg(&wav),
+            arg(&missing),
+            "--batch-mode",
+            "library",
+        ],
     );
     assert!(!run.ok);
     assert_eq!(run.code, Some(2));
@@ -200,7 +206,7 @@ fn refusals_print_three_lines_and_fail_the_run() {
     // A skipped file is not a failure.
     let lib = Library::new();
     let hi_res = tone(&lib, "b.wav", 96_000);
-    let run = process(&lib, &[arg(&hi_res), "--mode", "prepare"]);
+    let run = process(&lib, &[arg(&hi_res), "--batch-mode", "prepare"]);
     assert!(run.ok, "{}", run.text());
     assert!(
         run.stdout.contains("b.wav: prepare: skipped"),

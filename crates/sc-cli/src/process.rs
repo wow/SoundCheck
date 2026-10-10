@@ -53,7 +53,7 @@ pub struct ProcessArgs {
     /// Prepare (new tracks: the start may be cut so bar 1 sits a lead after it) or Library
     /// (tracks already in a DJ app: the length never changes).
     #[arg(long, value_enum)]
-    mode: BatchModeArg,
+    batch_mode: BatchModeArg,
     /// Change no audio: no gain and no cut; only tags carry the grid.
     #[arg(long)]
     grid_only: bool,
@@ -71,7 +71,7 @@ pub struct ProcessArgs {
     no_tbpm: bool,
     /// Statistic to align: S-P95 for DJ sets, integrated loudness for streaming.
     #[arg(long, value_enum, default_value = "dj")]
-    stat: ModeArg,
+    mode: ModeArg,
     /// Target in LUFS (default -11 for dj, -14 for streaming).
     #[arg(long, allow_hyphen_values = true)]
     target: Option<f64>,
@@ -92,7 +92,7 @@ pub struct ProcessArgs {
 
 impl ProcessArgs {
     fn export_settings(&self) -> anyhow::Result<ExportSettings> {
-        let mode = match self.mode {
+        let mode = match self.batch_mode {
             BatchModeArg::Prepare => BatchMode::Prepare,
             BatchModeArg::Library => BatchMode::Library,
         };
@@ -146,7 +146,7 @@ struct Counts {
 /// # Errors
 /// Invalid flags, an unreachable backup, cache or edits folder, or a failed write to stdout.
 pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
-    let decide = decide_settings(args.stat, args.target, args.ceiling, &args.analysis);
+    let decide = decide_settings(args.mode, args.target, args.ceiling, &args.analysis);
     decide.validate()?;
     let export = args.export_settings()?;
     let root = args.backup.resolve()?;
