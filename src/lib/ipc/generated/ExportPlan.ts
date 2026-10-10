@@ -13,13 +13,21 @@ export type ExportPlan = {
  */
 gainDb: number, 
 /**
- * Frames to cut from the start, as asked of the renderer, which makes the cut up to 1 ms
- * earlier at the quietest frame and reports the cut it made.
+ * Frames to cut from the start. Until the plan is snapped, the cut to ask of the
+ * renderer, which makes it up to 1 ms earlier at the quietest frame; once snapped, the cut
+ * the renderer makes, which every position in this plan (the frame count, bar 1 in the
+ * `SOUNDCHECK` record, the cut shown) is planned from.
  */
 trimFrames: number, 
 /**
- * Frames the output must have: the source's minus the trim (Library: the source's). A cut
- * the renderer makes earlier leaves as many frames more as it moved.
+ * Set once the plan is snapped: the cut that was asked for, frames, of which
+ * `trim_frames` is the snap. A render is then asked to cut exactly `trim_frames`.
+ */
+trimSnappedFromFrames: number | null, 
+/**
+ * Frames the output must have: the source's minus `trim_frames` (Library: the source's).
+ * Exact once the plan is snapped; before, a cut the renderer makes earlier leaves as many
+ * frames more as it moved.
  */
 expectFrames: number, 
 /**

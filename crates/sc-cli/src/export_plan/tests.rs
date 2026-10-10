@@ -13,6 +13,7 @@ fn plan(cut: Cut) -> ExportPlan {
     ExportPlan {
         gain_db: -2.04,
         trim_frames: 0,
+        trim_snapped_from_frames: None,
         expect_frames: 1,
         bits: None,
         tags: vec![Tag::new("BPM", "120.00"), Tag::new("SOUNDCHECK", "v=1")],
@@ -50,6 +51,18 @@ fn written_files_name_the_gain_the_cut_and_the_tags() {
     assert!(
         t.contains("Not cut: first bar line 1.00 s in (bar 1 at 9.00 s);"),
         "{t}"
+    );
+    let review = text(&ExportOutcome::Write {
+        plan: plan(Cut::NeedsReview {
+            bar1: SampleIndex(101_430),
+            bar1_s: SampleIndex(101_430).to_seconds(44_100),
+        }),
+    });
+    assert!(
+        review.contains(
+            "Gain -2.0 dB, Not cut: grid needs review (bar 1 at 2.30 s; confirm it in the app);"
+        ),
+        "{review}"
     );
     let mut grid_only = plan(Cut::GridOnly);
     grid_only.gain_db = 0.0;

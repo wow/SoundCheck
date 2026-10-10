@@ -213,7 +213,13 @@ fn plan_prepare_prints_cut() {
     let json = run(&["--batch-mode", "prepare", "--json"]);
     let doc: serde_json::Value = serde_json::from_str(json.trim()).expect("one document");
     assert_eq!(doc["export"]["type"], "write");
-    assert_eq!(doc["export"]["plan"]["trimFrames"], 17_419);
+    // The cut is planned from where the render makes it: up to 1 ms (44 frames) earlier.
+    assert_eq!(doc["export"]["plan"]["trimSnappedFromFrames"], 17_419);
+    let trim = doc["export"]["plan"]["trimFrames"]
+        .as_u64()
+        .expect("frames");
+    assert!((17_375..=17_419).contains(&trim), "{trim}");
+    assert_eq!(doc["export"]["plan"]["cut"]["frames"], trim);
     assert_eq!(doc["export"]["plan"]["cut"]["type"], "cut");
     // Without --batch-mode, nothing about export.
     let text = run(&[]);

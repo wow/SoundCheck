@@ -11,12 +11,14 @@
 //!   the exported bar line at that tempo meets bar 1). Let `B` be the first bar line at or after the start. When
 //!   `B` lies before the lead, the file already starts on a bar line and nothing is cut (no
 //!   silence is ever added). Otherwise `floor(B - lead)` frames are asked to be cut, so `B`
-//!   would land at the lead or less than one sample after it (never before); the renderer then
+//!   would land at the lead or less than one sample after it (never before); the renderer
 //!   moves the cut up to 1 ms earlier to the quietest frame (never later) and fades the first
-//!   2 ms in, so `B` lands between the lead and 1 ms (plus that sample) after it, by the cut
-//!   its report gives. When the cut would remove more than the bar's last beat (the pulses of
-//!   its last group), nothing is cut, because removing more would remove music. Library mode
-//!   never cuts.
+//!   2 ms in, so `B` lands between the lead and 1 ms (plus that sample) after it.
+//!   [`plan_snapped_cut`] plans the cut, the frame count and the record from that snapped cut,
+//!   which the render is then asked to make exactly. When the cut would remove more than the
+//!   bar's last beat (the pulses of its last group), nothing is cut, because removing more
+//!   would remove music. A grid that needs review and that the user has not confirmed is not
+//!   cut to: where bar 1 is cannot be trusted. Library mode never cuts.
 //! - **Tags** (by neutral name, only into a tag the file has): `BPM` at the meter's unit with
 //!   two decimals when the tempo tag is on; Replay Gain 2.0 track gain `-18 - (I + g)` dB and
 //!   track peak `10^((TP + g) / 20)` when a gain is written; the `SOUNDCHECK` record always.
@@ -30,9 +32,10 @@ use sc_core::export::{
     TAG_REPLAYGAIN_TRACK_GAIN, TAG_REPLAYGAIN_TRACK_PEAK, TAG_SOUNDCHECK, XmlOnlyReason,
     positive_zero,
 };
+use sc_core::ipc::JobStage;
 use sc_core::plan::{Codec, DecideSettings, GainPlan, Plan, SkipReason};
 use sc_core::{BextLoudness, Bpm, DbTp, Lu, Lufs, SampleIndex, Tag, VERSION};
-use sc_io::render::DJ_SAFE_RATES_HZ;
+use sc_io::render::{DJ_SAFE_RATES_HZ, head_snap_frames};
 
 /// What the planner needs to know about the source file beyond its analysis.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -71,7 +74,9 @@ pub enum SeratoPresence {
 pub struct ExportInput<'a> {
     /// Its analysis, with the grid as shown (the user's edits applied).
     pub record: &'a AnalysisRecord,
-    /// Its plan under `decide` ([`crate::decide()`]).
+    /// Its plan under `decide` ([`crate::decide()`]), decided with whether the user confirmed
+    /// the grid: a confirmed grid needs no review, so only then is a grid that would otherwise
+    /// need review cut to.
     pub plan: &'a Plan,
     /// The loudness settings the plan was decided with.
     pub decide: &'a DecideSettings,
@@ -87,9 +92,16 @@ pub struct ExportInput<'a> {
 /// leaves FLAC, sources it would requantise and files without a tag to the XML; with the XML
 /// off, what only the XML could carry is skipped; a Prepare cut in place of a file with Serato
 /// data, or whose tags could not be read to rule it out, is skipped (a cut copy of a file with
-/// Serato data gets a notice); everything else is written.
+/// Serato data gets a notice); everything else is written. That Serato skip is decided here
+/// from the cut asked of the renderer; [`crate::plan_export_snapped`] decides it from the cut
+/// made, so a cut that snaps back to the first frame (nothing cut) is not skipped.
 #[must_use]
 pub fn plan_export(input: &ExportInput<'_>, settings: &ExportSettings) -> ExportOutcome {
+    serato_gate(input, settings, plan_ungated(input, settings))
+}
+
+/// [`plan_export`] without the Serato in-place skip.
+pub(super) fn plan_ungated(input: &ExportInput<'_>, settings: &ExportSettings) -> ExportOutcome {
     let ExportInput { record, source, .. } = *input;
     let codec = source.codec;
     if matches!(codec, Codec::Mp3 | Codec::Aac) {
@@ -116,22 +128,125 @@ pub fn plan_export(input: &ExportInput<'_>, settings: &ExportSettings) -> Export
     } else if input.plan.skip == Some(SkipReason::Silent) || input.plan.measured.is_none() {
         return skip(ExportSkip::Silent);
     }
-    let (cut, trim_frames) = head(record, settings);
-    let cut_s = SampleIndex(trim_frames).to_seconds(sample_rate_hz);
-    let mut notices = Vec::new();
-    if trim_frames > 0 {
-        match (source.serato, settings.place) {
-            (SeratoPresence::Present, Place::InPlace) => {
-                return skip(ExportSkip::SeratoInPlaceCut { cut_s });
-            }
-            (SeratoPresence::Present, Place::Folder) => {
-                notices.push(ExportNotice::SeratoCuesShifted { cut_s });
-            }
-            (SeratoPresence::Unknown, Place::InPlace) => {
-                return skip(ExportSkip::SeratoUnknownInPlaceCut { cut_s });
-            }
-            (SeratoPresence::Unknown, Place::Folder) | (SeratoPresence::Absent, _) => {}
+    let (cut, trim_frames) = head(record, input.plan, settings);
+    ExportOutcome::Write {
+        plan: write_plan(input, settings, cut, trim_frames, None),
+    }
+}
+
+/// `outcome` (a plan of `input`), or the skip of a cut in place of a file with Serato data, or
+/// whose tags could not be read to rule it out: its cue points are positions in the audio.
+pub(super) fn serato_gate(
+    input: &ExportInput<'_>,
+    settings: &ExportSettings,
+    outcome: ExportOutcome,
+) -> ExportOutcome {
+    let ExportOutcome::Write { plan } = &outcome else {
+        return outcome;
+    };
+    if plan.trim_frames == 0 || settings.place != Place::InPlace {
+        return outcome;
+    }
+    let cut_s = SampleIndex(plan.trim_frames).to_seconds(input.record.spec.sample_rate);
+    match input.source.serato {
+        SeratoPresence::Present => skip(ExportSkip::SeratoInPlaceCut { cut_s }),
+        SeratoPresence::Unknown => skip(ExportSkip::SeratoUnknownInPlaceCut { cut_s }),
+        SeratoPresence::Absent => outcome,
+    }
+}
+
+/// The plan of `input` once its head cut is snapped: `plan` (what [`plan_export`] gave for
+/// `input` and `settings`) with every value that depends on the cut planned from
+/// `snapped_frames`, the cut the renderer makes for the planned one (what
+/// [`sc_io::render::snap_head_cut`] gives for `plan.trim_frames`): `trim_frames`, the frame
+/// count to expect, the cut shown, the `SOUNDCHECK` record's `trim=` and `bar1=`, the Serato
+/// notice. Bar 1 then lands between the lead and 1 ms plus a sample after it. A snap to the
+/// first frame cuts nothing and the file starts on its bar line. A plan without a cut is
+/// returned as it is (its snap is 0).
+///
+/// Pure: the snap is the caller's to make, once, so that the render is asked for exactly this
+/// cut ([`ExportPlan::trim_snapped_from_frames`] set) and never snaps it again.
+///
+/// # Errors
+/// [`sc_core::Error::InvalidArgument`] when `plan` is already snapped, is not the plan of
+/// `input` and `settings`, or `snapped_frames` is not a snap of its cut (later than it, or more
+/// than [`head_snap_frames`] before it).
+pub fn plan_snapped_cut(
+    input: &ExportInput<'_>,
+    settings: &ExportSettings,
+    plan: &ExportPlan,
+    snapped_frames: u64,
+) -> sc_core::Result<ExportPlan> {
+    let requested = plan.trim_frames;
+    let invalid = |what: String| Err(sc_core::Error::InvalidArgument(what));
+    if plan.trim_snapped_from_frames.is_some() {
+        return invalid(format!(
+            "the plan's cut of {requested} frames is already snapped"
+        ));
+    }
+    let record = input.record;
+    let (cut, trim) = head(record, input.plan, settings);
+    if trim != requested || cut != plan.cut {
+        return invalid(format!(
+            "a plan cutting {requested} frames is not the plan of this file, which cuts {trim}"
+        ));
+    }
+    if requested == 0 {
+        if snapped_frames != 0 {
+            return invalid(format!(
+                "a plan without a cut snapped to {snapped_frames} frames"
+            ));
         }
+        return Ok(plan.clone());
+    }
+    let rate = record.spec.sample_rate;
+    let window = head_snap_frames(rate);
+    if snapped_frames > requested || snapped_frames < requested.saturating_sub(window) {
+        return invalid(format!(
+            "{snapped_frames} frames is not a snap of a {requested}-frame cut (at most \
+             {window} frames earlier, never later)"
+        ));
+    }
+    let cut = if snapped_frames == 0 {
+        // `head` cut, so there is a grid with bar lines.
+        match record
+            .grid
+            .as_ref()
+            .and_then(|g| Bars::of(g, rate).map(|b| (g, b)))
+        {
+            Some((grid, bars)) => on_bar(&bars, grid.anchor, rate),
+            None => return invalid("a cut planned without a grid".to_owned()),
+        }
+    } else {
+        Cut::Cut {
+            frames: snapped_frames,
+            seconds: SampleIndex(snapped_frames).to_seconds(rate),
+        }
+    };
+    Ok(write_plan(
+        input,
+        settings,
+        cut,
+        snapped_frames,
+        Some(requested),
+    ))
+}
+
+/// The plan of a file that is written with the head cut `cut` of `trim_frames` frames.
+fn write_plan(
+    input: &ExportInput<'_>,
+    settings: &ExportSettings,
+    cut: Cut,
+    trim_frames: u64,
+    trim_snapped_from_frames: Option<u64>,
+) -> ExportPlan {
+    let ExportInput { record, source, .. } = *input;
+    let sample_rate_hz = record.spec.sample_rate;
+    let mut notices = Vec::new();
+    if trim_frames > 0 && source.serato == SeratoPresence::Present {
+        // A cut in place of such a file was skipped; this is a copy in a folder.
+        let cut_s = SampleIndex(trim_frames).to_seconds(sample_rate_hz);
+        notices.push(ExportNotice::SeratoCuesShifted { cut_s });
     }
     let gain_db = if settings.grid_only {
         0.0
@@ -144,22 +259,21 @@ pub fn plan_export(input: &ExportInput<'_>, settings: &ExportSettings) -> Export
         .and_then(|g| Bars::of(g, sample_rate_hz))
         .map(|bars| bar1_after(&bars, trim_frames));
     let tags = tags(input, settings, gain_db, trim_frames, bar1);
-    let bext = (!settings.grid_only && codec == Codec::Wav).then(|| bext(record, gain_db));
-    ExportOutcome::Write {
-        plan: ExportPlan {
-            gain_db,
-            trim_frames,
-            expect_frames: record.frames.saturating_sub(trim_frames),
-            bits: if settings.grid_only {
-                None
-            } else {
-                settings.depth
-            },
-            tags,
-            bext,
-            cut,
-            notices,
+    let bext = (!settings.grid_only && source.codec == Codec::Wav).then(|| bext(record, gain_db));
+    ExportPlan {
+        gain_db,
+        trim_frames,
+        trim_snapped_from_frames,
+        expect_frames: record.frames.saturating_sub(trim_frames),
+        bits: if settings.grid_only {
+            None
+        } else {
+            settings.depth
         },
+        tags,
+        bext,
+        cut,
+        notices,
     }
 }
 
@@ -262,8 +376,10 @@ fn lead_samples(lead_ms: f64, sample_rate: u32) -> f64 {
     ms * f64::from(sample_rate) / 1000.0
 }
 
-/// What happens at the start of the file, and the frames cut.
-fn head(record: &AnalysisRecord, settings: &ExportSettings) -> (Cut, u64) {
+/// What happens at the start of the file, and the frames cut. A grid that needs review (and
+/// that the user has not confirmed, which `plan` already says: a confirmed grid needs none) is
+/// not cut to.
+fn head(record: &AnalysisRecord, plan: &Plan, settings: &ExportSettings) -> (Cut, u64) {
     if settings.grid_only {
         return (Cut::GridOnly, 0);
     }
@@ -271,27 +387,32 @@ fn head(record: &AnalysisRecord, settings: &ExportSettings) -> (Cut, u64) {
         return (Cut::Library, 0);
     }
     let rate = record.spec.sample_rate;
-    let Some(bars) = record.grid.as_ref().and_then(|g| Bars::of(g, rate)) else {
+    let Some((grid, bars)) = record
+        .grid
+        .as_ref()
+        .and_then(|g| Bars::of(g, rate).map(|b| (g, b)))
+    else {
         return (Cut::NoGrid, 0);
     };
-    let lead = lead_samples(settings.lead_ms, rate);
-    let first = bars.first_at_or_after(0.0);
-    let first_line = SampleIndex(floor_frames(first.round()));
-    let anchor = record.grid.as_ref().map_or(first_line, |g| g.anchor);
-    let trim = floor_frames(first - lead);
-    if first < lead || trim == 0 {
-        let cut = Cut::OnBar {
-            bar_line: first_line,
-            bar_line_s: first_line.to_seconds(rate),
+    let anchor = grid.anchor;
+    if !grid_trusted(plan) {
+        let cut = Cut::NeedsReview {
             bar1: anchor,
             bar1_s: anchor.to_seconds(rate),
         };
         return (cut, 0);
     }
+    let lead = lead_samples(settings.lead_ms, rate);
+    let first = bars.first_at_or_after(0.0);
+    let trim = floor_frames(first - lead);
+    if first < lead || trim == 0 {
+        return (on_bar(&bars, anchor, rate), 0);
+    }
     // u64 -> f64 is exact below 2^53 samples.
     #[allow(clippy::cast_precision_loss)]
     let too_far = trim as f64 > bars.last_beat;
     if too_far || trim >= record.frames {
+        let first_line = first_line(&bars);
         let cut = Cut::NotCut {
             bar1: anchor,
             bar1_s: anchor.to_seconds(rate),
@@ -307,6 +428,28 @@ fn head(record: &AnalysisRecord, settings: &ExportSettings) -> (Cut, u64) {
     (cut, trim)
 }
 
+/// Whether the grid may be cut to and written: the row does not need review (a grid the user
+/// confirmed never does; see [`crate::decide()`]).
+fn grid_trusted(plan: &Plan) -> bool {
+    plan.status != JobStage::NeedsReview
+}
+
+/// The first bar line at or after the start, rounded to a sample.
+fn first_line(bars: &Bars) -> SampleIndex {
+    SampleIndex(floor_frames(bars.first_at_or_after(0.0).round()))
+}
+
+/// The file starts on its first bar line: nothing is cut.
+fn on_bar(bars: &Bars, anchor: SampleIndex, rate: u32) -> Cut {
+    let line = first_line(bars);
+    Cut::OnBar {
+        bar_line: line,
+        bar_line_s: line.to_seconds(rate),
+        bar1: anchor,
+        bar1_s: anchor.to_seconds(rate),
+    }
+}
+
 /// The first bar line of the exported audio (cut by `trim` frames), rounded to a sample.
 fn bar1_after(bars: &Bars, trim: u64) -> SampleIndex {
     // u64 -> f64 is exact below 2^53 samples.
@@ -315,7 +458,10 @@ fn bar1_after(bars: &Bars, trim: u64) -> SampleIndex {
     SampleIndex(floor_frames((bars.first_at_or_after(trim) - trim).round()))
 }
 
-/// The tag items, in a fixed order: `BPM`, Replay Gain track gain and peak, `SOUNDCHECK`.
+/// The tag items, in a fixed order: `BPM`, Replay Gain track gain and peak, `SOUNDCHECK`. A
+/// grid that needs review (and was not confirmed) is not written: no tempo tag, and the record
+/// says `bpm=none;bar1=none`. Writing its tempo would replace a tag that disagrees with it, and
+/// the next analysis would then find nothing to review.
 fn tags(
     input: &ExportInput<'_>,
     settings: &ExportSettings,
@@ -324,7 +470,13 @@ fn tags(
     bar1: Option<SampleIndex>,
 ) -> Vec<Tag> {
     let record = input.record;
-    let bpm = record.grid.as_ref().map(|g| g.bpm);
+    let grid_withheld = record.grid.is_some() && !grid_trusted(input.plan);
+    let bpm = record
+        .grid
+        .as_ref()
+        .filter(|_| !grid_withheld)
+        .map(|g| g.bpm);
+    let bar1 = bar1.filter(|_| !grid_withheld);
     let mut tags = Vec::with_capacity(4);
     if settings.tbpm
         && let Some(bpm) = bpm
@@ -350,6 +502,7 @@ fn tags(
         sample_rate: record.spec.sample_rate,
         bpm: bpm.map(Bpm::written),
         bar1,
+        grid_withheld,
         source_hash: input
             .source
             .blake3

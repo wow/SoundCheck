@@ -147,18 +147,116 @@ fn prepare_not_cut_when_first_bar_line_more_than_a_beat_in() {
 #[test]
 fn odd_meter_bar_length() {
     // 9/8 counted in eighths at 300 per minute, 48 kHz: a pulse is 9,600 samples, the bar
-    // 86,400, and the last beat (the group of three) 28,800.
+    // 86,400, and the last beat (the group of three) 28,800. 300 lies outside the DJ app's BPM
+    // range, so the row needs review: the grid is confirmed here, else nothing would be cut.
     let mut r = record(48_000, 240 + 86_400 + 28_800);
     let grid = r.grid.as_mut().expect("grid");
     grid.meter = Meter::new(BeatUnit::Eighth, &[2, 2, 2, 3]);
     grid.bpm = Bpm(300.0);
     let bars = Bars::of(grid, 48_000).expect("bars");
     assert!((bars.bar - 86_400.0).abs() < 1e-9 && (bars.last_beat - 28_800.0).abs() < 1e-9);
-    let plan = written(plan_with(&r, &wav(), &prepare()));
+    let plan = written(plan_decided(&r, &wav(), &prepare(), true));
     assert_eq!(plan.trim_frames, 28_800);
     assert_eq!(tag(&plan, "BPM"), Some("300.00"));
     // With the long group first, the last beat is two pulses: the same cut is too long.
     r.grid.as_mut().expect("grid").meter = Meter::new(BeatUnit::Eighth, &[3, 2, 2, 2]);
-    let plan = written(plan_with(&r, &wav(), &prepare()));
+    let plan = written(plan_decided(&r, &wav(), &prepare(), true));
     assert!(matches!(plan.cut, Cut::NotCut { .. }), "{:?}", plan.cut);
+}
+
+#[test]
+fn a_grid_that_needs_review_is_not_cut_unless_confirmed() {
+    // The grid that is cut at 13,009 frames above, with amber confidence: the row needs review.
+    let mut r = record(44_100, 101_430);
+    r.grid.as_mut().expect("grid").confidence = Confidence::Amber;
+    let decide_settings = DecideSettings::dj();
+    let source = wav();
+    let plan_of = |confirmed: bool| {
+        let plan = decide(&r, source.codec, &decide_settings, confirmed);
+        let input = ExportInput {
+            record: &r,
+            plan: &plan,
+            decide: &decide_settings,
+            source: &source,
+        };
+        (plan.status, written(plan_export(&input, &prepare())))
+    };
+    let (status, plan) = plan_of(false);
+    assert_eq!(status, JobStage::NeedsReview);
+    assert_eq!(
+        plan.cut,
+        Cut::NeedsReview {
+            bar1: SampleIndex(101_430),
+            bar1_s: SampleIndex(101_430).to_seconds(44_100),
+        }
+    );
+    assert_eq!((plan.trim_frames, plan.expect_frames), (0, r.frames));
+    // Gain and the loudness tags are still written; the grid is not: no tempo tag, and the
+    // record says nothing was cut and vouches for no grid.
+    assert!((plan.gain_db + 2.0).abs() < 1e-12, "{}", plan.gain_db);
+    assert_eq!(tag(&plan, "BPM"), None);
+    assert!(tag(&plan, "REPLAYGAIN_TRACK_GAIN").is_some());
+    let rec = tag(&plan, "SOUNDCHECK").expect("record");
+    assert!(
+        rec.contains(";trim=0;rate=44100;bpm=none;bar1=none"),
+        "{rec}"
+    );
+    // Confirmed by ear: the same grid is cut and written.
+    let (status, plan) = plan_of(true);
+    assert_eq!(status, JobStage::Analysed);
+    assert_eq!(plan.cut, cut(13_009, 44_100));
+    assert_eq!(tag(&plan, "BPM"), Some("120.00"));
+    let rec = tag(&plan, "SOUNDCHECK").expect("record");
+    assert!(rec.contains(";bpm=120.00;bar1=221"), "{rec}");
+    // Any reason to review counts (here a BPM tag that disagrees), and Library and grid only
+    // keep their own wording; Library does not write a grid that needs review either.
+    let mut tagged = record(44_100, 101_430);
+    tagged.tags.bpm = Some(Bpm(126.0));
+    assert!(matches!(
+        written(plan_with(&tagged, &wav(), &prepare())).cut,
+        Cut::NeedsReview { .. }
+    ));
+    let library = ExportSettings {
+        tbpm: true,
+        ..ExportSettings::new(BatchMode::Library)
+    };
+    let plan = written(plan_with(&tagged, &wav(), &library));
+    assert_eq!(plan.cut, Cut::Library);
+    assert_eq!(tag(&plan, "BPM"), None);
+}
+
+#[test]
+fn a_disagreeing_bpm_tag_survives_an_export_so_the_row_still_needs_review() {
+    // The file's tag says 126 BPM, the grid 120: the row needs review.
+    let mut r = record(44_100, 101_430);
+    r.tags.bpm = Some(Bpm(126.0));
+    let plan = written(plan_with(&r, &wav(), &prepare()));
+    assert!(
+        matches!(plan.cut, Cut::NeedsReview { .. }),
+        "{:?}",
+        plan.cut
+    );
+    assert_eq!(
+        tag(&plan, "BPM"),
+        None,
+        "the 126 tag is not replaced by 120.00"
+    );
+    let rec = tag(&plan, "SOUNDCHECK").expect("record");
+    assert!(rec.contains(";bpm=none;bar1=none"), "{rec}");
+    // Analysed again after the export: the file's tempo tag is whatever the export left (a
+    // written tempo would have replaced 126). It still needs review, so the next export does
+    // not cut either.
+    let mut again = r.clone();
+    if let Some(bpm) = tag(&plan, "BPM") {
+        again.tags.bpm = Some(Bpm(bpm.parse().expect("a number")));
+    }
+    let status = decide(&again, Codec::Wav, &DecideSettings::dj(), false).status;
+    assert_eq!(status, JobStage::NeedsReview);
+    let next = written(plan_with(&again, &wav(), &prepare()));
+    assert_eq!(next.trim_frames, 0);
+    assert!(
+        matches!(next.cut, Cut::NeedsReview { .. }),
+        "{:?}",
+        next.cut
+    );
 }

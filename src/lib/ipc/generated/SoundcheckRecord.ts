@@ -11,8 +11,10 @@ import type { SampleIndex } from "./SampleIndex";
  * 2 dp>;trim=<frames>;rate=<Hz>;bpm=<2 dp>;bar1=<samples>;src=<16 hex digits>`.
  * Grid only writes `gain=none` and no `stat` or `target` (no level was aligned). Positions are
  * sample counts at `rate`, as everywhere else: `trim` in the source, `bar1` (the first bar line)
- * in the exported audio. `bpm` and `bar1` are left out without a grid, `src` without a source
- * hash.
+ * in the exported audio. `bpm` and `bar1` are left out without a grid, and written as
+ * `bpm=none;bar1=none` when the grid was not trusted (it needed review and the user had not
+ * confirmed it), so the record never vouches for such a grid; `src` is left out without a
+ * source hash.
  */
 export type SoundcheckRecord = { 
 /**
@@ -43,6 +45,11 @@ bpm: Bpm | null,
  * The first bar line of the exported audio.
  */
 bar1: SampleIndex | null, 
+/**
+ * The file has a grid, but it needed review and was not confirmed, so neither its tempo
+ * nor its bar 1 is recorded (`bpm=none;bar1=none`; `bpm` and `bar1` are then `None`).
+ */
+gridWithheld: boolean, 
 /**
  * The first 8 bytes of the source file's BLAKE3 hash (16 hex digits in the tag).
  */

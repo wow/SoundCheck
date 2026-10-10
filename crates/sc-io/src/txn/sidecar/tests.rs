@@ -34,8 +34,8 @@ fn entry(path: &Path) -> Entry {
             render: RenderSummary {
                 frames_in: 100,
                 frames_out: 100,
-                trim_frames: 0,
-                trim_requested_frames: 0,
+                trim_frames: Some(0),
+                trim_requested_frames: Some(0),
                 sample_rate_hz: 44_100,
                 channels: 2,
                 bits_out: 16,
@@ -113,4 +113,54 @@ fn writing_replaces_an_older_sidecar_and_leaves_no_temp() {
     assert_eq!(std::fs::read_dir(dir.path()).expect("list").count(), 1);
     assert!(remove(&file).expect("removed"));
     assert!(!remove(&file).expect("nothing left"));
+}
+
+/// The `render` object of a sidecar written before the cut was recorded (a 13,009-frame cut).
+const OLD_RENDER: &str = r#"{
+  "frames_in": 1000000,
+  "frames_out": 986991,
+  "sample_rate_hz": 44100,
+  "channels": 2,
+  "bits_out": 24,
+  "exact": false,
+  "dithered": false,
+  "samples_saturated": 0,
+  "pcm_blake3": "cc",
+  "blocks": { "carried": 3, "patched": 1, "edited": 1, "replaced": 2, "dropped": 0 },
+  "tags_added": true,
+  "tags_not_added": null,
+  "stale_loudness_tags": []
+}"#;
+
+#[test]
+fn an_old_record_without_the_cut_derives_it_from_the_frame_counts() {
+    let old: RenderSummary = serde_json::from_str(OLD_RENDER).expect("an old record reads");
+    assert_eq!((old.trim_frames, old.trim_requested_frames), (None, None));
+    assert_eq!(old.trim_frames(), 13_009);
+    assert_eq!(old.trim_requested_frames(), 13_009);
+    // The same in a journal record, with a request from before snapped cuts were flagged.
+    let record = format!(
+        r#"{{ "request": {{ "gain_db": -2.0, "trim_frames": 13009, "bits": null,
+              "loudness": null, "tag_edits": [] }},
+             "render": {OLD_RENDER} }}"#
+    );
+    let record: Record = serde_json::from_str(&record).expect("an old journal record reads");
+    assert_eq!(record.request.trim_snapped_from_frames, None);
+    assert_eq!(record.render.trim_frames(), 13_009);
+    // A new record keeps both values as made, also when they differ, and writes them out.
+    let mut new = old.clone();
+    new.trim_frames = Some(12_970);
+    new.trim_requested_frames = Some(13_009);
+    assert_eq!(
+        (new.trim_frames(), new.trim_requested_frames()),
+        (12_970, 13_009)
+    );
+    let text = serde_json::to_string(&new).expect("serialises");
+    assert!(
+        text.contains("\"trim_frames\":12970,\"trim_requested_frames\":13009"),
+        "{text}"
+    );
+    // A request that is not flagged as snapped writes no flag, so its text is unchanged.
+    let request = serde_json::to_string(&record.request).expect("serialises");
+    assert!(!request.contains("trim_snapped_from_frames"), "{request}");
 }

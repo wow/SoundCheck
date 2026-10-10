@@ -4,9 +4,9 @@
 //! [`apply_flac`] streams `source frames -> decode -> trim -> fade-in -> gain -> requantise ->
 //! encode -> writer`, with memory bounded by one frame of audio and the list of frame offsets:
 //!
-//! - **Head cut**: snapped back by up to 1 ms to the quietest frame and faded in over 2 ms as
-//!   for WAV/AIFF (see [`super::head`]); the CUESHEET shift and the new total use the cut
-//!   actually made.
+//! - **Head cut**: snapped back by up to 1 ms to the quietest frame (unless the request says
+//!   it already was) and faded in over 2 ms as for WAV/AIFF (see [`super::head`]); the
+//!   CUESHEET shift and the new total use the cut actually made.
 //! - **Around the stream**: `ID3v2` tags in front of `fLaC` and whatever follows the last frame
 //!   (an `ID3v1` or `APEv2` tag) are carried byte for byte at the same ends of the output.
 //! - **STREAMINFO** is rebuilt: block size 4096 (the minimum and the maximum; only the last
@@ -141,8 +141,11 @@ pub(crate) fn render_flac_unverified(
     let info = layout.streaminfo;
     let mut target = target(&mut src, input, &layout, req, cancel)?;
     let frames_in = target.frames_in;
-    target.trim_frames =
-        snapped_trim(&mut src, input, &layout, req.trim_frames, frames_in, cancel)?;
+    let (trim_frames, trim_requested_frames) =
+        super::snap::head_cut(req, info.sample_rate_hz, || {
+            snapped_trim(&mut src, input, &layout, req.trim_frames, frames_in, cancel)
+        })?;
+    target.trim_frames = trim_frames;
     target.frames_out = frames_in - target.trim_frames;
     let plan = plan::plan(
         &mut src,
@@ -181,7 +184,7 @@ pub(crate) fn render_flac_unverified(
         output = %output.display(),
         gain_db = req.gain_db,
         trim_frames = target.trim_frames,
-        trim_requested_frames = req.trim_frames,
+        trim_requested_frames,
         bits = target.bits_out,
         frames = target.frames_out,
         bytes = done.output_bytes,
@@ -201,7 +204,7 @@ pub(crate) fn render_flac_unverified(
         frames_in,
         frames_out: target.frames_out,
         trim_frames: target.trim_frames,
-        trim_requested_frames: req.trim_frames,
+        trim_requested_frames,
         sample_rate_hz: info.sample_rate_hz,
         channels: u16::from(info.channels),
         bits_out: target.bits_out,
@@ -234,17 +237,8 @@ fn target(
         });
     }
     check_rate(input, info.sample_rate_hz)?;
-    let frames_in = match info.total_samples {
-        0 => count_frames(src, input, layout, cancel)?,
-        n => n,
-    };
-    if req.trim_frames >= frames_in {
-        return Err(Error::InvalidArgument(format!(
-            "{}: a head trim of {} samples leaves no audio ({frames_in} frames)",
-            input.display(),
-            req.trim_frames,
-        )));
-    }
+    let frames_in = frames_in(src, input, layout, cancel)?;
+    super::snap::check_leaves_audio(input, req.trim_frames, frames_in)?;
     let bits_in = u16::from(info.bits);
     Ok(Target {
         bits_in,
@@ -255,6 +249,20 @@ fn target(
         gain_db: req.gain_db,
         seed: 0,
     })
+}
+
+/// The source's frame count: STREAMINFO's total, or, when it declares none, the frames counted
+/// by decoding them all.
+pub(super) fn frames_in(
+    src: &mut File,
+    path: &Path,
+    layout: &FlacLayout,
+    cancel: &AtomicBool,
+) -> Result<u64> {
+    match layout.streaminfo.total_samples {
+        0 => count_frames(src, path, layout, cancel),
+        n => Ok(n),
+    }
 }
 
 /// Decodes every frame of a source whose STREAMINFO does not declare the total.
@@ -277,7 +285,7 @@ fn count_frames(
 
 /// The head cut actually made for a requested cut of `requested` frames of a source of
 /// `frames_in` frames (see [`super::head`]).
-fn snapped_trim(
+pub(super) fn snapped_trim(
     src: &mut File,
     path: &Path,
     layout: &FlacLayout,

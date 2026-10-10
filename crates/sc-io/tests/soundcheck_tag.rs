@@ -29,6 +29,7 @@ fn record() -> SoundcheckRecord {
         sample_rate: 44_100,
         bpm: Some(Bpm(127.98)),
         bar1: Some(SampleIndex(221)),
+        grid_withheld: false,
         source_hash: Some([0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]),
     }
 }

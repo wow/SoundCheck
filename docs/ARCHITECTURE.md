@@ -54,27 +54,38 @@ DECIDE (pure, about 28 ns per row): decide(AnalysisRecord, Codec, DecideSettings
 
 EXPORT PLAN (pure, under 1 us per row with DECIDE; `sc_engine::export::plan_export`, `sc-cli plan --batch-mode`):
   plan_export(ExportInput{record (grid as shown), plan (DECIDE's), decide settings, ExportSource{codec, bits, float, has_tag, serato, blake3}}, ExportSettings{batch_mode: Prepare|Library, place, depth, grid_only, tbpm, xml, lead_ms})
-  -> ExportOutcome: Write{ExportPlan{gain_db, trim_frames, expect_frames, bits, tags (neutral names), bext, cut, notices: [SeratoCuesShifted{cut_s}]}}
+  -> ExportOutcome: Write{ExportPlan{gain_db, trim_frames, trim_snapped_from_frames, expect_frames, bits, tags (neutral names), bext, cut, notices: [SeratoCuesShifted{cut_s}]}}
      | XmlOnly{Mp3OrAac | GridOnlyFlac | GridOnlyWouldRequantise | NoTagToWriteGridOnly}
      | Skip{SeratoInPlaceCut | SeratoUnknownInPlaceCut | NotDjSafeRate | UnsupportedChannels | Unsupported | Silent | NoGrid | NothingToWrite{xml-only reason, when the XML is off}}
   gain = DECIDE's (0 and the source depth for grid only, which needs 16- or 24-bit integer PCM, so the samples stay bit for bit);
   Prepare: bar lines extrapolated from bar 1 by whole bars (meter pulses x 60 sr / bpm, at `Bpm::written()`, the two-decimal BPM that the tags,
   the XML, the sidecar and grid-check all use, fractional samples); F = the first bar line at or after the start: F before the lead -> Cut::OnBar{bar_line, bar1}
   (no cut, never added silence); else cut floor(F - lead) frames so F lands at the lead or under a sample after it (Cut::Cut); more than the bar's last beat ->
-  Cut::NotCut{bar1, first_bar_line} (no music removed); Library never cuts and expects the source's frame count; a cut copy of a file with
+  Cut::NotCut{bar1, first_bar_line} (no music removed); a row that needs review (DECIDE's status; a grid the user confirmed needs none) ->
+  Cut::NeedsReview{bar1} (no cut; gain and loudness tags written, the grid not: no BPM tag and SOUNDCHECK `bpm=none;bar1=none`, in every mode,
+  so a disagreeing BPM tag survives and the row still needs review after re-analysis); Library never cuts and expects the source's frame count; a cut copy of a file with
   Serato data (ExportSource.serato from the probe's detection) carries its Serato tags unchanged, so the plan notes SeratoCuesShifted; in place it is skipped,
-  as is an in-place cut of a file whose tags could not be read (serato_unknown);
+  as is an in-place cut of a file whose tags could not be read (serato_unknown); plan_export_snapped decides that skip by the cut made (a cut that snaps
+  to the first frame cuts nothing and is not skipped);
   tags: BPM (2 decimals, at the meter's unit) when tbpm, REPLAYGAIN_TRACK_GAIN = -18 - (I + g) dB and _PEAK = 10^((TP + g)/20) unless grid only,
   SOUNDCHECK `v=1;app;mode;stat;target;gain;trim;rate;bpm;bar1;src` (grid only: `gain=none`, no stat/target; trim and bar1 in samples at rate);
   bext (WAV) = the measurements moved by g; its JSON keys stay snake_case (`integrated_lufs_x100`, ...) inside the camelCase ExportPlan, as
   render requests persist them. The process job turns a Write into an apply_file request.
+  Snapped cut: the render's head snap is not idempotent (snapping the snapped cut may move it further back), so the cut is snapped once,
+  before rendering: `sc_io::render::snap_head_cut(path, T) -> T'` (decodes only the frames up to T, except a FLAC whose STREAMINFO declares no total,
+  which is decoded whole to count its frames; the same choice as the render),
+  then `plan_snapped_cut(input, settings, plan, T')` re-plans trim_frames = T', expect_frames = frames - T', the Cut shown, the
+  SOUNDCHECK `trim=`/`bar1=` and the Serato notice from T' (bar 1 lands in [lead, lead + 1 ms + 1 sample)) and sets trim_snapped_from_frames = T;
+  `plan_export_snapped(path, input, settings)` does all three (`sc-cli plan --batch-mode` prints it). The render is then asked for
+  exactly T' (RenderRequest/ApplyRequest `trim_snapped_from_frames: Some(T)`), which is byte for byte the render of T.
 
 RENDER (streamed)
   lossless: decode -> [TrimHead] -> [fade-in] -> gain -> [TPDF if 16-bit] -> iff/flac writer with carried chunks/blocks -> tagcopy append
             (TrimHead: the requested cut T moves to the frame in [T - 1 ms, T] whose largest absolute sample across channels is smallest,
              the latest on a tie, never later; after a cut the first 2 ms (88/96 frames) are multiplied by a raised-cosine ramp 0 -> 1
              (`sc_dsp::FadeIn`, libm cosine) before rounding and dither; positions, totals and CUESHEET shift by the cut made, which the
-             report gives as `trim_frames` next to `trim_requested_frames`; no cut, no fade)
+             report gives as `trim_frames` next to `trim_requested_frames`; no cut, no fade; with `trim_snapped_from_frames` set the cut is
+             made exactly, after a check that it lies in [T - 1 ms, T], and T is reported as requested)
             (WAV/AIFF today: `sc_io::render::apply_iff`, one pass in 4,096-frame blocks plus a peak pass for float sources and boosts;
              dither seeded from BLAKE3 of the source's format chunk, frame count and first 65,536 frames plus the gain, trim and depth;
              gain factor from the pure-Rust `libm` pow so outputs are bit-identical across platforms; a cancel flag checked per block; about 0.17 s for a 6-minute 24-bit stereo WAV on an M1;

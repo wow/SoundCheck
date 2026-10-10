@@ -20,6 +20,7 @@ fn prepared() -> SoundcheckRecord {
         sample_rate: 44_100,
         bpm: Some(Bpm(120.0)),
         bar1: Some(SampleIndex(221)),
+        grid_withheld: false,
         source_hash: Some(SoundcheckRecord::hash_prefix(&hash)),
     }
 }
@@ -60,6 +61,19 @@ fn soundcheck_record_value_format() {
         grid_only.to_value(),
         "v=1;app=0.1.0;mode=prepare;gain=none;trim=0;rate=44100;bpm=120.00;bar1=221"
     );
+    // A grid that needed review is not vouched for.
+    let withheld = SoundcheckRecord {
+        trim_frames: 0,
+        bpm: None,
+        bar1: None,
+        grid_withheld: true,
+        ..prepared()
+    };
+    assert_eq!(
+        withheld.to_value(),
+        "v=1;app=0.1.0;mode=prepare;stat=S-P95;target=-11.00;gain=-2.00;trim=0;rate=44100;\
+         bpm=none;bar1=none;src=0011223344556677"
+    );
 }
 
 #[test]
@@ -69,11 +83,17 @@ fn soundcheck_record_round_trip() {
     for value in [
         "v=1;app=0.1.0;mode=library;stat=I;target=-14.00;gain=+0.00;trim=0;rate=48000",
         "v=1;app=0.1.0;mode=prepare;gain=none;trim=0;rate=44100;bpm=120.00;bar1=221",
+        "v=1;app=0.1.0;mode=prepare;gain=none;trim=0;rate=44100;bpm=none;bar1=none",
         PREPARED,
     ] {
         let parsed = SoundcheckRecord::parse(value).expect(value);
         assert_eq!(parsed.to_value(), value);
     }
+    let withheld = SoundcheckRecord::parse(
+        "v=1;app=0.1.0;mode=library;gain=none;trim=0;rate=48000;bar1=none;bpm=none",
+    )
+    .expect("a withheld grid reads");
+    assert!(withheld.grid_withheld && withheld.bpm.is_none() && withheld.bar1.is_none());
     // Keys in another order, unknown keys and surrounding white space are accepted.
     let shuffled = "src=0011223344556677;bar1=221;bpm=120.00;rate=44100;trim=13009;\
                     gain=-2.00;target=-11.00;stat=S-P95;mode=prepare;app=0.1.0;v=1;\
@@ -141,6 +161,23 @@ fn records_that_do_not_read_say_why() {
             "{key}={bad}"
         );
     }
+    // `none` withholds the grid only for both keys together.
+    assert_eq!(
+        err(&replace("bpm", Some("none"))),
+        RecordError::Invalid {
+            key: "bar1",
+            value: "221".into()
+        }
+    );
+    assert_eq!(
+        err(&replace("bar1", Some("none"))),
+        RecordError::Invalid {
+            key: "bpm",
+            value: "120.00".into()
+        }
+    );
+    let no_bar1 = replace("bar1", None).replace("bpm=120.00", "bpm=none");
+    assert_eq!(err(&no_bar1), RecordError::Missing("bar1"));
     // A gain of none aligned no statistic.
     let none = replace("gain", Some("none"));
     assert_eq!(
@@ -188,18 +225,20 @@ fn any_record() -> impl Strategy<Value = SoundcheckRecord> {
         any::<u32>(),
         proptest::option::of(hundredths(1, 99_999)),
         proptest::option::of(any::<u64>()),
+        any::<bool>(),
         proptest::option::of(any::<[u8; 8]>()),
     )
         .prop_map(
-            |(app, mode, gain, trim_frames, sample_rate, bpm, bar1, source_hash)| {
+            |(app, mode, gain, trim_frames, sample_rate, bpm, bar1, grid_withheld, source_hash)| {
                 SoundcheckRecord {
                     app,
                     mode,
                     gain,
                     trim_frames,
                     sample_rate,
-                    bpm: bpm.map(Bpm),
-                    bar1: bar1.map(SampleIndex),
+                    bpm: bpm.filter(|_| !grid_withheld).map(Bpm),
+                    bar1: bar1.filter(|_| !grid_withheld).map(SampleIndex),
+                    grid_withheld,
                     source_hash,
                 }
             },

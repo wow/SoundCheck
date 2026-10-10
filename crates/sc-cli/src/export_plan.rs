@@ -144,6 +144,10 @@ fn write_text(plan: &ExportPlan) -> String {
                 )
             }
         }
+        Cut::NeedsReview { bar1_s, .. } => format!(
+            "{gain}, Not cut: grid needs review (bar 1 at {:.2} s; confirm it in the app)",
+            bar1_s.0
+        ),
         Cut::NoGrid => format!("{gain}, Not cut: no grid"),
         Cut::GridOnly => "Grid only (no audio change)".to_owned(),
         Cut::Library => format!("{gain}, length kept"),

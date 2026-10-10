@@ -156,9 +156,11 @@ impl Default for ExportSettings {
     rename_all_fields = "camelCase"
 )]
 pub enum Cut {
-    /// Prepare: the start is cut so the first bar line after the lead lands at the lead.
+    /// Prepare: the start is cut so the first bar line after the lead lands at the lead (up to
+    /// 1 ms and a sample after it once the cut is snapped to a quiet frame).
     Cut {
-        /// Frames removed from the start (at least 1).
+        /// Frames removed from the start (at least 1): the cut asked of the renderer, or, once
+        /// the plan is snapped ([`ExportPlan::trim_snapped_from_frames`]), the cut it makes.
         #[ts(type = "number")]
         frames: u64,
         /// `frames` in seconds.
@@ -187,6 +189,15 @@ pub enum Cut {
         first_bar_line: SampleIndex,
         /// `first_bar_line` in seconds.
         first_bar_line_s: Seconds,
+    },
+    /// Prepare, but the grid needs review and the user has not confirmed it: where bar 1 is
+    /// cannot be trusted, so nothing is cut ("not cut: grid needs review"); gain and tags are
+    /// still written.
+    NeedsReview {
+        /// Bar 1 as shown (the grid's anchor).
+        bar1: SampleIndex,
+        /// `bar1` in seconds.
+        bar1_s: Seconds,
     },
     /// Prepare without a grid: nothing to cut to.
     NoGrid,
@@ -220,12 +231,19 @@ pub enum ExportNotice {
 pub struct ExportPlan {
     /// Gain applied to every sample, dB; 0 for grid only (the samples stay bit for bit).
     pub gain_db: f64,
-    /// Frames to cut from the start, as asked of the renderer, which makes the cut up to 1 ms
-    /// earlier at the quietest frame and reports the cut it made.
+    /// Frames to cut from the start. Until the plan is snapped, the cut to ask of the
+    /// renderer, which makes it up to 1 ms earlier at the quietest frame; once snapped, the cut
+    /// the renderer makes, which every position in this plan (the frame count, bar 1 in the
+    /// `SOUNDCHECK` record, the cut shown) is planned from.
     #[ts(type = "number")]
     pub trim_frames: u64,
-    /// Frames the output must have: the source's minus the trim (Library: the source's). A cut
-    /// the renderer makes earlier leaves as many frames more as it moved.
+    /// Set once the plan is snapped: the cut that was asked for, frames, of which
+    /// `trim_frames` is the snap. A render is then asked to cut exactly `trim_frames`.
+    #[ts(type = "number | null")]
+    pub trim_snapped_from_frames: Option<u64>,
+    /// Frames the output must have: the source's minus `trim_frames` (Library: the source's).
+    /// Exact once the plan is snapped; before, a cut the renderer makes earlier leaves as many
+    /// frames more as it moved.
     #[ts(type = "number")]
     pub expect_frames: u64,
     /// Output bits per sample, 16 or 24; `None` keeps the source depth.

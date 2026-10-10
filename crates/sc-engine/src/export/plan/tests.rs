@@ -1,5 +1,6 @@
 //! Unit tests of `crates/sc-engine/src/export/plan.rs`; the cut rule is in `tests/cut.rs`, Serato
-//! data read from a file in `tests/serato.rs`.
+//! data read from a file in `tests/serato.rs`, the plan from the snapped cut (and
+//! `export/snap.rs`, which renders it) in `tests/snapped.rs`.
 //! Sample counts are exact: at 44.1 kHz, 120 BPM in 4/4 has a 22,050-sample beat and an
 //! 88,200-sample bar, and a 5 ms lead is 220.5 samples; at 48 kHz they are 24,000, 96,000 and
 //! 240.
@@ -12,6 +13,7 @@ use crate::decide;
 
 mod cut;
 mod serato;
+mod snapped;
 
 /// Four minutes at `rate` with S-P95 -9 and I -9 LUFS (a 2 dB cut at the DJ target of -11)
 /// and a true peak of -1 dBTP; a 4/4 grid at 120 BPM with bar 1 at `anchor`.
@@ -74,8 +76,18 @@ fn wav() -> ExportSource {
 }
 
 fn plan_with(record: &AnalysisRecord, source: &ExportSource, s: &ExportSettings) -> ExportOutcome {
+    plan_decided(record, source, s, false)
+}
+
+/// The export of `record`, its grid confirmed by the user (`confirmed`) or not.
+fn plan_decided(
+    record: &AnalysisRecord,
+    source: &ExportSource,
+    s: &ExportSettings,
+    confirmed: bool,
+) -> ExportOutcome {
     let decide_settings = DecideSettings::dj();
-    let plan = decide(record, source.codec, &decide_settings, false);
+    let plan = decide(record, source.codec, &decide_settings, confirmed);
     plan_export(
         &ExportInput {
             record,

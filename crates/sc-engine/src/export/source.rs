@@ -13,6 +13,8 @@ use super::{ExportSource, SeratoPresence};
 
 impl ExportSource {
     /// What the headers and tags in `info` say, Serato data included; `has_tag` stays unset.
+    /// `info` is as old as its probe: an export reads the file again with [`Self::read`], so a
+    /// tag that failed to read when the file was added (Serato data not ruled out) is retried.
     #[must_use]
     pub fn from_info(info: &FileInfo) -> Self {
         Self {
