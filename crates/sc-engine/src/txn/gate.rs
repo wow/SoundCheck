@@ -2,9 +2,15 @@
 //! recovery has finished or rolled back what a crash interrupted, a file it is about to repair
 //! must be neither analysed nor written, because a plan made from the wrong version of it
 //! would apply its gain twice. The app shell starts recovery on its own thread and sets the
-//! gate when it ends; `sc-cli` recovers first and opens the gate at once.
+//! gate when it ends (through a [`RecoveryGuard`], so a recovery that panics still opens it);
+//! `sc-cli` recovers first and opens the gate at once.
+//!
+//! The gate opens on any result, not only a clean one: `Failed` (the journal could not be read; that
+//! is reported, and each write still runs every check of its own transaction) and `Finished` with
+//! pending changes (a volume not mounted, a file another change holds), which are reported to
+//! the user but do not block the files that are not pending.
 
-use std::sync::{Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use sc_core::ipc::RecoveryStatus;
@@ -77,8 +83,44 @@ impl RecoveryGate {
         Ok(())
     }
 
+    /// The guard the recovery thread holds while it runs: [`RecoveryGuard::finish`] opens the
+    /// gate with what recovery found; dropped without it (recovery panicked or returned early),
+    /// it opens the gate as [`RecoveryStatus::Failed`], so exports never wait forever.
+    #[must_use]
+    pub fn guard(self: &Arc<Self>) -> RecoveryGuard {
+        RecoveryGuard {
+            gate: Arc::clone(self),
+            finished: false,
+        }
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, RecoveryStatus> {
         self.status.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Opens its gate when recovery ends, however it ends (see [`RecoveryGate::guard`]).
+#[derive(Debug)]
+pub struct RecoveryGuard {
+    gate: Arc<RecoveryGate>,
+    finished: bool,
+}
+
+impl RecoveryGuard {
+    /// Opens the gate with what recovery found.
+    pub fn finish(mut self, status: RecoveryStatus) {
+        self.gate.set(status);
+        self.finished = true;
+    }
+}
+
+impl Drop for RecoveryGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.gate.set(RecoveryStatus::Failed {
+                message: "recovery stopped before it finished".into(),
+            });
+        }
     }
 }
 

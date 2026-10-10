@@ -20,7 +20,7 @@ use sc_io::txn::{self, Outcome, RecoveryReport, TxnOptions, TxnReport, UndoRepor
 
 use crate::CancelToken;
 
-pub use gate::RecoveryGate;
+pub use gate::{RecoveryGate, RecoveryGuard};
 pub use inputs::check_inputs;
 pub use tags::{Tag, check_tags, tag_edits};
 

@@ -38,6 +38,6 @@ pub use export::{
 pub use session::{Session, run_job};
 pub use track::{Track, TrackProgress};
 pub use txn::{
-    ApplyOptions, ApplyRequest, Place, RecoveryGate, Tag, apply_file, check_inputs,
+    ApplyOptions, ApplyRequest, Place, RecoveryGate, RecoveryGuard, Tag, apply_file, check_inputs,
     recover_at_start, undo_file,
 };

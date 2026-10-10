@@ -39,7 +39,7 @@ ANALYSE (streamed; cached)
     (solved by sc_analysis::refit with no edit from GridEvidence, the solver's exact inputs: model beats and downbeats
      as the model's f32 seconds, downbeat activations, kick and broadband onsets as frames at 22.05 kHz with rise and level)
   DJ-safe report, tag inventory (lofty read), cover thumbnail
-  -> cache JSON (~/Library/Caches/app.soundcheck.desktop/analysis/<blake3(path)>.json, keyed by size+mtime+settings+version;
+  -> cache JSON (~/Library/Caches/app.soundcheck.desktop/analysis/<blake3(path)>.json, keyed by dev+inode+ctime+size+mtime+settings+version;
      numbers round-trip exactly; a record older than schema 2 is still served, without its evidence)
 
 EDITS (where a record becomes a row: a job before the session stores it, `sc-cli plan` and `labels`): a grid edit saved for the file's audio
@@ -79,13 +79,18 @@ PROCESS (`run_batch` with `Task::Process(ProcessSettings{decide, export, out_dir
   BLAKE3 of writable sources) -> DECIDE -> plan_export_snapped -> not Write: ExportSkipped (terminal) | Write: Processing{plan} -> apply_file with
   trim_snapped_from_frames and an ExportRecord{settings, decide, decided, plan, grid: ExportedGrid{bar1, first_bar_line, bpm (written), bpm_exact,
   meter, edited, confirmed} in output samples, source measurements}: the transaction refuses (VerifyFailed, before anything is replaced) an output
-  whose frame count or cut is not the plan's (Library: frames_out == frames_in; Prepare: frames_in - trim), journals the record and writes it into
+  whose frame count or cut is not the plan's (Library: frames_out == frames_in; Prepare: frames_in - trim) and, with expect_original_blake3 (the
+  plan's source hash), a file whose bytes changed since the plan (FileChanged SincePlanned), journals the record and writes it into
   the sidecar (schema 2, key `export`; schema 1 still reads via `sc_io::txn::sidecar::read`) -> Written{TxnReport} -> after the write (never fails,
   problems become notes): an edited or confirmed grid edit is carried to the output (`carry_edit`: made on the output's audio, measured by a
   loudness pass that a cancel does not stop; a confirmed grid pinned as typed BPM + meter + bar line at anchor - T'; an unconfirmed edit keeps its
   overrides with a placed line moved to anchor - T') -> the output analysed afresh (`Analyzer::analyze_fresh`: its cache entry replaced even when
   size and mtime match the old one; the place where its grid is compared with the exported one) -> Done{ProcessDone{output, analysis, edit,
-  edit_carried, notes}}. Library keeps the mtime, Prepare does not. Events per file: Started, Progress*, Processing, Written, Done | ExportSkipped
+  edit_carried, notes}} (a panic there is a note too: once the file is replaced, the file is Done). Edits are stored per path and audio
+  identity, so the carried edit sits beside the original's and an undo finds the original's again. Cache keys hold the file identity (dev,
+  inode, ctime), so neither a same-length same-mtime rewrite nor an undo is served the other version's record. Library keeps the mtime,
+  Prepare does not. The RecoveryGate opens on any recovery result (Failed and pending entries are reported, not blocking) and from a
+  RecoveryGuard dropped without a result. Events per file: Started, Progress*, Processing, Written, Done | ExportSkipped
   | Failed | Cancelled.
   Snapped cut: the render's head snap is not idempotent (snapping the snapped cut may move it further back), so the cut is snapped once,
   before rendering: `sc_io::render::snap_head_cut(path, T) -> T'` (decodes only the frames up to T, except a FLAC whose STREAMINFO declares no total,

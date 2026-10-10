@@ -57,3 +57,25 @@ fn a_cancel_ends_the_wait() {
     assert!(matches!(gate.wait(&cancel), Err(Error::Cancelled)));
     assert!(gate.is_running());
 }
+
+#[test]
+fn a_guard_opens_the_gate_with_the_result() {
+    let gate = Arc::new(RecoveryGate::running());
+    gate.guard().finish(finished());
+    assert_eq!(gate.status(), finished());
+}
+
+#[test]
+fn a_recovery_that_panics_still_opens_the_gate() {
+    let gate = Arc::new(RecoveryGate::running());
+    let guard = gate.guard();
+    let crashed = std::thread::spawn(move || {
+        let _guard = guard;
+        panic!("recovery crashed");
+    })
+    .join();
+    assert!(crashed.is_err());
+    assert!(!gate.is_running());
+    assert!(matches!(gate.status(), RecoveryStatus::Failed { .. }));
+    gate.wait(&CancelToken::new()).expect("open");
+}
