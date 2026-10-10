@@ -34,6 +34,9 @@ use super::volume::{Volume, volume_identity};
 use super::{Transaction, TxnOptions, TxnReport};
 use crate::render::{self, RenderReport, check_cancel};
 
+/// What starts each note about metadata the backup lacks.
+pub(crate) const BACKUP_NOTE_PREFIX: &str = "backup: ";
+
 /// Most numbered names tried for a backup whose name is taken.
 const MAX_BACKUP_SUFFIX: u32 = 10_000;
 
@@ -370,7 +373,7 @@ fn back_up(plan: &Plan<'_>, dest: &Path, temp: &Path) -> Result<BackedUp> {
     check_unchanged(&plan.src.path, &plan.meta, original.0)?;
     let notes: Vec<String> = restore(temp, &plan.meta, true)?
         .into_iter()
-        .map(|n| format!("backup: {n}"))
+        .map(|n| format!("{BACKUP_NOTE_PREFIX}{n}"))
         .collect();
     if !notes.is_empty() {
         tracing::warn!(path = %temp.display(), notes = ?notes, "backup lacks some metadata");

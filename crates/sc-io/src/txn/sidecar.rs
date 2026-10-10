@@ -153,7 +153,8 @@ pub fn sidecar_path(file: &Path) -> PathBuf {
 }
 
 /// The sidecar text of the finished transaction `entry` (keys in a fixed order, two-space
-/// indent, a final newline); `notes` lists what the metadata step could not restore.
+/// indent, a final newline); `notes` lists what the backup lacks and what the metadata step
+/// could not restore.
 ///
 /// # Errors
 /// [`Error::Internal`] when the entry has no record of its render.
