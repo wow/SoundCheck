@@ -113,7 +113,9 @@ fn regression_a_resource_fork_extended_by_an_open_writer_reaches_the_output_whol
     let lib = Library::new();
     let path = lib.add("stale.wav", &wav(3000, 36));
     let start = test_fork(3_000, 251);
-    std::fs::write(path.join("..namedfork/rsrc"), &start).expect("resource fork written");
+    // Committed through the attribute, so no descriptor a spawned process could hold keeps it
+    // pending.
+    xattr::set(&path, RESOURCE_FORK, &start).expect("resource fork set");
     assert!(listed(&path), "precondition: the closed fork is listed");
     let more = test_fork(80_000, 241);
     let mut writer = std::fs::OpenOptions::new()

@@ -18,8 +18,11 @@ fn a_longer_resource_fork_on_the_target_is_replaced_not_overwritten() {
     std::fs::write(&target, b"target").expect("target");
     let short: Vec<u8> = (0..3_000_u32).map(|i| (i % 251) as u8).collect();
     let long: Vec<u8> = (0..83_000_u32).map(|i| (i % 241) as u8).collect();
-    std::fs::write(source.join("..namedfork/rsrc"), &short).expect("short fork");
-    std::fs::write(target.join("..namedfork/rsrc"), &long).expect("long fork");
+    // Set through the attribute, not written through a descriptor: a process spawned by another
+    // test at the moment such a descriptor closes would keep the fork pending (unlisted, and
+    // `removexattr(2)` refusing it with EBUSY).
+    xattr::set(&source, RESOURCE_FORK, &short).expect("short fork");
+    xattr::set(&target, RESOURCE_FORK, &long).expect("long fork");
     let meta = snapshot(&source).expect("snapshot");
     let notes = restore(&target, &meta, true).expect("restored");
     assert!(notes.is_empty(), "{notes:?}");
