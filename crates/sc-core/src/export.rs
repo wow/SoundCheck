@@ -152,19 +152,30 @@ impl Default for ExportSettings {
     rename_all_fields = "camelCase"
 )]
 pub enum Cut {
-    /// Prepare: the start is cut so the bar line before the music lands at the lead (`frames`
-    /// may be 0 when it already does).
+    /// Prepare: the start is cut so the first bar line after the lead lands at the lead.
     Cut {
-        /// Frames removed from the start.
+        /// Frames removed from the start (at least 1).
         #[ts(type = "number")]
         frames: u64,
         /// `frames` in seconds.
         seconds: Seconds,
     },
-    /// Prepare, but bar 1 lies more than one beat after the lead: no music is removed, the grid
-    /// travels in tags and the XML.
+    /// Prepare, and the file already starts on a bar line: one lies before the lead (bar 1, or
+    /// a line extrapolated from it by whole bars), so nothing is cut.
+    OnBar {
+        /// That bar line.
+        bar_line: SampleIndex,
+        /// `bar_line` in seconds.
+        bar_line_s: Seconds,
+    },
+    /// Prepare, but the first bar line lies more than one beat after the lead: cutting to it
+    /// would remove music, so nothing is cut and the grid travels in tags and the XML.
     NotCut {
-        /// The first bar line in the file (extrapolated from bar 1 by whole bars).
+        /// Bar 1 as shown (the grid's anchor).
+        bar1: SampleIndex,
+        /// `bar1` in seconds.
+        bar1_s: Seconds,
+        /// The bar line nearest the start (bar 1, or a line extrapolated from it by whole bars).
         first_bar_line: SampleIndex,
         /// `first_bar_line` in seconds.
         first_bar_line_s: Seconds,
@@ -175,6 +186,23 @@ pub enum Cut {
     GridOnly,
     /// Library mode never changes the length.
     Library,
+}
+
+/// Something about a written file the user should know.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ExportNotice {
+    /// A cut copy of a file with Serato data: its Serato cue points and beat grid are carried
+    /// byte for byte, so in Serato they sit `cut_s` late in the copy (the original keeps them).
+    SeratoCuesShifted {
+        /// The cut, seconds.
+        cut_s: Seconds,
+    },
 }
 
 /// What exporting writes into one file.
@@ -194,10 +222,14 @@ pub struct ExportPlan {
     pub bits: Option<u8>,
     /// Tag items by neutral name, written only into a tag the file already has.
     pub tags: Vec<Tag>,
-    /// Loudness for an existing Broadcast Wave `bext` chunk (WAV only), after the gain.
+    /// Loudness for an existing Broadcast Wave `bext` chunk (WAV only), after the gain. Its
+    /// fields keep `snake_case` keys in JSON (`integrated_lufs_x100`, ...), as render requests persist
+    /// them, unlike the `camelCase` fields around it.
     pub bext: Option<BextLoudness>,
     /// What happens at the start of the file, and why.
     pub cut: Cut,
+    /// What the user should know about the written file.
+    pub notices: Vec<ExportNotice>,
 }
 
 /// Why only the batch's rekordbox XML carries a file's grid (the file is not written).
@@ -216,12 +248,13 @@ pub enum XmlOnlyReason {
     },
     /// Grid only on FLAC: writing tags alone would re-encode the frames, which is not done yet.
     GridOnlyFlac,
-    /// Grid only on a source the writer would requantise (floating point, or deeper than 24
-    /// bits, becomes 24-bit integer), so the samples would change.
+    /// Grid only on a source the writer would not copy sample for sample: anything but 16- or
+    /// 24-bit integer PCM (floating point, 8-bit, 20 bits in a 24-bit container, 32-bit) is
+    /// written at another depth.
     GridOnlyWouldRequantise {
         /// The source is floating point.
         float: bool,
-        /// The source's bits per sample, when known.
+        /// The source's significant bits per sample, when known.
         bits: Option<u8>,
     },
     /// Grid only on a file without a tag: there is nothing to write (tags are not created).
@@ -248,6 +281,11 @@ pub enum ExportSkip {
         /// The file's sample rate, Hz.
         sample_rate_hz: u32,
     },
+    /// More than two channels: DJ players and the writer take mono or stereo only.
+    UnsupportedChannels {
+        /// The file's channel count.
+        channels: u16,
+    },
     /// The codec is analysed but never written in this version.
     Unsupported {
         /// The codec.
@@ -257,6 +295,11 @@ pub enum ExportSkip {
     Silent,
     /// Grid only on a file without a grid: there is nothing to write.
     NoGrid,
+    /// Only the rekordbox XML could carry the file's grid, and the XML is off.
+    NothingToWrite {
+        /// Why the file itself is not written.
+        reason: XmlOnlyReason,
+    },
 }
 
 /// What exporting does with one file.
@@ -285,29 +328,41 @@ pub enum ExportOutcome {
     },
 }
 
-/// The value of the `SOUNDCHECK` tag: what SoundCheck did to the file, as `key=value` pairs
-/// joined by `;`, in this order:
-/// `v=1;app=<version>;mode=prepare|library;stat=S-P95|I;target=<LUFS, 2 dp>;gain=<dB, signed,
-/// 2 dp>;trim=<frames>;bpm=<2 dp>;bar1=<seconds, 3 dp>;src=<16 hex digits>`.
-/// `bpm` and `bar1` are left out without a grid, `src` without a source hash.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SoundcheckRecord<'a> {
-    /// The SoundCheck version.
-    pub app: &'a str,
-    /// The batch mode.
-    pub mode: BatchMode,
+/// The level change a [`SoundcheckRecord`] records.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RecordGain {
     /// The statistic the gain aligned.
     pub stat: LoudnessMode,
     /// The target it aligned to.
     pub target: Lufs,
     /// The gain applied, dB.
     pub gain_db: f64,
+}
+
+/// The value of the `SOUNDCHECK` tag: what SoundCheck did to the file, as `key=value` pairs
+/// joined by `;`, in this order:
+/// `v=1;app=<version>;mode=prepare|library;stat=S-P95|I;target=<LUFS, 2 dp>;gain=<dB, signed,
+/// 2 dp>;trim=<frames>;rate=<Hz>;bpm=<2 dp>;bar1=<samples>;src=<16 hex digits>`.
+/// Grid only writes `gain=none` and no `stat` or `target` (no level was aligned). Positions are
+/// sample counts at `rate`, as everywhere else: `trim` in the source, `bar1` (the first bar line)
+/// in the exported audio. `bpm` and `bar1` are left out without a grid, `src` without a source
+/// hash.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SoundcheckRecord<'a> {
+    /// The SoundCheck version.
+    pub app: &'a str,
+    /// The batch mode.
+    pub mode: BatchMode,
+    /// The level change; `None` for grid only.
+    pub gain: Option<RecordGain>,
     /// Frames removed from the start.
     pub trim_frames: u64,
+    /// The sample rate, Hz.
+    pub sample_rate: u32,
     /// The grid's tempo at the meter's unit.
     pub bpm: Option<Bpm>,
     /// The first bar line of the exported audio.
-    pub bar1: Option<Seconds>,
+    pub bar1: Option<SampleIndex>,
     /// BLAKE3 of the source file; its first 8 bytes are written.
     pub source_blake3: Option<[u8; 32]>,
 }
@@ -319,24 +374,33 @@ impl SoundcheckRecord<'_> {
     /// The tag value (see the type's documentation).
     #[must_use]
     pub fn to_value(&self) -> String {
-        let stat = match self.stat {
-            LoudnessMode::Dj => "S-P95",
-            LoudnessMode::Streaming => "I",
-        };
         let mut v = format!(
-            "v={SOUNDCHECK_RECORD_VERSION};app={};mode={};stat={stat};target={:.2};gain={:+.2};trim={}",
+            "v={SOUNDCHECK_RECORD_VERSION};app={};mode={}",
             self.app,
-            self.mode.as_str(),
-            positive_zero(self.target.0),
-            positive_zero(self.gain_db),
-            self.trim_frames
+            self.mode.as_str()
         );
         // Writing into a String cannot fail.
+        match self.gain {
+            Some(g) => {
+                let stat = match g.stat {
+                    LoudnessMode::Dj => "S-P95",
+                    LoudnessMode::Streaming => "I",
+                };
+                let _ = write!(
+                    v,
+                    ";stat={stat};target={:.2};gain={:+.2}",
+                    positive_zero(g.target.0),
+                    positive_zero(g.gain_db)
+                );
+            }
+            None => v.push_str(";gain=none"),
+        }
+        let _ = write!(v, ";trim={};rate={}", self.trim_frames, self.sample_rate);
         if let Some(bpm) = self.bpm {
             let _ = write!(v, ";bpm={:.2}", bpm.0);
         }
         if let Some(bar1) = self.bar1 {
-            let _ = write!(v, ";bar1={:.3}", positive_zero(bar1.0));
+            let _ = write!(v, ";bar1={}", bar1.0);
         }
         if let Some(hash) = self.source_blake3 {
             v.push_str(";src=");

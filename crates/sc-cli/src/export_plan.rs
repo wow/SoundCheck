@@ -6,8 +6,8 @@ use std::io::Write;
 
 use clap::ValueEnum;
 use sc_core::export::{
-    BatchMode, Cut, DEFAULT_LEAD_MS, ExportOutcome, ExportPlan, ExportSettings, ExportSkip,
-    LEAD_MS_RANGE, XmlOnlyReason,
+    BatchMode, Cut, DEFAULT_LEAD_MS, ExportNotice, ExportOutcome, ExportPlan, ExportSettings,
+    ExportSkip, LEAD_MS_RANGE, XmlOnlyReason,
 };
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -31,6 +31,9 @@ pub struct ExportArgs {
     /// Time a Prepare cut leaves before bar 1, milliseconds (0 to 50).
     #[arg(long, requires = "batch_mode", default_value_t = DEFAULT_LEAD_MS, value_parser = parse_lead_ms)]
     lead_ms: f64,
+    /// No rekordbox XML for the batch: a file only the XML could carry has nothing to write.
+    #[arg(long, requires = "batch_mode")]
+    no_xml: bool,
 }
 
 fn parse_lead_ms(text: &str) -> Result<f64, String> {
@@ -57,6 +60,7 @@ impl ExportArgs {
         let settings = ExportSettings {
             grid_only: self.grid_only,
             lead_ms: self.lead_ms,
+            xml: !self.no_xml,
             ..ExportSettings::new(match mode {
                 BatchModeArg::Prepare => BatchMode::Prepare,
                 BatchModeArg::Library => BatchMode::Library,
@@ -78,7 +82,13 @@ pub fn write_outcome(
 ) -> std::io::Result<()> {
     let head = format!("  Export ({}):", mode.as_str());
     match outcome {
-        ExportOutcome::Write { plan } => writeln!(out, "{head} {}", write_text(plan)),
+        ExportOutcome::Write { plan } => {
+            writeln!(out, "{head} {}", write_text(plan))?;
+            for notice in &plan.notices {
+                writeln!(out, "    note: {}", notice_text(*notice))?;
+            }
+            Ok(())
+        }
         ExportOutcome::XmlOnly { reason } => {
             writeln!(out, "{head} XML only: {}", xml_only_text(*reason))
         }
@@ -100,12 +110,31 @@ fn write_text(plan: &ExportPlan) -> String {
     };
     let head = match plan.cut {
         Cut::Cut { seconds, .. } => format!("{gain}, Cut {:.2} s", seconds.0),
+        Cut::OnBar {
+            bar_line,
+            bar_line_s,
+        } => {
+            if bar_line.0 == 0 {
+                format!("{gain}, Starts on bar 1")
+            } else {
+                format!("{gain}, Starts on a bar line {:.3} s in", bar_line_s.0)
+            }
+        }
         Cut::NotCut {
-            first_bar_line_s, ..
-        } => format!(
-            "{gain}, Not cut: first bar line {:.2} s in",
-            first_bar_line_s.0
-        ),
+            bar1,
+            bar1_s,
+            first_bar_line,
+            first_bar_line_s,
+        } => {
+            if bar1 == first_bar_line {
+                format!("{gain}, Not cut: bar 1 {:.2} s in", bar1_s.0)
+            } else {
+                format!(
+                    "{gain}, Not cut: first bar line {:.2} s in (bar 1 at {:.2} s)",
+                    first_bar_line_s.0, bar1_s.0
+                )
+            }
+        }
         Cut::NoGrid => format!("{gain}, Not cut: no grid"),
         Cut::GridOnly => "Grid only (no audio change)".to_owned(),
         Cut::Library => format!("{gain}, length kept"),
@@ -113,6 +142,16 @@ fn write_text(plan: &ExportPlan) -> String {
     let depth = plan.bits.map_or_else(String::new, |b| format!(", {b}-bit"));
     let names: Vec<&str> = plan.tags.iter().map(|t| t.name.as_str()).collect();
     format!("{head}{depth}; tags {}", names.join(", "))
+}
+
+fn notice_text(notice: ExportNotice) -> String {
+    match notice {
+        ExportNotice::SeratoCuesShifted { cut_s } => format!(
+            "the copy keeps its Serato cue points and beat grid as they are, so in Serato they sit \
+             {:.2} s late; the original is unchanged",
+            cut_s.0
+        ),
+    }
 }
 
 fn xml_only_text(reason: XmlOnlyReason) -> String {
@@ -151,6 +190,19 @@ fn skip_text(reason: ExportSkip) -> (String, String) {
                 "its sample rate, {sample_rate_hz} Hz, is not one DJ players accept (44.1 or 48 kHz)"
             ),
             "convert it to 44.1 or 48 kHz in an audio editor first".to_owned(),
+        ),
+        ExportSkip::UnsupportedChannels { channels } => (
+            format!(
+                "it has {channels} channels; DJ players and SoundCheck write mono or stereo only"
+            ),
+            "export a stereo version first".to_owned(),
+        ),
+        ExportSkip::NothingToWrite { reason } => (
+            format!(
+                "only the rekordbox XML could carry its grid ({}), and the XML is off",
+                xml_only_text(reason)
+            ),
+            "run it again without --no-xml".to_owned(),
         ),
         ExportSkip::Unsupported { codec } => (
             format!(

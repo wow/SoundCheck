@@ -7,15 +7,31 @@ import type { Seconds } from "./Seconds";
  */
 export type Cut = { "type": "cut", 
 /**
- * Frames removed from the start.
+ * Frames removed from the start (at least 1).
  */
 frames: number, 
 /**
  * `frames` in seconds.
  */
-seconds: Seconds, } | { "type": "notCut", 
+seconds: Seconds, } | { "type": "onBar", 
 /**
- * The first bar line in the file (extrapolated from bar 1 by whole bars).
+ * That bar line.
+ */
+barLine: SampleIndex, 
+/**
+ * `bar_line` in seconds.
+ */
+barLineS: Seconds, } | { "type": "notCut", 
+/**
+ * Bar 1 as shown (the grid's anchor).
+ */
+bar1: SampleIndex, 
+/**
+ * `bar1` in seconds.
+ */
+bar1S: Seconds, 
+/**
+ * The bar line nearest the start (bar 1, or a line extrapolated from it by whole bars).
  */
 firstBarLine: SampleIndex, 
 /**

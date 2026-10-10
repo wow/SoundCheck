@@ -18,6 +18,7 @@ fn plan(cut: Cut) -> ExportPlan {
         tags: vec![Tag::new("BPM", "120.00"), Tag::new("SOUNDCHECK", "v=1")],
         bext: None,
         cut,
+        notices: Vec::new(),
     }
 }
 
@@ -33,16 +34,22 @@ fn written_files_name_the_gain_the_cut_and_the_tags() {
         text(&cut),
         "  Export (prepare): Gain -2.0 dB, Cut 0.21 s; tags BPM, SOUNDCHECK\n"
     );
-    let not_cut = ExportOutcome::Write {
-        plan: plan(Cut::NotCut {
-            first_bar_line: SampleIndex(352_800),
-            first_bar_line_s: Seconds(8.0),
-        }),
+    let not_cut = |bar1: u64, first: u64| {
+        text(&ExportOutcome::Write {
+            plan: plan(Cut::NotCut {
+                bar1: SampleIndex(bar1),
+                bar1_s: SampleIndex(bar1).to_seconds(44_100),
+                first_bar_line: SampleIndex(first),
+                first_bar_line_s: SampleIndex(first).to_seconds(44_100),
+            }),
+        })
     };
+    let t = not_cut(44_100, 44_100);
+    assert!(t.contains("Gain -2.0 dB, Not cut: bar 1 1.00 s in;"), "{t}");
+    let t = not_cut(396_900, 44_100);
     assert!(
-        text(&not_cut).contains("Not cut: first bar line 8.00 s in"),
-        "{}",
-        text(&not_cut)
+        t.contains("Not cut: first bar line 1.00 s in (bar 1 at 9.00 s);"),
+        "{t}"
     );
     let mut grid_only = plan(Cut::GridOnly);
     grid_only.gain_db = 0.0;
@@ -88,6 +95,10 @@ fn every_skip_has_three_lines() {
         ExportSkip::Unsupported { codec: Codec::Alac },
         ExportSkip::Silent,
         ExportSkip::NoGrid,
+        ExportSkip::UnsupportedChannels { channels: 6 },
+        ExportSkip::NothingToWrite {
+            reason: XmlOnlyReason::Mp3OrAac { codec: Codec::Mp3 },
+        },
     ] {
         let t = text(&ExportOutcome::Skip { reason });
         let lines: Vec<&str> = t.lines().collect();
@@ -102,4 +113,44 @@ fn every_skip_has_three_lines() {
             "{t}"
         );
     }
+}
+
+#[test]
+fn on_bar_wording() {
+    let on_bar = |line: u64| {
+        text(&ExportOutcome::Write {
+            plan: plan(Cut::OnBar {
+                bar_line: SampleIndex(line),
+                bar_line_s: SampleIndex(line).to_seconds(44_100),
+            }),
+        })
+    };
+    assert_eq!(
+        on_bar(0),
+        "  Export (prepare): Gain -2.0 dB, Starts on bar 1; tags BPM, SOUNDCHECK\n"
+    );
+    let t = on_bar(132);
+    assert!(
+        t.contains("Gain -2.0 dB, Starts on a bar line 0.003 s in;"),
+        "{t}"
+    );
+}
+
+#[test]
+fn notices_follow_the_line() {
+    let mut p = plan(Cut::Cut {
+        frames: 12_789,
+        seconds: Seconds(0.29),
+    });
+    p.notices = vec![ExportNotice::SeratoCuesShifted {
+        cut_s: Seconds(0.29),
+    }];
+    let t = text(&ExportOutcome::Write { plan: p });
+    let lines: Vec<&str> = t.lines().collect();
+    assert_eq!(lines.len(), 2, "{t}");
+    assert!(
+        lines[1].starts_with("    note: the copy keeps its Serato cue points")
+            && lines[1].contains("0.29 s late"),
+        "{t}"
+    );
 }

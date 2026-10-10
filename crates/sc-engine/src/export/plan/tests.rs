@@ -1,12 +1,15 @@
-//! Unit tests of `crates/sc-engine/src/export/plan.rs`. Sample counts are exact: at 44.1 kHz,
-//! 120 BPM in 4/4 has a 22,050-sample beat and an 88,200-sample bar, and a 5 ms lead is 220.5
-//! samples; at 48 kHz they are 24,000, 96,000 and 240.
+//! Unit tests of `crates/sc-engine/src/export/plan.rs`; the cut rule is in `tests/cut.rs`.
+//! Sample counts are exact: at 44.1 kHz, 120 BPM in 4/4 has a 22,050-sample beat and an
+//! 88,200-sample bar, and a 5 ms lead is 220.5 samples; at 48 kHz they are 24,000, 96,000 and
+//! 240.
 use super::*;
 use sc_core::analysis::{Alternatives, BeatUnit, LoudnessReport, Meter, TagHints, Timeline};
 use sc_core::export::{BatchMode, ExportSettings, Place};
-use sc_core::{AudioSpec, Bpm, Confidence, DbFs, Verdict};
+use sc_core::{AudioSpec, Bpm, Confidence, DbFs, Seconds, Verdict};
 
 use crate::decide;
+
+mod cut;
 
 /// Four minutes at `rate` with S-P95 -9 and I -9 LUFS (a 2 dB cut at the DJ target of -11)
 /// and a true peak of -1 dBTP; a 4/4 grid at 120 BPM with bar 1 at `anchor`.
@@ -105,98 +108,6 @@ fn tag<'a>(plan: &'a ExportPlan, name: &str) -> Option<&'a str> {
 }
 
 #[test]
-fn prepare_cuts_lead_before_anchor() {
-    // Bar 1 at 2.300 s: the bar line one bar earlier, 0.300 s (13,230), is the earliest at or
-    // after the lead (220.5); floor(13,230 - 220.5) = 13,009 frames are cut, and the output's
-    // bar 1 sits at 221 samples (5.011 ms), never before the lead.
-    let r = record(44_100, 101_430);
-    let plan = written(plan_with(&r, &wav(), &prepare()));
-    assert_eq!(
-        plan.cut,
-        Cut::Cut {
-            frames: 13_009,
-            seconds: SampleIndex(13_009).to_seconds(44_100),
-        }
-    );
-    assert_eq!(plan.trim_frames, 13_009);
-    assert_eq!(plan.expect_frames, r.frames - 13_009);
-    assert!((plan.gain_db + 2.0).abs() < 1e-12, "{}", plan.gain_db);
-    assert_eq!(plan.bits, None);
-    // A bar line exactly at the anchor's sample: bar 1 itself is the earliest.
-    assert_eq!(
-        cut_of(44_100, 13_230),
-        Cut::Cut {
-            frames: 13_009,
-            seconds: SampleIndex(13_009).to_seconds(44_100),
-        }
-    );
-}
-
-#[test]
-fn prepare_trim_zero_when_bar1_at_lead() {
-    let zero = Cut::Cut {
-        frames: 0,
-        seconds: Seconds(0.0),
-    };
-    assert_eq!(cut_of(48_000, 240), zero);
-    // Two bars later: the extrapolated bar line is at the lead.
-    assert_eq!(cut_of(48_000, 240 + 2 * 96_000), zero);
-    let plan = written(plan_with(&record(48_000, 240), &wav(), &prepare()));
-    assert_eq!(plan.expect_frames, 48_000 * 240);
-}
-
-#[test]
-fn prepare_not_cut_when_first_bar_line_more_than_a_beat_in() {
-    // Bar 1 at 1.000 s: cutting to it would remove 0.995 s, more than a 0.5 s beat.
-    let r = record(44_100, 44_100);
-    let plan = written(plan_with(&r, &wav(), &prepare()));
-    assert_eq!(
-        plan.cut,
-        Cut::NotCut {
-            first_bar_line: SampleIndex(44_100),
-            first_bar_line_s: Seconds(1.0),
-        }
-    );
-    assert_eq!((plan.trim_frames, plan.expect_frames), (0, r.frames));
-    // Exactly one beat is still cut; one sample more is not.
-    assert_eq!(
-        cut_of(48_000, 240 + 24_000),
-        Cut::Cut {
-            frames: 24_000,
-            seconds: Seconds(0.5),
-        }
-    );
-    assert!(matches!(cut_of(48_000, 240 + 24_001), Cut::NotCut { .. }));
-    // Bar 1 before the lead: nothing to cut, the first bar line is bar 1 itself.
-    assert_eq!(
-        cut_of(48_000, 100),
-        Cut::NotCut {
-            first_bar_line: SampleIndex(100),
-            first_bar_line_s: SampleIndex(100).to_seconds(48_000),
-        }
-    );
-}
-
-#[test]
-fn odd_meter_bar_length() {
-    // 9/8 counted in eighths at 300 per minute, 48 kHz: a pulse is 9,600 samples, the bar
-    // 86,400, and the last beat (the group of three) 28,800.
-    let mut r = record(48_000, 240 + 86_400 + 28_800);
-    let grid = r.grid.as_mut().expect("grid");
-    grid.meter = Meter::new(BeatUnit::Eighth, &[2, 2, 2, 3]);
-    grid.bpm = Bpm(300.0);
-    let bars = Bars::of(grid, 48_000).expect("bars");
-    assert!((bars.bar - 86_400.0).abs() < 1e-9 && (bars.last_beat - 28_800.0).abs() < 1e-9);
-    let plan = written(plan_with(&r, &wav(), &prepare()));
-    assert_eq!(plan.trim_frames, 28_800);
-    assert_eq!(tag(&plan, "BPM"), Some("300.00"));
-    // With the long group first, the last beat is two pulses: the same cut is too long.
-    r.grid.as_mut().expect("grid").meter = Meter::new(BeatUnit::Eighth, &[3, 2, 2, 2]);
-    let plan = written(plan_with(&r, &wav(), &prepare()));
-    assert!(matches!(plan.cut, Cut::NotCut { .. }), "{:?}", plan.cut);
-}
-
-#[test]
 fn library_never_trims_and_expects_same_frames() {
     let r = record(44_100, 101_430);
     let plan = written(plan_with(
@@ -210,7 +121,7 @@ fn library_never_trims_and_expects_same_frames() {
     // The first bar line of the untouched file: 13,230 samples.
     let record = tag(&plan, "SOUNDCHECK").expect("record");
     assert!(
-        record.contains(";mode=library;") && record.contains(";bar1=0.300"),
+        record.contains(";mode=library;") && record.contains(";bar1=13230"),
         "{record}"
     );
 }
@@ -229,8 +140,25 @@ fn grid_only_zero_gain_exact() {
     assert_eq!(tag(&plan, "REPLAYGAIN_TRACK_GAIN"), None);
     assert_eq!(tag(&plan, "REPLAYGAIN_TRACK_PEAK"), None);
     assert_eq!(tag(&plan, "BPM"), Some("120.00"));
-    let record = tag(&plan, "SOUNDCHECK").expect("record");
-    assert!(record.contains(";gain=+0.00;trim=0;"), "{record}");
+    let value = tag(&plan, "SOUNDCHECK").expect("record");
+    // No level was aligned: no statistic, no target, and never "+0.00".
+    assert!(value.contains(";mode=prepare;gain=none;trim=0;"), "{value}");
+    assert!(
+        !value.contains("stat=") && !value.contains("target="),
+        "{value}"
+    );
+    let at_target = ExportSettings {
+        grid_only: false,
+        ..settings
+    };
+    let mut r = record(44_100, 101_430);
+    r.loudness.short_term_p95 = Some(Lufs(-11.0));
+    let plan = written(plan_with(&r, &wav(), &at_target));
+    assert!(
+        tag(&plan, "SOUNDCHECK")
+            .expect("record")
+            .contains(";gain=+0.00;")
+    );
 }
 
 #[test]
@@ -274,15 +202,27 @@ fn float_grid_only_is_xml_only() {
             }
         }
     );
-    let int32 = ExportSource {
-        bits_per_sample: Some(32),
+    // Only 16- and 24-bit integers are written back at their own depth.
+    for bits in [Some(8), Some(20), Some(32), None] {
+        let int = ExportSource {
+            bits_per_sample: bits,
+            ..wav()
+        };
+        assert_eq!(
+            plan_with(&record(44_100, 0), &int, &settings),
+            ExportOutcome::XmlOnly {
+                reason: XmlOnlyReason::GridOnlyWouldRequantise { float: false, bits }
+            },
+            "{bits:?}"
+        );
+    }
+    let sixteen = ExportSource {
+        bits_per_sample: Some(16),
         ..wav()
     };
     assert!(matches!(
-        plan_with(&record(44_100, 0), &int32, &settings),
-        ExportOutcome::XmlOnly {
-            reason: XmlOnlyReason::GridOnlyWouldRequantise { float: false, .. }
-        }
+        plan_with(&record(44_100, 0), &sixteen, &settings),
+        ExportOutcome::Write { .. }
     ));
     let untagged = ExportSource {
         has_tag: false,
@@ -348,22 +288,32 @@ fn serato_blocks_in_place_cut() {
             }
         }
     );
-    // A copy in a folder may be cut: the original and its cue points stay as they are.
+    // A copy in a folder may be cut: the original and its cue points stay as they are, and the
+    // copy's Serato cues, carried byte for byte, are flagged as shifted by the cut.
     let folder = ExportSettings {
         place: Place::Folder,
         ..prepare()
     };
-    assert_eq!(written(plan_with(&r, &serato, &folder)).trim_frames, 13_009);
+    let copy = written(plan_with(&r, &serato, &folder));
+    assert_eq!(copy.trim_frames, 13_009);
+    assert_eq!(
+        copy.notices,
+        [ExportNotice::SeratoCuesShifted {
+            cut_s: SampleIndex(13_009).to_seconds(44_100)
+        }]
+    );
+    assert_eq!(
+        written(plan_with(&r, &wav(), &folder)).notices,
+        Vec::<ExportNotice>::new()
+    );
     // In place without a cut moves no position.
     let library = ExportSettings::new(BatchMode::Library);
     assert!(matches!(
         plan_with(&r, &serato, &library),
         ExportOutcome::Write { .. }
     ));
-    assert!(matches!(
-        plan_with(&record(48_000, 240), &serato, &prepare()),
-        ExportOutcome::Write { .. }
-    ));
+    let on_bar = written(plan_with(&record(48_000, 240), &serato, &prepare()));
+    assert_eq!(on_bar.notices, Vec::<ExportNotice>::new());
 }
 
 #[test]
@@ -400,7 +350,7 @@ fn soundcheck_record_format() {
         Some(
             format!(
                 "v=1;app={VERSION};mode=prepare;stat=S-P95;target=-11.00;gain=-2.00;\
-                 trim=13009;bpm=120.00;bar1=0.005"
+                 trim=13009;rate=44100;bpm=120.00;bar1=221"
             )
             .as_str()
         )
@@ -424,7 +374,7 @@ fn soundcheck_record_format() {
     assert!(
         tag(&plan, "SOUNDCHECK")
             .expect("record")
-            .ends_with(";bar1=0.005;src=abababababababab")
+            .ends_with(";bar1=221;src=abababababababab")
     );
 }
 
@@ -521,4 +471,62 @@ fn plans_are_deterministic() {
         serde_json::to_string(&a).expect("json"),
         serde_json::to_string(&b).expect("json")
     );
+}
+
+#[test]
+fn xml_off_leaves_nothing_to_write() {
+    let no_xml = ExportSettings {
+        xml: false,
+        ..prepare()
+    };
+    let mp3 = ExportSource {
+        codec: Codec::Mp3,
+        ..ExportSource::default()
+    };
+    assert_eq!(
+        plan_with(&record(44_100, 0), &mp3, &no_xml),
+        ExportOutcome::Skip {
+            reason: ExportSkip::NothingToWrite {
+                reason: XmlOnlyReason::Mp3OrAac { codec: Codec::Mp3 }
+            }
+        }
+    );
+    let flac = ExportSource {
+        codec: Codec::Flac,
+        ..wav()
+    };
+    let grid_only = ExportSettings {
+        grid_only: true,
+        ..no_xml
+    };
+    assert_eq!(
+        plan_with(&record(44_100, 0), &flac, &grid_only),
+        ExportOutcome::Skip {
+            reason: ExportSkip::NothingToWrite {
+                reason: XmlOnlyReason::GridOnlyFlac
+            }
+        }
+    );
+    // A file that is written does not need the XML.
+    assert!(matches!(
+        plan_with(&record(44_100, 0), &wav(), &no_xml),
+        ExportOutcome::Write { .. }
+    ));
+}
+
+#[test]
+fn more_than_two_channels_are_skipped() {
+    let mut r = record(48_000, 240);
+    r.spec.channels = 6;
+    assert_eq!(
+        plan_with(&r, &wav(), &prepare()),
+        ExportOutcome::Skip {
+            reason: ExportSkip::UnsupportedChannels { channels: 6 }
+        }
+    );
+    r.spec.channels = 1;
+    assert!(matches!(
+        plan_with(&r, &wav(), &prepare()),
+        ExportOutcome::Write { .. }
+    ));
 }

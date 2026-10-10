@@ -49,14 +49,19 @@ DECIDE (pure, about 28 ns per row): decide(AnalysisRecord, Codec, DecideSettings
 
 EXPORT PLAN (pure, under 1 us per row with DECIDE; `sc_engine::export::plan_export`, `sc-cli plan --batch-mode`):
   plan_export(ExportInput{record (grid as shown), plan (DECIDE's), decide settings, ExportSource{codec, bits, float, has_tag, serato, blake3}}, ExportSettings{batch_mode: Prepare|Library, place, depth, grid_only, tbpm, xml, lead_ms})
-  -> ExportOutcome: Write{ExportPlan{gain_db, trim_frames, expect_frames, bits, tags (neutral names), bext, cut}} | XmlOnly{Mp3OrAac | GridOnlyFlac | GridOnlyWouldRequantise | NoTagToWriteGridOnly}
-     | Skip{SeratoInPlaceCut | NotDjSafeRate | Unsupported | Silent | NoGrid}
-  gain = DECIDE's (0 and the source depth for grid only, so the samples stay bit for bit); Prepare cut: bar lines extrapolated from bar 1 by whole bars
-  (meter pulses x 60 sr / bpm, fractional samples), B = the earliest at or after the lead, cut floor(B - lead) frames so bar 1 lands at the lead or
-  under a sample after it; more than the bar's last beat -> NotCut (no music removed); Library never cuts and expects the source's frame count;
+  -> ExportOutcome: Write{ExportPlan{gain_db, trim_frames, expect_frames, bits, tags (neutral names), bext, cut, notices: [SeratoCuesShifted{cut_s}]}}
+     | XmlOnly{Mp3OrAac | GridOnlyFlac | GridOnlyWouldRequantise | NoTagToWriteGridOnly}
+     | Skip{SeratoInPlaceCut | NotDjSafeRate | UnsupportedChannels | Unsupported | Silent | NoGrid | NothingToWrite{xml-only reason, when the XML is off}}
+  gain = DECIDE's (0 and the source depth for grid only, which needs 16- or 24-bit integer PCM, so the samples stay bit for bit);
+  Prepare: bar lines extrapolated from bar 1 by whole bars (meter pulses x 60 sr / bpm, with the BPM rounded to the two decimals the tags
+  and XML carry, fractional samples); F = the first bar line at or after the start: F before the lead -> Cut::OnBar (no cut, never added
+  silence); else cut floor(F - lead) frames so F lands at the lead or under a sample after it (Cut::Cut); more than the bar's last beat ->
+  Cut::NotCut{bar1, first_bar_line} (no music removed); Library never cuts and expects the source's frame count; a cut copy of a file with
+  Serato data carries its Serato tags unchanged, so the plan notes SeratoCuesShifted; in place it is skipped;
   tags: BPM (2 decimals, at the meter's unit) when tbpm, REPLAYGAIN_TRACK_GAIN = -18 - (I + g) dB and _PEAK = 10^((TP + g)/20) unless grid only,
-  SOUNDCHECK `v=1;app;mode;stat;target;gain;trim;bpm;bar1;src`; bext (WAV) = the measurements moved by g. The process job turns a Write into
-  an apply_file request.
+  SOUNDCHECK `v=1;app;mode;stat;target;gain;trim;rate;bpm;bar1;src` (grid only: `gain=none`, no stat/target; trim and bar1 in samples at rate);
+  bext (WAV) = the measurements moved by g; its JSON keys stay snake_case (`integrated_lufs_x100`, ...) inside the camelCase ExportPlan, as
+  render requests persist them. The process job turns a Write into an apply_file request.
 
 RENDER (streamed)
   lossless: decode -> [TrimHead] -> gain -> [TPDF if 16-bit] -> iff/flac writer with carried chunks/blocks -> tagcopy append

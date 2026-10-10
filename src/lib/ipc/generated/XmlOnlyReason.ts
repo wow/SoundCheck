@@ -14,6 +14,6 @@ codec: Codec, } | { "type": "gridOnlyFlac" } | { "type": "gridOnlyWouldRequantis
  */
 float: boolean, 
 /**
- * The source's bits per sample, when known.
+ * The source's significant bits per sample, when known.
  */
 bits: number | null, } | { "type": "noTagToWriteGridOnly" };

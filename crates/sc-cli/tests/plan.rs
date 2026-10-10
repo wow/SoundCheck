@@ -262,4 +262,12 @@ fn mp3_is_left_to_the_xml() {
         text.contains("  Export (library): XML only: MP3 (file writes arrive later)"),
         "{text}"
     );
+    // Without the XML nothing would carry it.
+    let (ok, text) = plan(
+        dir.path(),
+        &[mp3.to_str().unwrap(), "--batch-mode", "library", "--no-xml"],
+    );
+    assert!(ok, "{text}");
+    assert!(text.contains("  Export (library): skipped\n"), "{text}");
+    assert!(text.contains("and the XML is off"), "{text}");
 }
