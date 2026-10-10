@@ -111,6 +111,7 @@ pub fn write(
     };
     let applied = Applied {
         tags_added: edited.is_some(),
+        trim_frames: args.trim_samples,
     };
     Ok((bytes, applied))
 }

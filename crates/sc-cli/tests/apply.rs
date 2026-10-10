@@ -118,8 +118,8 @@ fn out_writes_a_copy_and_leaves_the_file() {
     assert_eq!(
         run.stdout.trim(),
         format!(
-            "Track.wav: gain -1.00 dB, 24-bit, 441 frames trimmed (441 requested); 0 blocks \
-             carried; verified; written to {}",
+            "Track.wav: gain -1.00 dB, 24-bit, 441 frames trimmed; 0 blocks carried; verified; \
+             written to {}",
             copy.display()
         )
     );

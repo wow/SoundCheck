@@ -1,8 +1,8 @@
 //! The audio stage: the samples after the trim (snapped back and faded in as [`super::head`]
 //! describes), through gain and requantisation ([`sc_dsp::Requantiser`]), encoded and written
-//! while a BLAKE3 hash of the written bytes is kept (the tee hash a verifier compares against). Memory is one block of
-//! [`crate::iff::BLOCK_FRAMES`] frames whatever the file length. A cancel flag is checked once
-//! per block.
+//! while a BLAKE3 hash of the written bytes is kept (the tee hash a verifier compares against).
+//! Memory is one block of [`crate::iff::BLOCK_FRAMES`] frames whatever the file length. A cancel
+//! flag is checked once per block.
 //!
 //! The dither seed is derived from the source and the request, never from the clock: BLAKE3
 //! over a domain label, the source's format chunk payload, its frame count, the first

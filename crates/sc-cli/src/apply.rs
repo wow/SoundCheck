@@ -255,7 +255,7 @@ pub fn applied_line(file: &Path, req: &ApplyRequest, r: &TxnReport) -> String {
         ", {} trimmed",
         plural(render.trim_frames, "frame", "frames")
     );
-    if render.trim_requested_frames > 0 {
+    if render.trim_requested_frames != render.trim_frames {
         let _ = write!(s, " ({} requested)", render.trim_requested_frames);
     }
     if render.samples_saturated > 0 {

@@ -452,6 +452,7 @@ fn target(
         bits,
         frames_out: format.frames - req.trim_frames,
         trim_frames: req.trim_frames,
+        trim_requested_frames: req.trim_frames,
         float_source,
         bext_update,
         tag_edits,
