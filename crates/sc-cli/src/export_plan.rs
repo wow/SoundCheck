@@ -264,6 +264,15 @@ pub(crate) fn skip_text(reason: ExportSkip) -> (String, String) {
             ),
             "check and confirm the grid in the app".to_owned(),
         ),
+        ExportSkip::XmlNotOptedIn { codec } => (
+            format!(
+                "{} files are carried by the rekordbox XML alone, and in Library mode the XML \
+                 lists a track only once its grid is confirmed (importing it replaces the DJ \
+                 app's own grid)",
+                codec.label()
+            ),
+            "confirm the grid in the app to include it, or use --batch-mode prepare".to_owned(),
+        ),
         ExportSkip::GridNeedsReview => (
             "grid only, and its grid needs review, so it is not written and there is nothing \
              else to write"

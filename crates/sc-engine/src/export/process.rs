@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use sc_core::analysis::{AnalysisRecord, AnalysisSettings, Grid};
 use sc_core::export::{
     ExportOutcome, ExportPlan, ExportRecord, ExportSettings, ExportedGrid, Place as ExportPlace,
-    SourceMeasurements, XmlGrid,
+    SourceMeasurements, XmlGrid, XmlTrackInfo,
 };
 use sc_core::plan::{DecideSettings, Plan};
 use sc_core::{Error, Result, Seconds};
@@ -97,9 +97,9 @@ pub struct ProcessDone {
     pub output: PathBuf,
     /// The source's playing time.
     pub duration: Seconds,
-    /// The grid the batch's rekordbox XML carries for the written file, in its samples: as
-    /// exported, or withheld.
-    pub grid: XmlGrid,
+    /// What the batch's rekordbox XML carries for the written file: its grid in its samples (as
+    /// exported, or withheld) and its title and artist tags.
+    pub xml: XmlTrackInfo,
     /// The output's own analysis, now in the cache, with the carried grid edit applied; `None`
     /// when it did not finish (see `notes`).
     pub analysis: Option<Box<AnalysisRecord>>,
@@ -150,6 +150,7 @@ pub(crate) fn process_file(
         plan: &decided,
         decide: &settings.decide,
         source: &source,
+        grid_confirmed: edit.confirmed,
     };
     let plan = match plan_export_snapped(path, &input, &settings.export)? {
         ExportOutcome::Write { plan } => plan,
@@ -159,7 +160,10 @@ pub(crate) fn process_file(
                 outcome: Box::new(outcome),
                 duration: record.duration,
                 codec: source.codec,
-                grid: Box::new(xml_grid(&record, 0, grid_trusted(&decided), edit)),
+                xml: Box::new(xml_info(
+                    &record,
+                    xml_grid(&record, 0, grid_trusted(&decided), edit),
+                )),
             });
         }
     };
@@ -195,7 +199,10 @@ pub(crate) fn process_file(
         file_id,
         report: Box::new(report),
     });
-    let grid = xml_grid(&record, plan.trim_frames, !plan.grid_withheld, edit);
+    let xml = xml_info(
+        &record,
+        xml_grid(&record, plan.trim_frames, !plan.grid_withheld, edit),
+    );
     let carry = Carry {
         saved: saved.as_ref(),
         edit,
@@ -208,7 +215,7 @@ pub(crate) fn process_file(
     .unwrap_or_else(|_| ProcessDone {
         output: output.clone(),
         duration: record.duration,
-        grid: XmlGrid::Absent,
+        xml: xml.clone(),
         analysis: None,
         edit: EditState::default(),
         edit_carried: false,
@@ -220,7 +227,7 @@ pub(crate) fn process_file(
     });
     Ok(EngineEvent::Done {
         file_id,
-        done: Box::new(ProcessDone { grid, ..done }),
+        done: Box::new(ProcessDone { xml, ..done }),
     })
 }
 
@@ -264,6 +271,24 @@ fn exported_grid(
         edited: edit.edited,
         confirmed: edit.confirmed,
     })
+}
+
+/// What the XML carries for `record`: `grid` and the title and artist tags.
+pub(crate) fn xml_info(record: &AnalysisRecord, grid: XmlGrid) -> XmlTrackInfo {
+    XmlTrackInfo {
+        grid,
+        title: record.tags.title.clone(),
+        artist: record.tags.artist.clone(),
+    }
+}
+
+/// Nothing for the XML (replaced by the caller).
+fn xml_info_absent() -> XmlTrackInfo {
+    XmlTrackInfo {
+        grid: XmlGrid::Absent,
+        title: None,
+        artist: None,
+    }
 }
 
 /// The grid the batch's rekordbox XML carries for `record` in the samples of a file cut by
@@ -358,7 +383,7 @@ fn after_write(
         output: output.to_path_buf(),
         duration,
         // Set by the caller, which knows the plan.
-        grid: XmlGrid::Absent,
+        xml: xml_info_absent(),
         analysis,
         edit,
         edit_carried,

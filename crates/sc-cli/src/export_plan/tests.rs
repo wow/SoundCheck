@@ -115,6 +115,7 @@ fn every_skip_has_three_lines() {
         ExportSkip::GridNeedsReview,
         ExportSkip::XmlNoGrid { codec: Codec::Mp3 },
         ExportSkip::XmlGridNeedsReview { codec: Codec::Aac },
+        ExportSkip::XmlNotOptedIn { codec: Codec::Mp3 },
         ExportSkip::UnsupportedChannels { channels: 6 },
         ExportSkip::NothingToWrite {
             reason: XmlOnlyReason::Mp3OrAac { codec: Codec::Mp3 },

@@ -1,4 +1,5 @@
-//! The grid a batch's rekordbox XML and grid report carry for one file.
+//! The grid a batch's rekordbox XML and grid report carry for one file, and the tags it names
+//! the track by.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -39,4 +40,17 @@ impl XmlGrid {
             Self::NeedsReview | Self::Absent => None,
         }
     }
+}
+
+/// What a batch's rekordbox XML carries for one file: its grid and the tags that name it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct XmlTrackInfo {
+    /// The grid, in the file's samples.
+    pub grid: XmlGrid,
+    /// The file's title tag.
+    pub title: Option<String>,
+    /// The file's artist tag.
+    pub artist: Option<String>,
 }

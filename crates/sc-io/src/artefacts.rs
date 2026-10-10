@@ -68,7 +68,7 @@ pub fn new_batch_folder(root: &Path, now: SystemTime) -> Result<PathBuf> {
 }
 
 /// `t` in the system's time zone as `yyyy-mm-dd hh.mm.ss` (Finder shows `:` as `/`, so dots).
-fn local_date_time(t: SystemTime) -> String {
+pub(crate) fn local_date_time(t: SystemTime) -> String {
     let zoned = jiff::Timestamp::try_from(t)
         .ok()
         .map(|ts| ts.to_zoned(jiff::tz::TimeZone::system()));
@@ -118,6 +118,39 @@ pub fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
     }
     sync_dir(dir);
     Ok(())
+}
+
+/// Bytes read from an existing artefact to tell whether SoundCheck wrote it.
+const HEAD_BYTES: usize = 512;
+
+/// Writes `bytes` to `path` like [`write_file`], but replaces only a file SoundCheck wrote:
+/// a file there whose first bytes `is_ours` rejects (an audio file, someone else's XML), or
+/// anything but a regular file, is left as it is.
+///
+/// # Errors
+/// [`Error::AlreadyExists`] naming `path` when something not ours is there; [`Error::Io`] as
+/// [`write_file`].
+pub fn write_artefact(path: &Path, bytes: &[u8], is_ours: fn(&[u8]) -> bool) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => {
+            let ours = meta.is_file() && {
+                use std::io::Read;
+                let mut head = Vec::with_capacity(HEAD_BYTES);
+                std::fs::File::open(path)
+                    .and_then(|f| f.take(HEAD_BYTES as u64).read_to_end(&mut head))
+                    .map_err(|e| io_err(path, e))?;
+                is_ours(&head)
+            };
+            if !ours {
+                return Err(Error::AlreadyExists {
+                    path: path.to_path_buf(),
+                });
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(io_err(path, e)),
+    }
+    write_file(path, bytes)
 }
 
 /// A number no other call in this process got.

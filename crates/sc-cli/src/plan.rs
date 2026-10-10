@@ -137,6 +137,7 @@ pub fn plan_all(
                         plan: &plan,
                         decide: decide_settings,
                         source: &source,
+                        grid_confirmed: edit.confirmed,
                     };
                     plan_export_snapped(file, &input, s).map(|outcome| (outcome, s.batch_mode))
                 });

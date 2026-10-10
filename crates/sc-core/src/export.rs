@@ -25,7 +25,7 @@ pub use record::{
     MAX_RECORD_BYTES, RecordError, RecordGain, SOUNDCHECK_RECORD_VERSION, SoundcheckRecord,
 };
 pub use sidecar::{ExportRecord, ExportedGrid, SourceMeasurements};
-pub use xml_grid::XmlGrid;
+pub use xml_grid::{XmlGrid, XmlTrackInfo};
 
 /// The lead a Prepare cut leaves before bar 1, milliseconds, until it is calibrated against
 /// DJ apps' own analysis.
@@ -353,6 +353,13 @@ pub enum ExportSkip {
     /// not confirmed: the grid is withheld (where bar 1 is cannot be trusted), so the XML would
     /// carry nothing for it. Confirm the grid first.
     XmlGridNeedsReview {
+        /// The codec.
+        codec: Codec,
+    },
+    /// Library mode, and an MP3 or AAC file, which only the rekordbox XML carries, whose grid
+    /// the user has not confirmed: the Library XML lists a track only once its grid is
+    /// confirmed, because importing it replaces the DJ app's own grid.
+    XmlNotOptedIn {
         /// The codec.
         codec: Codec,
     },

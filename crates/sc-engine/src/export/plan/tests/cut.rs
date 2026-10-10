@@ -178,6 +178,7 @@ fn a_grid_that_needs_review_is_not_cut_unless_confirmed() {
             plan: &plan,
             decide: &decide_settings,
             source: &source,
+            grid_confirmed: confirmed,
         };
         (plan.status, written(plan_export(&input, &prepare())))
     };

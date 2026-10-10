@@ -70,6 +70,14 @@ pub struct ReportRow {
     pub notes: Vec<String>,
 }
 
+/// Whether `head` (the first bytes of a file) starts like a report SoundCheck wrote: the
+/// byte-order mark and the header row.
+#[must_use]
+pub fn is_soundcheck_report(head: &[u8]) -> bool {
+    head.strip_prefix(BOM)
+        .is_some_and(|rest| rest.starts_with(COLUMNS.join(",").as_bytes()))
+}
+
 /// The report of `rows`, in the order given.
 #[must_use]
 pub fn csv_bytes(rows: &[ReportRow]) -> Vec<u8> {

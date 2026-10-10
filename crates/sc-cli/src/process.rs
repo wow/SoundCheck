@@ -15,7 +15,7 @@ use std::sync::Arc;
 use clap::ValueEnum;
 use sc_core::export::{
     BatchMode, DEFAULT_LEAD_MS, ExportOutcome, ExportPlan, ExportSettings, Place as ExportPlace,
-    XmlGrid, XmlOnlyReason,
+    XmlOnlyReason, XmlTrackInfo,
 };
 use sc_core::plan::Codec;
 use sc_core::{Error, Seconds};
@@ -153,7 +153,7 @@ enum FileResult {
         outcome: Box<ExportOutcome>,
         duration: Seconds,
         codec: Codec,
-        grid: Box<XmlGrid>,
+        xml: Box<XmlTrackInfo>,
     },
     /// Refused or failed.
     Failed(Error),
@@ -257,30 +257,29 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
         );
     }
     if export.xml && printer.rows.iter().any(|r| r.action != RowAction::Failed) {
-        let dir = artefacts_dir(args.out.as_deref())?;
-        let written = write_artefacts(&dir, &printer.rows, XmlSelect::Batch)?;
-        print_artefacts(&written, export.batch_mode, args.json);
+        let now = std::time::SystemTime::now();
+        let dir = artefacts_dir(args.out.as_deref(), now)?;
+        let playlist = sc_io::rekordbox::playlist_name(now);
+        let written = write_artefacts(&dir, &printer.rows, XmlSelect::Batch, &playlist)?;
+        print_artefacts(&written, &playlist, export.batch_mode, args.json);
     }
     Ok(c.failed)
 }
 
 /// Where the batch's artefacts go: the `--out` folder (created if no copy was written), else a
 /// new folder under the exports root.
-fn artefacts_dir(out: Option<&Path>) -> anyhow::Result<PathBuf> {
+fn artefacts_dir(out: Option<&Path>, now: std::time::SystemTime) -> anyhow::Result<PathBuf> {
     if let Some(dir) = out {
         let dir = std::path::absolute(dir)?;
         std::fs::create_dir_all(&dir)?;
         return Ok(dir);
     }
     let root = sc_io::artefacts::default_exports_root()?;
-    Ok(sc_io::artefacts::new_batch_folder(
-        &root,
-        std::time::SystemTime::now(),
-    )?)
+    Ok(sc_io::artefacts::new_batch_folder(&root, now)?)
 }
 
 /// Where the artefacts are (on stderr with `--json`, whose stdout holds one document per file).
-fn print_artefacts(written: &Artefacts, mode: BatchMode, json: bool) {
+fn print_artefacts(written: &Artefacts, playlist: &str, mode: BatchMode, json: bool) {
     let mut lines = Vec::new();
     if let Some(xml) = &written.xml {
         let only = if mode == BatchMode::Library {
@@ -289,10 +288,9 @@ fn print_artefacts(written: &Artefacts, mode: BatchMode, json: bool) {
             ""
         };
         lines.push(format!(
-            "rekordbox XML: {} ({} tracks, {} with a grid{only})",
+            "rekordbox XML: {} ({} tracks with a grid{only}; playlist \"{playlist}\")",
             xml.display(),
             written.listed,
-            written.with_tempo
         ));
     }
     lines.push(format!("grid report: {}", written.report.display()));
@@ -344,14 +342,14 @@ impl InFlight {
                 outcome,
                 duration,
                 codec,
-                grid,
+                xml,
             } => (
                 file_id,
                 FileResult::NotWritten {
                     outcome,
                     duration,
                     codec,
-                    grid,
+                    xml,
                 },
             ),
             EngineEvent::Failed { file_id, error } => (file_id, FileResult::Failed(error)),
@@ -499,7 +497,7 @@ fn row_of(file: &Path, result: &FileResult, mode: BatchMode) -> BatchRow {
                 &done.output,
                 report.render.frames_out,
                 report.render.sample_rate_hz,
-                done.grid.clone(),
+                done.xml.clone(),
             );
             row.notes
                 .extend(plan.notices.iter().map(|n| notice_text(*n)));
@@ -517,10 +515,10 @@ fn row_of(file: &Path, result: &FileResult, mode: BatchMode) -> BatchRow {
             outcome,
             duration,
             codec,
-            grid,
+            xml,
         } => {
             let mut row =
-                BatchRow::not_written(file, mode, outcome, *duration, *codec, (**grid).clone());
+                BatchRow::not_written(file, mode, outcome, *duration, *codec, (**xml).clone());
             match **outcome {
                 ExportOutcome::XmlOnly { reason } => row.notes.push(xml_only_text(reason)),
                 ExportOutcome::Skip { reason } => row.notes.push(skip_text(reason).0),

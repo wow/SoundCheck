@@ -1,13 +1,17 @@
 //! The batch's rekordbox XML (`soundcheck-rekordbox.xml`) in the format Pioneer DJ documents as
 //! "XML file format for playlists sharing" (rekordbox `xml_format_list`): `DJ_PLAYLISTS`
 //! version 1.0.0 with a `PRODUCT`, a `COLLECTION` of `TRACK`s and a `PLAYLISTS` tree whose root
-//! holds one playlist, `SoundCheck`, of every track (the format calls the tree essential and the
-//! collection's tracks outside any playlist unnecessary).
+//! holds one playlist of every track, named per batch (`SoundCheck 2026-10-11 14.05.33`: rekordbox
+//! replaces a playlist of the same name on import), its tracks keyed by `Location` (`KeyType` 1).
+//! The format calls the tree essential and the collection's tracks outside any playlist
+//! unnecessary.
 //!
-//! - **`TRACK`**: `TrackID` (1, 2, ... in the order given), `Name` (the file name without its
-//!   extension: it tells the rows apart in rekordbox's XML pane), `TotalTime` (whole seconds, as
-//!   the format asks), `AverageBpm` (two decimals, only with a `TEMPO`) and `Location`
-//!   ([`location`]).
+//! - **`TRACK`** carries only what SoundCheck means to set, since importing a track from the XML
+//!   into rekordbox's collection overwrites the track's information with the XML's: `Name` and
+//!   `Artist` from the file's own tags (the title, else the file name without its extension; no
+//!   `Artist` without an artist tag), `TotalTime` (whole seconds, as the format asks),
+//!   `AverageBpm` (two decimals) and `Location` ([`location`]). Nothing else: no `TrackID`, no
+//!   album, genre, rating or comments.
 //! - **`TEMPO`** (one per track: a static grid): `Inizio` is the first beat at or after the start
 //!   of the file, in seconds with three decimals (rekordbox keeps beat positions in whole
 //!   milliseconds), `Bpm` the written tempo (two decimals, [`Bpm::written`]), `Metro` `4/4`, and
@@ -31,24 +35,29 @@ use sc_core::{Bpm, SampleIndex, Seconds};
 
 mod location;
 
-pub use location::{decode_location, location};
+pub use location::{Speller, decode_location, location};
 
 /// File name of a batch's rekordbox XML.
 pub const XML_FILE_NAME: &str = "soundcheck-rekordbox.xml";
 
-/// Name of the playlist holding every track of the XML.
-pub const PLAYLIST_NAME: &str = "SoundCheck";
+/// What every playlist name starts with.
+pub const PLAYLIST_PREFIX: &str = "SoundCheck";
 
-/// One track of the XML.
+/// One track of the XML. Only tracks with a grid are listed: importing a track without a
+/// `TEMPO` could only change its information, or clear the grid rekordbox has.
 #[derive(Debug, Clone, PartialEq)]
 pub struct XmlTrack {
-    /// The file, absolute, spelled as the file system stores its names
-    /// ([`crate::txn::resolve_file`]): rekordbox matches a collection entry by its location.
+    /// The file, absolute, spelled as its folders list its names ([`Speller`]): rekordbox
+    /// matches a collection entry by its location.
     pub path: PathBuf,
+    /// The title tag; `None` writes the file name without its extension.
+    pub title: Option<String>,
+    /// The artist tag; `None` writes no `Artist`.
+    pub artist: Option<String>,
     /// Playing time of the file.
     pub duration: Seconds,
-    /// Its beat grid; `None` writes no `TEMPO` (and no `AverageBpm`).
-    pub tempo: Option<Tempo>,
+    /// Its beat grid.
+    pub tempo: Tempo,
 }
 
 /// A static 4/4 grid as one `TEMPO` element.
@@ -133,12 +142,12 @@ impl Tempo {
 }
 
 /// The XML of `tracks`, listed in the order given, with `product_version` (the app's version)
-/// in `PRODUCT`.
+/// in `PRODUCT` and their playlist named `playlist` ([`playlist_name`]).
 #[must_use]
-pub fn xml_bytes(tracks: &[XmlTrack], product_version: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(512 + 400 * tracks.len());
+pub fn xml_bytes(tracks: &[XmlTrack], product_version: &str, playlist: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(512 + 500 * tracks.len());
     // Writing into a Vec cannot fail.
-    let written = write_xml(tracks, product_version, &mut out);
+    let written = write_xml(tracks, product_version, playlist, &mut out);
     debug_assert!(written.is_ok(), "writing into memory failed: {written:?}");
     out
 }
@@ -150,6 +159,7 @@ pub fn xml_bytes(tracks: &[XmlTrack], product_version: &str) -> Vec<u8> {
 pub fn write_xml(
     tracks: &[XmlTrack],
     product_version: &str,
+    playlist: &str,
     out: &mut impl Write,
 ) -> std::io::Result<()> {
     let mut w = Writer::new_with_indent(out, b' ', 2);
@@ -172,79 +182,79 @@ pub fn write_xml(
                 collection.write_empty()?;
             } else {
                 collection.write_inner_content(|w| {
-                    for (i, track) in tracks.iter().enumerate() {
-                        write_track(w, i + 1, track)?;
+                    for track in tracks {
+                        write_track(w, track)?;
                     }
                     Ok(())
                 })?;
             }
-            write_playlists(w, tracks.len())
+            write_playlists(w, tracks, &text(playlist))
         })?;
     w.get_mut().write_all(b"\n")
 }
 
 /// One `TRACK` of the collection.
-fn write_track<W: Write>(w: &mut Writer<W>, id: usize, track: &XmlTrack) -> std::io::Result<()> {
-    let id = id.to_string();
-    let name = track
+fn write_track<W: Write>(w: &mut Writer<W>, track: &XmlTrack) -> std::io::Result<()> {
+    let stem = track
         .path
         .file_stem()
         .map(|s| s.to_string_lossy())
         .unwrap_or_default();
-    let name = text(&name);
+    let name = text(track.title.as_deref().unwrap_or(&stem)).into_owned();
+    let artist = track.artist.as_deref().map(|a| text(a).into_owned());
     let total = whole_seconds(track.duration).to_string();
-    let bpm = track.tempo.map(|t| format!("{:.2}", t.bpm.0));
+    let tempo = track.tempo;
+    let bpm = format!("{:.2}", tempo.bpm.0);
     let location = location(&track.path);
-    let element = w
-        .create_element("TRACK")
+    w.create_element("TRACK")
+        .with_attribute(("Name", name.as_str()))
+        .with_attributes(artist.as_deref().map(|a| ("Artist", a)))
         .with_attributes([
-            ("TrackID", id.as_str()),
-            ("Name", &*name),
             ("TotalTime", total.as_str()),
+            ("AverageBpm", bpm.as_str()),
+            ("Location", location.as_str()),
         ])
-        .with_attributes(bpm.as_deref().map(|b| ("AverageBpm", b)))
-        .with_attribute(("Location", location.as_str()));
-    let Some(tempo) = track.tempo else {
-        element.write_empty()?;
-        return Ok(());
-    };
-    element.write_inner_content(|w| {
-        let inizio = format!("{:.3}", tempo.inizio.0);
-        let bpm = format!("{:.2}", tempo.bpm.0);
-        let battito = tempo.battito.to_string();
-        w.create_element("TEMPO")
-            .with_attributes([
-                ("Inizio", inizio.as_str()),
-                ("Bpm", bpm.as_str()),
-                ("Metro", "4/4"),
-                ("Battito", battito.as_str()),
-            ])
-            .write_empty()?;
-        Ok(())
-    })?;
+        .write_inner_content(|w| {
+            let inizio = format!("{:.3}", tempo.inizio.0);
+            let battito = tempo.battito.to_string();
+            w.create_element("TEMPO")
+                .with_attributes([
+                    ("Inizio", inizio.as_str()),
+                    ("Bpm", bpm.as_str()),
+                    ("Metro", "4/4"),
+                    ("Battito", battito.as_str()),
+                ])
+                .write_empty()?;
+            Ok(())
+        })?;
     Ok(())
 }
 
-/// The playlist tree: the root folder holding one playlist of every track, by `TrackID`.
-fn write_playlists<W: Write>(w: &mut Writer<W>, tracks: usize) -> std::io::Result<()> {
-    let entries = tracks.to_string();
+/// The playlist tree: the root folder holding one playlist, `name`, of every track, keyed by
+/// its `Location`.
+fn write_playlists<W: Write>(
+    w: &mut Writer<W>,
+    tracks: &[XmlTrack],
+    name: &str,
+) -> std::io::Result<()> {
+    let entries = tracks.len().to_string();
     w.create_element("PLAYLISTS").write_inner_content(|w| {
         w.create_element("NODE")
             .with_attributes([("Type", "0"), ("Name", "ROOT"), ("Count", "1")])
             .write_inner_content(|w| {
                 let playlist = w.create_element("NODE").with_attributes([
-                    ("Name", PLAYLIST_NAME),
+                    ("Name", name),
                     ("Type", "1"),
-                    ("KeyType", "0"),
+                    ("KeyType", "1"),
                     ("Entries", entries.as_str()),
                 ]);
-                if tracks == 0 {
+                if tracks.is_empty() {
                     playlist.write_empty()?;
                     return Ok(());
                 }
                 playlist.write_inner_content(|w| {
-                    for id in 1..=tracks {
-                        let key = id.to_string();
+                    for track in tracks {
+                        let key = location(&track.path);
                         w.create_element("TRACK")
                             .with_attribute(("Key", key.as_str()))
                             .write_empty()?;
@@ -256,6 +266,27 @@ fn write_playlists<W: Write>(w: &mut Writer<W>, tracks: usize) -> std::io::Resul
         Ok(())
     })?;
     Ok(())
+}
+
+/// The start of every XML SoundCheck writes, up to its product name: a file that starts
+/// otherwise is not one of ours and is never replaced.
+pub const XML_HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<DJ_PLAYLISTS Version=\"1.0.0\">\n  <PRODUCT Name=\"SoundCheck\" ";
+
+/// Whether `head` (the first bytes of a file, at least [`XML_HEAD`]'s length when there are
+/// that many) starts like an XML SoundCheck wrote.
+#[must_use]
+pub fn is_soundcheck_xml(head: &[u8]) -> bool {
+    head.starts_with(XML_HEAD.as_bytes())
+}
+
+/// A batch's playlist name: [`PLAYLIST_PREFIX`] and the batch's local date and time, as its
+/// folder is named (`SoundCheck 2026-10-11 14.05.33`).
+#[must_use]
+pub fn playlist_name(now: std::time::SystemTime) -> String {
+    format!(
+        "{PLAYLIST_PREFIX} {}",
+        crate::artefacts::local_date_time(now)
+    )
 }
 
 /// `TotalTime`: whole seconds, rounded down; 0 for a negative or undefined time.

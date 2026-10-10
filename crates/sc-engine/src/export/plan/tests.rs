@@ -96,6 +96,7 @@ fn plan_decided(
             plan: &plan,
             decide: &decide_settings,
             source,
+            grid_confirmed: confirmed,
         },
         s,
     )
@@ -309,6 +310,20 @@ fn mp3_is_xml_only() {
         // Confirmed by the user: it needs no review, and the XML carries it.
         assert_eq!(
             plan_decided(&amber, &source, &prepare(), true),
+            ExportOutcome::XmlOnly {
+                reason: XmlOnlyReason::Mp3OrAac { codec }
+            }
+        );
+        // Library mode lists a track only once its grid is confirmed.
+        let library = ExportSettings::new(BatchMode::Library);
+        assert_eq!(
+            plan_with(&record(44_100, 0), &source, &library),
+            ExportOutcome::Skip {
+                reason: ExportSkip::XmlNotOptedIn { codec }
+            }
+        );
+        assert_eq!(
+            plan_decided(&record(44_100, 0), &source, &library, true),
             ExportOutcome::XmlOnly {
                 reason: XmlOnlyReason::Mp3OrAac { codec }
             }

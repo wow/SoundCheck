@@ -2,31 +2,33 @@
 //! [`sc_io::rekordbox`]) and the grid report (`grid-report.csv`, [`sc_io::report`]), built from
 //! one [`BatchRow`] per file in the order the files were given.
 //!
-//! **Which files the XML lists.** A file written or left to the XML is listed at the path it
-//! has now (the copy, for an export to a folder), spelled as the file system stores its names,
-//! since rekordbox matches a collection entry by that location. In Prepare mode every such file
-//! is listed. Library tracks are already in a DJ app, whose grid importing the XML would
-//! replace, so a Library row is listed only when the user opted it in by confirming its grid in
-//! SoundCheck ([`XmlSelect::Batch`]). Files named one by one (`sc-cli xml`) are all listed
-//! ([`XmlSelect::All`]).
+//! **Which files the XML lists.** Only files with a grid it may write: a grid that needs review
+//! and was not confirmed is withheld, as it is from the tags, and only 4/4 grids get a `TEMPO`.
+//! Importing a track without one could only change its information in rekordbox, or clear the
+//! grid rekordbox has. A file written or left to the XML is listed at the path it has now (the
+//! copy, for an export to a folder), spelled as its folders list its names
+//! ([`sc_io::rekordbox::Speller`]), since rekordbox matches a collection entry by that location,
+//! and named by its own title and artist tags. Library tracks are already in a DJ app, whose
+//! grid importing the XML would replace, so in a batch ([`XmlSelect::Batch`]) a Library row is
+//! listed only when the user opted it in by confirming its grid in SoundCheck. Files named one
+//! by one (`sc-cli xml`, [`XmlSelect::All`]) need no opt-in: naming them is the choice. The
+//! report keeps every row, with why it is not in the XML.
 //!
-//! **Which tracks get a grid.** A grid that needs review and was not confirmed is withheld, as
-//! it is from the tags; only 4/4 grids get a `TEMPO`. MP3 and AAC rows are marked unverified in
-//! the report: the position of bar 1 relative to the encoder delay rekordbox applies has not
-//! been checked yet.
+//! MP3 and AAC rows are marked unverified in the report: the position of bar 1 relative to the
+//! encoder delay rekordbox applies has not been checked yet.
 
 use std::path::{Path, PathBuf};
 
 use sc_core::analysis::AnalysisRecord;
-use sc_core::export::{BatchMode, Cut, ExportOutcome, ExportPlan, XmlGrid};
+use sc_core::export::{BatchMode, Cut, ExportOutcome, ExportPlan, XmlGrid, XmlTrackInfo};
 use sc_core::plan::{Codec, Plan};
 use sc_core::{Result, SampleIndex, Seconds};
-use sc_io::rekordbox::{Tempo, TempoWithheld, XmlTrack};
+use sc_io::rekordbox::{Speller, Tempo, TempoWithheld, XmlTrack};
 use sc_io::report::ReportRow;
 use sc_io::txn::sidecar::SidecarDoc;
 
 use super::plan::grid_trusted;
-use super::process::xml_grid;
+use super::process::{xml_grid, xml_info};
 use crate::edits::EditState;
 
 /// What happened to a file.
@@ -72,6 +74,23 @@ pub struct RowTrack {
     pub codec: Codec,
     /// Its grid, in its samples, or why there is none.
     pub grid: XmlGrid,
+    /// Its title tag.
+    pub title: Option<String>,
+    /// Its artist tag.
+    pub artist: Option<String>,
+}
+
+impl RowTrack {
+    fn new(path: &Path, duration: Seconds, codec: Codec, xml: XmlTrackInfo) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            duration,
+            codec,
+            grid: xml.grid,
+            title: xml.title,
+            artist: xml.artist,
+        }
+    }
 }
 
 /// What a batch did with one file, for its rekordbox XML and grid report.
@@ -103,7 +122,7 @@ impl BatchRow {
         output: &Path,
         frames_out: u64,
         sample_rate: u32,
-        grid: XmlGrid,
+        xml: XmlTrackInfo,
     ) -> Self {
         Self {
             file: file.to_path_buf(),
@@ -111,12 +130,12 @@ impl BatchRow {
             action: RowAction::Written,
             gain_db: Some(plan.gain_db),
             cut: cut_of(plan),
-            track: Some(RowTrack {
-                path: output.to_path_buf(),
-                duration: SampleIndex(frames_out).to_seconds(sample_rate.max(1)),
-                codec: Codec::from_path(output),
-                grid,
-            }),
+            track: Some(RowTrack::new(
+                output,
+                SampleIndex(frames_out).to_seconds(sample_rate.max(1)),
+                Codec::from_path(output),
+                xml,
+            )),
             notes: Vec::new(),
         }
     }
@@ -129,17 +148,12 @@ impl BatchRow {
         outcome: &ExportOutcome,
         duration: Seconds,
         codec: Codec,
-        grid: XmlGrid,
+        xml: XmlTrackInfo,
     ) -> Self {
         let (action, track) = match outcome {
             ExportOutcome::XmlOnly { .. } => (
                 RowAction::XmlOnly,
-                Some(RowTrack {
-                    path: file.to_path_buf(),
-                    duration,
-                    codec,
-                    grid,
-                }),
+                Some(RowTrack::new(file, duration, codec, xml)),
             ),
             ExportOutcome::Skip { .. } | ExportOutcome::Write { .. } => (RowAction::Skipped, None),
         };
@@ -169,10 +183,10 @@ impl BatchRow {
     }
 
     /// A file an earlier export wrote, from its sidecar (`doc`, whose `export` must be set and
-    /// whose output must still be the file's bytes: the caller checks); `None` for a sidecar
-    /// without an export.
+    /// whose output must still be the file's bytes: the caller checks), named by `record`'s
+    /// tags (the file's own analysis); `None` for a sidecar without an export.
     #[must_use]
-    pub fn from_sidecar(file: &Path, doc: &SidecarDoc) -> Option<Self> {
+    pub fn from_sidecar(file: &Path, doc: &SidecarDoc, record: &AnalysisRecord) -> Option<Self> {
         let export = doc.export.as_ref()?;
         let rate = doc.render.sample_rate_hz;
         let grid = match &export.grid {
@@ -189,12 +203,12 @@ impl BatchRow {
             action: RowAction::Exported,
             gain_db: Some(export.plan.gain_db),
             cut: cut_of(&export.plan),
-            track: Some(RowTrack {
-                path: file.to_path_buf(),
-                duration: SampleIndex(doc.render.frames_out).to_seconds(rate.max(1)),
-                codec: Codec::from_path(file),
-                grid,
-            }),
+            track: Some(RowTrack::new(
+                file,
+                SampleIndex(doc.render.frames_out).to_seconds(rate.max(1)),
+                Codec::from_path(file),
+                xml_info(record, grid),
+            )),
             notes: Vec::new(),
         })
     }
@@ -209,12 +223,12 @@ impl BatchRow {
             action: RowAction::Analysed,
             gain_db: None,
             cut: None,
-            track: Some(RowTrack {
-                path: file.to_path_buf(),
-                duration: record.duration,
-                codec: Codec::from_path(file),
-                grid: xml_grid(record, 0, grid_trusted(plan), edit),
-            }),
+            track: Some(RowTrack::new(
+                file,
+                record.duration,
+                Codec::from_path(file),
+                xml_info(record, xml_grid(record, 0, grid_trusted(plan), edit)),
+            )),
             notes: Vec::new(),
         }
     }
@@ -233,7 +247,8 @@ fn cut_of(plan: &ExportPlan) -> Option<Seconds> {
 pub enum XmlSelect {
     /// No XML.
     Off,
-    /// Every row with a file to list.
+    /// Every row with a file and a grid to list, Library rows included: the user named the
+    /// files (`sc-cli xml`), which is the opt-in.
     All,
     /// A batch's rows: Prepare rows, and Library rows whose grid the user confirmed.
     Batch,
@@ -241,46 +256,51 @@ pub enum XmlSelect {
 
 /// Whether a row's file is in the XML, with its tempo, or why not.
 enum Listing {
-    Listed(std::result::Result<Tempo, TempoWithheld>),
-    NotListed(&'static str),
+    Listed(Tempo),
+    NotListed(String),
 }
 
 fn listing(row: &BatchRow, select: XmlSelect) -> Listing {
+    let not = |why: &str| Listing::NotListed(format!("not in the XML: {why}"));
     let Some(track) = &row.track else {
-        return Listing::NotListed("not in the XML");
+        return Listing::NotListed("not in the XML".to_owned());
+    };
+    if select == XmlSelect::Off {
+        return not("the XML is off");
+    }
+    let tempo = match Tempo::of(&track.grid) {
+        Ok(tempo) => tempo,
+        Err(TempoWithheld::NeedsReview) => return not("grid needs review"),
+        Err(TempoWithheld::Absent) => return not("no grid"),
+        Err(TempoWithheld::Meter(meter)) => {
+            return not(&format!("meter {meter} (the XML carries 4/4 grids only)"));
+        }
+        Err(TempoWithheld::InvalidTempo) => return not("no valid tempo"),
     };
     let confirmed = track.grid.grid().is_some_and(|(g, _)| g.confirmed);
-    match select {
-        XmlSelect::Off => Listing::NotListed("not in the XML: the XML is off"),
-        XmlSelect::Batch if row.mode == Some(BatchMode::Library) && !confirmed => {
-            Listing::NotListed("not in the XML: Library rows need a confirmed grid")
-        }
-        XmlSelect::All | XmlSelect::Batch => Listing::Listed(Tempo::of(&track.grid)),
+    if select == XmlSelect::Batch && row.mode == Some(BatchMode::Library) && !confirmed {
+        return not("Library rows need a confirmed grid");
     }
+    Listing::Listed(tempo)
 }
 
-/// The XML's tracks, in the order of `rows`: every row `select` lists, at its path as the
-/// file system spells it (its absolute path when that cannot be read).
+/// The XML's tracks, in the order of `rows`: every row `select` lists, at its path as its
+/// folders spell it (its absolute path when they cannot be read).
 #[must_use]
 pub fn xml_tracks(rows: &[BatchRow], select: XmlSelect) -> Vec<XmlTrack> {
+    let mut speller = Speller::new();
     rows.iter()
         .filter_map(|row| match (listing(row, select), &row.track) {
             (Listing::Listed(tempo), Some(track)) => Some(XmlTrack {
-                path: on_disk(&track.path),
+                path: speller.spell(&track.path),
+                title: track.title.clone(),
+                artist: track.artist.clone(),
                 duration: track.duration,
-                tempo: tempo.ok(),
+                tempo,
             }),
             _ => None,
         })
         .collect()
-}
-
-/// `path` as the file system stores its names, else absolute as given.
-fn on_disk(path: &Path) -> PathBuf {
-    sc_io::txn::resolve_file(path)
-        .ok()
-        .or_else(|| std::path::absolute(path).ok())
-        .unwrap_or_else(|| path.to_path_buf())
 }
 
 /// The report's rows, one per row of `rows`, in order.
@@ -307,12 +327,9 @@ pub fn report_rows(rows: &[BatchRow], select: XmlSelect) -> Vec<ReportRow> {
 
 /// What the XML carries for `row`, or why it carries nothing.
 fn grid_text(row: &BatchRow, select: XmlSelect) -> String {
-    let tempo = match listing(row, select) {
-        Listing::NotListed(why) => return why.to_owned(),
-        Listing::Listed(tempo) => tempo,
-    };
-    match tempo {
-        Ok(t) => {
+    match listing(row, select) {
+        Listing::NotListed(why) => why,
+        Listing::Listed(t) => {
             let unverified = row
                 .track
                 .as_ref()
@@ -323,12 +340,6 @@ fn grid_text(row: &BatchRow, select: XmlSelect) -> String {
             }
             text
         }
-        Err(TempoWithheld::NeedsReview) => "withheld: grid needs review".to_owned(),
-        Err(TempoWithheld::Absent) => "no grid".to_owned(),
-        Err(TempoWithheld::Meter(meter)) => {
-            format!("withheld: meter {meter} (the XML carries 4/4 grids only)")
-        }
-        Err(TempoWithheld::InvalidTempo) => "withheld: no valid tempo".to_owned(),
     }
 }
 
@@ -339,37 +350,41 @@ pub struct Artefacts {
     pub xml: Option<PathBuf>,
     /// The grid report.
     pub report: PathBuf,
-    /// Tracks the XML lists.
+    /// Tracks the XML lists (each with its grid).
     pub listed: usize,
-    /// Of those, tracks with a grid (`TEMPO`).
-    pub with_tempo: usize,
 }
 
 /// Writes the grid report of `rows` and, unless `select` is [`XmlSelect::Off`], the rekordbox
-/// XML into `dir`, each replacing an older one atomically.
+/// XML (its playlist named `playlist`, [`sc_io::rekordbox::playlist_name`]) into `dir`, each
+/// replacing an older one SoundCheck wrote atomically; anything else of that name is left as
+/// it is.
 ///
 /// # Errors
+/// [`sc_core::Error::AlreadyExists`] naming a file there that SoundCheck did not write;
 /// [`sc_core::Error::Io`] naming the file that could not be written.
-pub fn write_artefacts(dir: &Path, rows: &[BatchRow], select: XmlSelect) -> Result<Artefacts> {
+pub fn write_artefacts(
+    dir: &Path,
+    rows: &[BatchRow],
+    select: XmlSelect,
+    playlist: &str,
+) -> Result<Artefacts> {
+    use sc_io::artefacts::write_artefact;
     let tracks = xml_tracks(rows, select);
     let xml = if select == XmlSelect::Off {
         None
     } else {
         let path = dir.join(sc_io::rekordbox::XML_FILE_NAME);
-        let bytes = sc_io::rekordbox::xml_bytes(&tracks, sc_core::VERSION);
-        sc_io::artefacts::write_file(&path, &bytes)?;
+        let bytes = sc_io::rekordbox::xml_bytes(&tracks, sc_core::VERSION, playlist);
+        write_artefact(&path, &bytes, sc_io::rekordbox::is_soundcheck_xml)?;
         Some(path)
     };
     let report = dir.join(sc_io::report::REPORT_FILE_NAME);
-    sc_io::artefacts::write_file(
-        &report,
-        &sc_io::report::csv_bytes(&report_rows(rows, select)),
-    )?;
+    let csv = sc_io::report::csv_bytes(&report_rows(rows, select));
+    write_artefact(&report, &csv, sc_io::report::is_soundcheck_report)?;
     Ok(Artefacts {
         xml,
         report,
         listed: tracks.len(),
-        with_tempo: tracks.iter().filter(|t| t.tempo.is_some()).count(),
     })
 }
 
