@@ -42,14 +42,15 @@ fn prepare_puts_bar_1_at_the_lead() {
         "the first click starts at {onset}"
     );
     assert_eq!(onset, sound_in - trim, "the audio moved by exactly the cut");
-    // The record agrees with the audio to the analysis's accuracy (its bar 1 is found to the
-    // millisecond on the attack, which a 1% threshold meets a little later or earlier).
+    // The record is the analysis's bar 1 moved by the cut: the analysis puts bar 1 31 samples
+    // (0.7 ms) before the click (13200 against the click at 13230 in the source), so the record
+    // reads 31 samples before the first click. Pinned, so a change in the anchor's accuracy shows.
     let grid = export.grid.expect("grid exported");
     assert_eq!(grid.bar1, grid.first_bar_line, "bar 1 is the first line");
-    assert!(
-        grid.first_bar_line.0.abs_diff(onset) <= 44,
-        "onset {onset}, {grid:?}"
-    );
+    let early = onset
+        .checked_sub(grid.first_bar_line.0)
+        .expect("bar 1 before the click");
+    assert!(early.abs_diff(31) <= 2, "onset {onset}, {grid:?}");
     assert_eq!(grid.bpm.0, 120.0);
 }
 

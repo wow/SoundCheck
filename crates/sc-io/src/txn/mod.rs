@@ -244,6 +244,9 @@ impl<'v> Transaction<'v> {
     /// [`Error::Io`]. Every error comes before the rename: the file is untouched and nothing is
     /// left behind. Once the file is replaced the call succeeds; a journal line that could not
     /// be written then is a note in the report, and the next [`recover`] completes the change.
+    /// When every journal line after the rename fails and the same file is changed again before
+    /// that recovery runs, recovery records the first change as rolled back; its backup is kept,
+    /// with a note.
     pub fn apply_in_place(
         &self,
         path: &Path,

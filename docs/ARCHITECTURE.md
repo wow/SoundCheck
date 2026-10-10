@@ -39,7 +39,7 @@ ANALYSE (streamed; cached)
     (solved by sc_analysis::refit with no edit from GridEvidence, the solver's exact inputs: model beats and downbeats
      as the model's f32 seconds, downbeat activations, kick and broadband onsets as frames at 22.05 kHz with rise and level)
   DJ-safe report, tag inventory (lofty read), cover thumbnail
-  -> cache JSON (~/Library/Caches/app.soundcheck.desktop/analysis/<blake3(path)>.json, keyed by dev+inode+ctime+size+mtime+settings+version;
+  -> cache JSON (~/Library/Caches/app.soundcheck.desktop/analysis/<blake3(path)>.json, keyed by inode+ctime+size+mtime+settings+version, removed around every change;
      numbers round-trip exactly; a record older than schema 2 is still served, without its evidence)
 
 EDITS (where a record becomes a row: a job before the session stores it, `sc-cli plan` and `labels`): a grid edit saved for the file's audio
@@ -87,8 +87,11 @@ PROCESS (`run_batch` with `Task::Process(ProcessSettings{decide, export, out_dir
   overrides with a placed line moved to anchor - T') -> the output analysed afresh (`Analyzer::analyze_fresh`: its cache entry replaced even when
   size and mtime match the old one; the place where its grid is compared with the exported one) -> Done{ProcessDone{output, analysis, edit,
   edit_carried, notes}} (a panic there is a note too: once the file is replaced, the file is Done). Edits are stored per path and audio
-  identity, so the carried edit sits beside the original's and an undo finds the original's again. Cache keys hold the file identity (dev,
-  inode, ctime), so neither a same-length same-mtime rewrite nor an undo is served the other version's record. Library keeps the mtime,
+  identity, so the carried edit sits beside the original's and an undo finds the original's again. Cache keys hold the inode and ctime (not the
+  device, which changes when another disk mounts first), and apply_file, undo_file and recovery remove the file's entry before and after
+  each change (on FAT/exFAT ctime equals mtime and inodes are reused slot numbers), so neither a same-length same-mtime rewrite nor an undo
+  is served the other version's record. If every journal line after a rename fails and the same file is changed again before the next
+  recovery, that recovery records the first change as rolled back and keeps its backup, with a note. Library keeps the mtime,
   Prepare does not. The RecoveryGate opens on any recovery result (Failed and pending entries are reported, not blocking) and from a
   RecoveryGuard dropped without a result. Events per file: Started, Progress*, Processing, Written, Done | ExportSkipped
   | Failed | Cancelled.
