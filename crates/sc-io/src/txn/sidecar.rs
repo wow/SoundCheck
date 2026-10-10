@@ -45,6 +45,13 @@ pub struct RenderSummary {
     pub frames_in: u64,
     /// Frames written.
     pub frames_out: u64,
+    /// Frames cut from the start (the requested cut snapped back by up to 1 ms); absent in
+    /// records written before it was recorded, read as 0.
+    #[serde(default)]
+    pub trim_frames: u64,
+    /// Frames the request asked to cut; absent in older records, read as 0.
+    #[serde(default)]
+    pub trim_requested_frames: u64,
     /// Sample rate, Hz.
     pub sample_rate_hz: u32,
     /// Channels.
@@ -76,6 +83,8 @@ impl RenderSummary {
         Self {
             frames_in: report.frames_in,
             frames_out: report.frames_out,
+            trim_frames: report.trim_frames,
+            trim_requested_frames: report.trim_requested_frames,
             sample_rate_hz: report.sample_rate_hz,
             channels: report.channels,
             bits_out: report.bits_out,

@@ -56,7 +56,8 @@ pub struct ApplyArgs {
     /// refused).
     #[arg(long, allow_hyphen_values = true, value_parser = parse_gain)]
     gain_db: f64,
-    /// Samples per channel cut from the start.
+    /// Samples per channel to cut from the start; the cut moves up to 1 ms earlier to the
+    /// quietest frame (never later) and the next 2 ms fade in.
     #[arg(long, default_value_t = 0, value_name = "N")]
     trim_samples: u64,
     /// Output bits per sample (default: the source's; 24 for a float source).
@@ -152,6 +153,8 @@ struct RequestDoc<'a> {
 struct RenderDoc {
     frames_in: u64,
     frames_out: u64,
+    trim_frames: u64,
+    trim_requested_frames: u64,
     sample_rate_hz: u32,
     channels: u16,
     bits_out: u16,
@@ -247,8 +250,14 @@ pub fn applied_line(file: &Path, req: &ApplyRequest, r: &TxnReport) -> String {
     if render.dithered {
         s.push_str(" dithered");
     }
-    let trimmed = render.frames_in.saturating_sub(render.frames_out);
-    let _ = write!(s, ", {} trimmed", plural(trimmed, "frame", "frames"));
+    let _ = write!(
+        s,
+        ", {} trimmed",
+        plural(render.trim_frames, "frame", "frames")
+    );
+    if render.trim_requested_frames > 0 {
+        let _ = write!(s, " ({} requested)", render.trim_requested_frames);
+    }
     if render.samples_saturated > 0 {
         let _ = write!(
             s,
@@ -327,6 +336,8 @@ fn applied_doc<'a>(
         render: RenderDoc {
             frames_in: summary.frames_in,
             frames_out: summary.frames_out,
+            trim_frames: summary.trim_frames,
+            trim_requested_frames: summary.trim_requested_frames,
             sample_rate_hz: summary.sample_rate_hz,
             channels: summary.channels,
             bits_out: summary.bits_out,

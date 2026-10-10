@@ -12,7 +12,7 @@ use super::apply::{
 };
 use super::cases::{Fixture, matrix};
 use super::check::check_output;
-use super::expect::refusal;
+use super::expect::{effective, refusal};
 use super::golden::{OutputEntry, row_label};
 use super::parse;
 
@@ -22,8 +22,10 @@ pub type Written = Result<(Vec<u8>, Applied), Refusal>;
 /// A writer under test.
 pub type Writer<'a> = dyn Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written + 'a;
 
-/// Runs `writer` twice on `fx` and checks it: refused exactly when [`refusal`] says so and
-/// with the error class it names, otherwise identical bytes and report on both runs and every check of `check_output`.
+/// Runs `writer` twice on `fx` with the requested `args` and checks it against what a correct
+/// writer does with them ([`effective`]: the cut it actually makes): refused exactly when
+/// [`refusal`] says so and with the error class it names, otherwise identical bytes and report
+/// on both runs and every check of `check_output`.
 ///
 /// # Errors
 /// What went wrong, with the fixture name and row.
@@ -35,7 +37,8 @@ pub fn run(
 ) -> Result<(), String> {
     let first = writer(fx, args, edits);
     let second = writer(fx, args, edits);
-    match (refusal(fx, args), first, second) {
+    let want = effective(fx, args);
+    match (refusal(fx, &want), first, second) {
         (Some(want), Err(a), Err(b)) if a.kind == want.kind && b.kind == want.kind => Ok(()),
         (Some(want), Err(got), _) | (Some(want), _, Err(got)) => Err(format!(
             "{} {args:?}: refused as {} ({}), want {} ({})",
@@ -49,7 +52,8 @@ pub fn run(
             if a != b || report_a != report_b {
                 return Err(format!("{} {args:?}: two runs differ", fx.name));
             }
-            check_output(fx, &a, args, edits, report_a)
+            check_output(fx, &a, &want, edits, report_a)
+                .map_err(|e| format!("{e} (trim requested: {})", args.trim_samples))
         }
         (None, Err(e), _) | (None, _, Err(e)) => Err(format!(
             "{} {args:?}: refused unexpectedly as {}: {}",

@@ -34,6 +34,8 @@ fn entry(path: &Path) -> Entry {
             render: RenderSummary {
                 frames_in: 100,
                 frames_out: 100,
+                trim_frames: 0,
+                trim_requested_frames: 0,
                 sample_rate_hz: 44_100,
                 channels: 2,
                 bits_out: 16,

@@ -6,7 +6,9 @@
 use super::aiff::{self, Form};
 use super::apply::{Applied, ApplyArgs, Refusal, TagEdit, gain_factor};
 use super::cases::{Expect, Fixture};
-use super::expect::{edited_tag, out_bits, out_frames, patched, refusal, same_label};
+use super::expect::{
+    edited_tag, effective, fade_gain, out_bits, out_frames, patched, refusal, same_label,
+};
 use super::flac;
 use super::id3::{self, Version};
 use super::inspect::seektable;
@@ -33,24 +35,39 @@ pub struct Options {
     pub trailing_inside: bool,
 }
 
-/// The ideal output samples: exact shifts where the reference is exact, TPDF dither (seeded,
-/// +/-1 LSB triangular) at 16-bit otherwise, rounding half to even at 24-bit.
+/// The ideal output samples for effective `args` (see [`effective`]): exact shifts where the
+/// reference is exact, TPDF dither (seeded, +/-1 LSB triangular) at 16-bit otherwise, rounding
+/// half to even at 24-bit; the frames of a fade-in multiplied by its gain before rounding
+/// (and rounded without dither where the rest is exact).
 #[must_use]
 pub fn ideal_samples(fx: &Fixture, args: &ApplyArgs) -> Vec<i32> {
     let bits = out_bits(fx, args);
-    let skip = usize::try_from(args.trim_samples).expect("small") * usize::from(fx.channels);
+    let ch = usize::from(fx.channels);
+    let skip = usize::try_from(args.trim_samples).expect("small") * ch;
     let gain = gain_factor(args.gain_db);
     let scale = f64::from(1_u32 << (bits - 1));
+    let faded = |i: usize, r: f64| r * fade_gain(fx, args, (i - skip) / ch);
+    // Clamped to the output range, so the cast is exact.
+    #[allow(clippy::cast_possible_truncation)]
+    let round = |r: f64| r.round_ties_even().clamp(-scale, scale - 1.0) as i32;
     if let Samples::Int { bits: sb, data } = &fx.source
         && args.gain_db == 0.0
         && bits >= *sb
     {
-        return data[skip..].iter().map(|x| x << (bits - sb)).collect();
+        return (skip..data.len())
+            .map(|i| {
+                if fade_gain(fx, args, (i - skip) / ch) < 1.0 {
+                    round(faded(i, fx.source.normalised(i) * gain * scale))
+                } else {
+                    data[i] << (bits - sb)
+                }
+            })
+            .collect();
     }
     let mut rng = XorShift::new(0x00D1_7E12);
     (skip..fx.source.len())
         .map(|i| {
-            let mut r = fx.source.normalised(i) * gain * scale;
+            let mut r = faded(i, fx.source.normalised(i) * gain * scale);
             if bits == 16 {
                 r += f64::midpoint(rng.next_bipolar(), rng.next_bipolar());
             }
@@ -75,6 +92,7 @@ pub fn write(
     edits: &[TagEdit],
     opts: &Options,
 ) -> Result<(Vec<u8>, Applied), Refusal> {
+    let args = &effective(fx, args);
     if let Some(refused) = refusal(fx, args) {
         return Err(refused);
     }

@@ -11,17 +11,20 @@
 //!   below 0.05 LSB, RMS error within 0.4..0.6 LSB (rounding plus +/-1 LSB triangular dither
 //!   gives 0.5). An undithered 16-bit result (0.29) fails, as do floor instead of round (mean
 //!   -0.5) and a constant offset.
+//! - fade-in after a head cut: `r` is multiplied by the fade gain of its frame; in an
+//!   otherwise exact row those samples must equal `r` rounded half to even (no dither).
 
 use super::apply::{ApplyArgs, gain_factor};
 use super::cases::Fixture;
 use super::decode::decode;
-use super::expect::{out_bits, out_frames};
+use super::expect::{fade_gain, out_bits, out_frames};
 use super::inspect::{flac_frames, pcm_md5, seektable, streaminfo};
 use super::parse::{self, Container, Kind, Parsed};
 use super::pcm::Samples;
 
 /// Decodes `out` and checks rate, channels, frame count and every sample against the
-/// reference; returns the decoded samples at the output depth.
+/// reference for effective `args` (the cut a correct writer makes); returns the decoded
+/// samples at the output depth.
 ///
 /// # Errors
 /// The first sample or statistic that is out of tolerance.
@@ -43,7 +46,8 @@ pub fn check_pcm(fx: &Fixture, out: &[u8], args: &ApplyArgs) -> Result<Vec<i32>,
     }
     let bits = out_bits(fx, args);
     let samples = decoded.as_bits(bits);
-    let skip = usize::try_from(args.trim_samples).expect("small") * usize::from(fx.channels);
+    let ch = usize::from(fx.channels);
+    let skip = usize::try_from(args.trim_samples).expect("small") * ch;
     let gain = gain_factor(args.gain_db);
     let scale = f64::from(1_u32 << (bits - 1));
     let exact = match &fx.source {
@@ -58,14 +62,15 @@ pub fn check_pcm(fx: &Fixture, out: &[u8], args: &ApplyArgs) -> Result<Vec<i32>,
     let dithered = exact.is_none() && bits == 16;
     let (mut sum, mut sum_sq) = (0.0, 0.0);
     for (i, y) in samples.iter().enumerate() {
-        let r = fx.source.normalised(skip + i) * gain * scale;
+        let w = fade_gain(fx, args, i / ch);
+        let r = fx.source.normalised(skip + i) * gain * scale * w;
         let y_f = f64::from(*y);
         // Undithered rows must equal the rounded reference exactly.
         #[allow(clippy::float_cmp)]
         let bad = match exact {
-            Some((data, shift)) => *y != data[i] << shift,
-            None if dithered => (y_f - r).abs() > 1.5,
-            None => y_f != r.round_ties_even(),
+            Some((data, shift)) if w == 1.0 => *y != data[i] << shift,
+            _ if dithered => (y_f - r).abs() > 1.5,
+            _ => y_f != r.round_ties_even(),
         };
         if bad {
             return Err(format!("sample {i} is {y}, reference {r:.3}"));

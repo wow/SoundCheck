@@ -118,8 +118,8 @@ fn out_writes_a_copy_and_leaves_the_file() {
     assert_eq!(
         run.stdout.trim(),
         format!(
-            "Track.wav: gain -1.00 dB, 24-bit, 441 frames trimmed; 0 blocks carried; verified; \
-             written to {}",
+            "Track.wav: gain -1.00 dB, 24-bit, 441 frames trimmed (441 requested); 0 blocks \
+             carried; verified; written to {}",
             copy.display()
         )
     );
@@ -289,6 +289,8 @@ fn json_has_one_document_per_file_with_the_report() {
     assert_eq!(ok["request"]["tags"], serde_json::json!([]));
     assert_eq!(ok["render"]["framesIn"], 22_050);
     assert_eq!(ok["render"]["framesOut"], 22_050);
+    assert_eq!(ok["render"]["trimFrames"], 0);
+    assert_eq!(ok["render"]["trimRequestedFrames"], 0);
     assert_eq!(ok["render"]["bitsOut"], 16);
     assert_eq!(ok["render"]["dithered"], true);
     assert_eq!(ok["outputBlake3"].as_str().map(str::len), Some(64));
@@ -382,4 +384,49 @@ fn refusals_say_what_why_and_what_to_do() {
         .filter(|e| e.file_name().to_string_lossy().starts_with('.'))
         .collect();
     assert!(leftovers.is_empty(), "no temp file left: {leftovers:?}");
+}
+
+/// The ramp in the test WAV crosses zero at frame 500 (left 0, right 8), so a cut requested at
+/// 520 is made 20 frames earlier, at the quietest frame within 1 ms; text and JSON say both.
+#[test]
+fn apply_reports_the_cut_made_and_the_one_requested() {
+    let lib = Library::new();
+    let a = lib.file("A.wav", &wav_bytes(false));
+    let out = lib.base.join("out");
+    let text = lib.run(&[
+        "apply",
+        arg(&a),
+        "--gain-db",
+        "0",
+        "--trim-samples",
+        "520",
+        "--out",
+        arg(&out),
+    ]);
+    assert!(text.ok, "{}", text.text());
+    assert!(
+        text.stdout
+            .contains(", 500 frames trimmed (520 requested);"),
+        "{}",
+        text.stdout
+    );
+    let json_out = lib.base.join("json");
+    let run = lib.run(&[
+        "apply",
+        arg(&a),
+        "--gain-db",
+        "0",
+        "--trim-samples",
+        "520",
+        "--out",
+        arg(&json_out),
+        "--json",
+    ]);
+    assert!(run.ok, "{}", run.text());
+    let doc = &run.docs()[0];
+    assert_eq!(doc["request"]["trimFrames"], 520);
+    assert_eq!(doc["render"]["trimFrames"], 500);
+    assert_eq!(doc["render"]["trimRequestedFrames"], 520);
+    assert_eq!(doc["render"]["framesOut"], 22_050 - 500);
+    assert_eq!(doc["render"]["exact"], false, "faded in");
 }

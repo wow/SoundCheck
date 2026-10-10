@@ -1,6 +1,7 @@
 //! Throughput of the IFF render: a 6-minute 44.1 kHz stereo 24-bit WAV (about 95 MB) on disk,
 //! -3.2 dB applied into a new file in the same temporary folder (read, gain, round, write;
-//! the page cache is warm after the first iteration).
+//! the page cache is warm after the first iteration), without and with a head cut of 13,009
+//! frames (0.295 s, a Prepare-mode cut).
 #![allow(missing_docs)] // criterion_group! emits an undocumented public function
 
 use std::io::Write;
@@ -65,6 +66,19 @@ fn bench_apply(c: &mut Criterion) {
             apply_iff(&input, &output, &req, &AtomicBool::new(false)).expect("render")
         });
     });
+    let cut = RenderRequest {
+        trim_frames: 13_009,
+        ..req
+    };
+    group.bench_function(
+        "apply_iff -3.2 dB cut 13009 6 min 44.1k stereo 24-bit",
+        |b| {
+            b.iter(|| {
+                let _ = std::fs::remove_file(&output);
+                apply_iff(&input, &output, &cut, &AtomicBool::new(false)).expect("render")
+            });
+        },
+    );
     group.finish();
 }
 

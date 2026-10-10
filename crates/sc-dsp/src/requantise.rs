@@ -17,6 +17,12 @@
 //!   set to that code and counted. Callers refuse inputs whose peak after gain reaches full
 //!   scale, so saturation only ever moves the top code by less than one step; it is not
 //!   clipping, and the count is reported.
+//! - **Fade-in** ([`Requantiser::set_fade_in`]): the leading samples are multiplied by a
+//!   [`FadeIn`] gain before rounding, `r = (x * k) * w` with `k` the factor above (`2^s` for the
+//!   exact shift), so a fade costs one rounding, not two. They are rounded like the rest of
+//!   the conversion: dithered when it dithers; an otherwise exact conversion rounds them half
+//!   to even without dither (a ramp of a few milliseconds from silence; the error is at most
+//!   half a step) and is no longer reported as exact.
 //!
 //! References: AES17-2020 (full scale, word length); Lipshitz, Wannamaker and Vanderkooy,
 //! JAES 40(5), 1992 (TPDF dither before word-length reduction).
@@ -24,6 +30,7 @@
 use sc_core::{Error, Result};
 
 use crate::dither::Tpdf;
+use crate::fade::FadeIn;
 use crate::gain::db_to_linear;
 
 /// What the input samples are.
@@ -55,6 +62,7 @@ pub struct Requantiser {
     min: f64,
     max: f64,
     saturated: u64,
+    fade: Option<FadeIn>,
 }
 
 impl Requantiser {
@@ -127,13 +135,44 @@ impl Requantiser {
             min: -full,
             max: full - 1.0,
             saturated: 0,
+            fade: None,
         })
     }
 
-    /// Whether the conversion is an exact shift (0 dB, integer source, no loss of depth).
+    /// Whether the conversion is an exact shift (0 dB, integer source, no loss of depth) with
+    /// no fade-in.
     #[must_use]
     pub fn is_exact(&self) -> bool {
-        matches!(self.mode, Mode::Shift(_))
+        matches!(self.mode, Mode::Shift(_)) && self.fade.is_none()
+    }
+
+    /// Fades the stream in: the next samples pushed are multiplied by `fade`'s gains before
+    /// rounding (see the module documentation), continuing across blocks.
+    pub fn set_fade_in(&mut self, fade: FadeIn) {
+        self.fade = Some(fade);
+    }
+
+    /// The factor `k` of the module documentation.
+    fn factor(&self) -> f64 {
+        match self.mode {
+            // s < 32, so 2^s is exact.
+            Mode::Shift(s) => f64::from(1_u32 << s.min(31)),
+            Mode::Scale(k) => k,
+        }
+    }
+
+    /// Converts the leading samples that lie inside the fade; returns how many.
+    fn push_faded<T: Copy>(&mut self, input: &[T], out: &mut [i32], value: fn(T) -> f64) -> usize {
+        let Some(mut fade) = self.fade.take() else {
+            return 0;
+        };
+        let n = fade.remaining_samples().min(input.len()).min(out.len());
+        let k = self.factor();
+        for (o, x) in out[..n].iter_mut().zip(&input[..n]) {
+            *o = self.quantise(value(*x) * k * fade.next_gain());
+        }
+        self.fade = Some(fade);
+        n
     }
 
     /// Whether TPDF dither is added.
@@ -158,6 +197,8 @@ impl Requantiser {
                 "integer samples pushed into a float requantiser".into(),
             ));
         }
+        let start = self.push_faded(input, out, f64::from);
+        let (input, out) = (&input[start..], &mut out[start..]);
         match self.mode {
             Mode::Shift(s) => {
                 for (o, x) in out.iter_mut().zip(input) {
@@ -188,7 +229,8 @@ impl Requantiser {
                 "float samples pushed into an integer requantiser".into(),
             ));
         }
-        for (o, x) in out.iter_mut().zip(input) {
+        let start = self.push_faded(input, out, |x| x);
+        for (o, x) in out[start..].iter_mut().zip(&input[start..]) {
             *o = self.quantise(x * k);
         }
         Ok(())

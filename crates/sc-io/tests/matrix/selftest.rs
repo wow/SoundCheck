@@ -11,6 +11,7 @@ use super::id3;
 use super::inspect;
 use super::oracle::{self, Options, ideal_samples};
 use super::parse::{self, Container, Kind, parse};
+use super::pcm;
 use super::writers::{Written, bit_depth_rows, has_id3, run, tag_rows};
 
 fn reference(opts: Options) -> impl Fn(&Fixture, &ApplyArgs, &[TagEdit]) -> Written {
@@ -492,4 +493,43 @@ fn flac_frame_numbers_round_trip_through_the_utf8_coding() {
             "decode {n:#x}"
         );
     }
+}
+
+#[test]
+fn pcm_checks_reject_a_cut_not_snapped_and_a_missing_fade() {
+    let name = "wav16-mono";
+    let fx = fixture(name);
+    let pcm::Samples::Int { data, .. } = &fx.source else {
+        panic!("integer fixture")
+    };
+    let cut = super::expect::actual_trim(&fx, &TRIM);
+    assert_ne!(
+        cut, 441,
+        "the fixture's quietest frame lies before the request"
+    );
+    let unfaded = Options {
+        samples: Some(data[usize::try_from(cut).expect("small")..].to_vec()),
+        ..Options::default()
+    };
+    rejects(
+        name,
+        &TRIM,
+        &[],
+        unfaded,
+        ("no fade after the cut", "sample 0 is"),
+    );
+    let unsnapped = Options {
+        samples: Some(data[441..].to_vec()),
+        ..Options::default()
+    };
+    rejects(
+        name,
+        &TRIM,
+        &[],
+        unsnapped,
+        (
+            "the requested cut, not snapped",
+            "data length does not match the frame count",
+        ),
+    );
 }
