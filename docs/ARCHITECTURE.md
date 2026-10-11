@@ -34,8 +34,8 @@ ANALYSE (streamed; cached)
     -> 22.05 kHz mono buffer (kept whole; freed after)
   beat-this (small model; bounded pool, one instance per worker) -> beats, downbeats, logits
   kick-band (30-150 Hz) and broadband onsets at 1 ms, with rise and level (the first few ms of a file, where a fade-in and the
-  band filter start up, count as a ramp held at its settled level, so a bar-1 kick 5 ms in is found; an attack in the first 45 ms
-  must also stand 6 dB above the median level 30-100 ms after it, since a fade-in or the settling filter holds the level it reaches
+  band filter start up, count as a ramp held at its settled level, so a bar-1 kick 5 ms in is found; an attack in the first 30 ms
+  must also stand 2 dB above the median level 30-100 ms after it, since a fade-in or the settling filter holds the level it reaches
   while a kick decays) -> cached
   meter estimator (accent pattern at the finest pulse, templates incl. aksak, genre prior) -> Meter
   grid solver -> Grid { anchor, bpm, meter, first_downbeat_index, segments, residuals, verdict, confidence, alternatives }

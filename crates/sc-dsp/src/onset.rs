@@ -23,7 +23,9 @@
 //! the envelope by 10 to 60 dB, sometimes as steeply as a kick, but the level they reach is
 //! held, while a kick decays. So within the first [`START_WINDOW_MS`] an attack must also stand
 //! [`START_MIN_ACCENT_DB`] above the median level [`AFTER_FROM_MS`] to [`AFTER_TO_MS`] after
-//! it. A bar-1 kick a few milliseconds in, where a cut to bar 1 puts it, is found; an attack
+//! it: a faded-in band settles within about 1 dB of its level, while even a kick ringing out
+//! over 300 ms stands several dB above its own tail and a bass under it. A bar-1 kick a few
+//! milliseconds in, where a cut to bar 1 puts it, is found; an attack
 //! inside the ramp merges with it; a kick at the start that does not stand out from what
 //! follows (a sub-bass as loud as the kick) is missed, as everything in the first 30 ms was
 //! before. The method
@@ -60,14 +62,15 @@ pub const START_SETTLE_STEP_DB: f64 = 3.0;
 /// it.
 pub const MAX_START_RAMP_MS: usize = 4;
 
-/// The start of the input where an attack must be steep, in hops (ms): the onsets of hops up
-/// to [`MIN_SPACING_MS`] plus [`RISE_WINDOW_MS`] in, whose rises and spacing reach back to the
-/// start, plus a few hops of margin.
-pub const START_WINDOW_MS: usize = 45;
+/// The start of the input where an attack must stand out from what follows, in hops (ms): the
+/// window that was skipped entirely before, so later attacks are judged as they always were.
+pub const START_WINDOW_MS: usize = MIN_SPACING_MS;
 
 /// How far an attack in the first [`START_WINDOW_MS`] must stand above the median level from
-/// [`AFTER_FROM_MS`] to [`AFTER_TO_MS`] after it, in dB.
-pub const START_MIN_ACCENT_DB: f64 = 6.0;
+/// [`AFTER_FROM_MS`] to [`AFTER_TO_MS`] after it, in dB. Fade-ins of 5-100 ms (linear, cosine,
+/// exponential) over a held 40-80 Hz bass stand less than 1 dB above it; 2 dB keeps a margin
+/// while finding kicks that ring out for 300 ms.
+pub const START_MIN_ACCENT_DB: f64 = 2.0;
 
 /// Start of the span after a start attack whose median level it must stand above, ms after
 /// the attack: past a kick's main decay.
