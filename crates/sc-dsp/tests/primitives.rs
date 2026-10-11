@@ -100,7 +100,7 @@ fn first_onset_error_ms(mut signal: Vec<f32>, sample_rate: u32, start: usize) ->
 }
 
 #[test]
-fn onsets_in_the_first_30_ms_are_found() {
+fn onsets_in_the_first_45_ms_are_found() {
     // A Prepare cut leaves bar 1 a lead of 5 to 15 ms after the start of the file; its kick must
     // be found there, and the fade-in is no attack. Over silence: within the 2 ms the burst
     // tests allow. Over a bass that was sounding when the file was cut: within one hop of where
@@ -108,7 +108,7 @@ fn onsets_in_the_first_30_ms_are_found() {
     // at -18 dB under the kick delays the start the detector reads by up to 3.5 ms anywhere).
     for sample_rate in [22_050_u32, 44_100] {
         for bass in [0.0_f32, 0.1] {
-            for kick_ms in [5.0, 6.0, 10.0, 15.0, 29.0] {
+            for kick_ms in [5.0, 6.0, 10.0, 15.0, 29.0, 40.0, 44.0] {
                 let what = format!("{sample_rate} Hz, bass {bass}, kick at {kick_ms} ms");
                 let (signal, start) = cut_file(sample_rate, kick_ms, bass, 1.0);
                 let (error_ms, count) = first_onset_error_ms(signal, sample_rate, start);

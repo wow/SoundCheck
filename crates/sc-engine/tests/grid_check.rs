@@ -207,10 +207,13 @@ fn prepared_click_track_passes() {
     let (done, export, source) = export_with(&lib, &path, |_| GridEdit::default());
     // The analysis found the accented bar: bar 1 at the first accented kick (0.4 s), modulo
     // the bar, within 2 ms.
-    let bar_ms = 4.0 * 60_000.0 / BPM;
+    let bar_len_ms = 4.0 * 60_000.0 / BPM;
     let bar1_ms = ms(source.anchor.0 as f64);
-    let phase = (bar1_ms - 400.0).rem_euclid(bar_ms);
-    assert!(phase.min(bar_ms - phase) <= 2.0, "bar 1 at {bar1_ms:.2} ms");
+    let phase = (bar1_ms - 400.0).rem_euclid(bar_len_ms);
+    assert!(
+        phase.min(bar_len_ms - phase) <= 2.0,
+        "bar 1 at {bar1_ms:.2} ms"
+    );
     assert!(
         export.plan.trim_frames > 0,
         "the head is cut: {:?}",
