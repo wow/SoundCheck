@@ -468,7 +468,7 @@ fn a_grid_confirmed_under_another_bpm_range_passes() {
         ..first
     };
     let s = settings(&lib, later, process(&lib, BatchMode::Prepare, None));
-    let events = run(&batch(&[path.clone()]), &s, &CancelToken::new());
+    let events = run(&batch(std::slice::from_ref(&path)), &s, &CancelToken::new());
     assert_eq!(
         names(&events, 1),
         ["started", "processing", "written", "done"]

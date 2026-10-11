@@ -57,8 +57,7 @@ impl Choices {
     ) -> Self {
         // An edit applied: its overrides, or an empty edit that `state.edited` says was solved
         // under its own range to another grid than the analysis's.
-        let applied = saved
-            .filter(|s| (state.edited || state.confirmed) && (!s.edit.is_empty() || state.edited));
+        let applied = saved.filter(|s| state.edited || (state.confirmed && !s.edit.is_empty()));
         match (applied, grid) {
             (Some(saved), Some(grid)) => Self {
                 edit: if saved.edit.is_empty() {
@@ -88,10 +87,10 @@ impl Choices {
 /// (`None` without evidence).
 #[must_use]
 pub fn detector_grid(record: &AnalysisRecord, choices: &Choices) -> Option<Grid> {
-    if !choices.refit {
-        record.grid.clone()
-    } else {
+    if choices.refit {
         refit_record(record, choices.bpm_range, &choices.edit).map(|s| s.grid)
+    } else {
+        record.grid.clone()
     }
 }
 
