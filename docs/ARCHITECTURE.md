@@ -6,7 +6,7 @@ Status: v0.1 architecture fixed 2026-09-24.
 ```
 src        React 19 + TS (Vite, Tailwind 4, shadcn, zustand, xstate)   -- renders; never holds PCM
 src-tauri  Tauri 2 shell: commands, Channel<JobEvent>, read_peaks         -- thin; calls sc-engine
-crates/sc-cli           headless binary: analyze | plan | process | labels | eval | bench | cache | apply | undo | journal | recover (later: grid-check) -- thin; calls sc-engine (and sc-io's journal) and only prints
+crates/sc-cli           headless binary: analyze | plan | process | labels | eval | bench | cache | apply | undo | journal | recover | xml (the exported-grid check runs inside process) -- thin; calls sc-engine (and sc-io's journal) and only prints
 crates/sc-engine        analyze (the per-file pipeline), run_batch(files, settings{task: Analyze | Process}, cancel, on_event), cancellation, player (cpal + rtrb; live meters, original/processed audition, monitor volume),
                         apply_file / undo_file / recover_at_start / check_inputs over sc_io::txn, neutral tag names, folder expansion that skips the backup root,
                         decide (loudness plan per row) and export::plan_export (what exporting does to a file: gain, Prepare cut, tags, XML only or skip)
@@ -33,7 +33,10 @@ ANALYSE (streamed; cached)
     -> ebur128 (M/S/I/LRA/TP; S sampled per 100 ms -> S-P95, S-top30, timeline, PLR)
     -> 22.05 kHz mono buffer (kept whole; freed after)
   beat-this (small model; bounded pool, one instance per worker) -> beats, downbeats, logits
-  kick-band (30-150 Hz) and broadband onsets at 1 ms, with rise and level -> cached
+  kick-band (30-150 Hz) and broadband onsets at 1 ms, with rise and level (the first few ms of a file, where a fade-in and the
+  band filter start up, count as a ramp held at its settled level, so a bar-1 kick 5 ms in is found; an attack in the first 30 ms
+  must also stand 2 dB above the median level 30-100 ms after it, since a fade-in or the settling filter holds the level it reaches
+  while a kick decays) -> cached
   meter estimator (accent pattern at the finest pulse, templates incl. aksak, genre prior) -> Meter
   grid solver -> Grid { anchor, bpm, meter, first_downbeat_index, segments, residuals, verdict, confidence, alternatives }
     (solved by sc_analysis::refit with no edit from GridEvidence, the solver's exact inputs: model beats and downbeats
@@ -86,8 +89,16 @@ PROCESS (`run_batch` with `Task::Process(ProcessSettings{decide, export, out_dir
   problems become notes): an edited or confirmed grid edit is carried to the output (`carry_edit`: made on the output's audio, measured by a
   loudness pass that a cancel does not stop; a confirmed grid pinned as typed BPM + meter + bar line at anchor - T'; an unconfirmed edit keeps its
   overrides with a placed line moved to anchor - T') -> the output analysed afresh (`Analyzer::analyze_fresh`: its cache entry replaced even when
-  size and mtime match the old one; the place where its grid is compared with the exported one) -> Done{ProcessDone{output, analysis, edit,
-  edit_carried, notes}} (a panic there is a note too: once the file is replaced, the file is Done). Edits are stored per path and audio
+  size and mtime match the old one) -> GRID-CHECK (`sc_engine::export::grid_check`, relative to the source's own analysis: at plan time the source's detector grid
+  (the analysed grid; for a grid the user edited, its evidence refitted with only the user's meter, a tempo tap at the exported BPM and
+  the fitted part, never a placed bar line, chosen beat 1 or typed BPM) gives ExportedGrid.detector_offset_ms (its bar line nearest bar 1,
+  minus bar 1) and detector_bpm, recorded in the sidecar; after the write the output's fresh analysis, solved with the same choices, must
+  give a bar line within 5 ms of bar1 + detector_offset_ms modulo the bar and a tempo within 0.005 BPM of detector_bpm (for an unedited
+  grid: the exported bar 1 and bpm_exact themselves); odd meters, no grid, a withheld grid, an unfinished analysis -> NotChecked{reason};
+  two refits under 5 ms each on top of the analysis)
+  -> `sc_io::txn::record_grid_check` (a journal line for the transaction, so a sidecar re-rendered from the journal keeps it, then the
+  sidecar's `export.gridCheck` patched when the sidecar is still that transaction's) -> Done{ProcessDone{output, analysis, edit,
+  edit_carried, grid_check, notes}} (a panic there is a note too: once the file is replaced, the file is Done). Edits are stored per path and audio
   identity, so the carried edit sits beside the original's and an undo finds the original's again. Cache keys hold the inode and ctime (not the
   device, which changes when another disk mounts first), and apply_file, undo_file and recovery remove the file's entry before and after
   each change (on FAT/exFAT ctime equals mtime and inodes are reused slot numbers), so neither a same-length same-mtime rewrite nor an undo
@@ -151,7 +162,8 @@ RENDER (streamed)
              folder lists it (Speller, by inode), percent-encoded; one 4/4 TEMPO from bar 1, first beat >= 0 with its Battito; review grids, no grid and other
              meters are left out; a per-batch playlist keyed by TrackID, KeyType 0) + sc_io::report (grid-report.csv), each replacing atomically only a file SoundCheck
              wrote (sc_io::artefacts::write_artefact); in place they go to a new
-             `~/Music/SoundCheck/exports/<local date time>/` (sc_io::artefacts, SC_EXPORTS_ROOT); per-file grid-check comes next
+             `~/Music/SoundCheck/exports/<local date time>/` (sc_io::artefacts, SC_EXPORTS_ROOT); the report's grid_check column is ProcessDone.grid_check for a written row, the sidecar's for one exported
+             earlier, "not checked: file not written (XML only)" for an XML-only row
 ```
 
 ## Key types (sc-core)

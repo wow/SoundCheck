@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::{ExportPlan, ExportSettings};
+use super::{ExportPlan, ExportSettings, GridCheck};
 use crate::analysis::{AnalysisRecord, Meter};
 use crate::plan::{DecideSettings, Plan};
 use crate::units::{Bpm, DbTp, Lu, Lufs, SampleIndex, Seconds};
@@ -30,6 +30,12 @@ pub struct ExportRecord {
     pub grid: Option<ExportedGrid>,
     /// The source's measurements.
     pub source: SourceMeasurements,
+    /// The check of the exported grid against the written file's own analysis, recorded after
+    /// the write; absent until it ran, and in records written before it existed.
+    /// Readers of sidecars drop a value they cannot read (a later version's result), so it
+    /// reads as absent (`sc_io`'s sidecar reader does).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_check: Option<GridCheck>,
 }
 
 /// The grid of an exported file, in the output's samples (after the cut).
@@ -53,6 +59,17 @@ pub struct ExportedGrid {
     pub edited: bool,
     /// The user confirmed the grid by ear.
     pub confirmed: bool,
+    /// Where the source's own analysis puts its bar line nearest `bar1` (in the output's
+    /// samples), minus `bar1`, in milliseconds: the detector's grid solved with the user's
+    /// meter, tempo octave and fitted part, but none of the bar line placed, the beat 1 chosen
+    /// or the tempo typed. Zero for a grid the user did not edit. The check of the written file
+    /// expects the same offset from its own analysis. Absent in records written before it and
+    /// when the source's evidence was not at hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detector_offset_ms: Option<f64>,
+    /// That grid's tempo; absent as `detector_offset_ms` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detector_bpm: Option<Bpm>,
 }
 
 /// The source's measurements an export planned from (the loudness timeline left out).

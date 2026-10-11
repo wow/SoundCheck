@@ -74,6 +74,13 @@ fn in_place_writes_backs_up_and_records_the_export() {
     // The fixture has no tag to write into, and the line says so.
     assert!(first.contains("; tags not added: "), "{first}");
     assert!(first.contains("; backup "), "{first}");
+    // Under it, the check of the exported grid (none without a grid).
+    assert_eq!(
+        run.stdout.lines().nth(1),
+        Some("  grid check: not checked: no grid exported"),
+        "{}",
+        run.text()
+    );
     assert!(
         run.stdout
             .contains("1 files: 1 written, 0 XML only, 0 skipped, 0 failed"),
@@ -90,6 +97,10 @@ fn in_place_writes_backs_up_and_records_the_export() {
     assert_eq!(sidecar["schema"], 2);
     assert_eq!(sidecar["export"]["settings"]["batchMode"], "library");
     assert_eq!(sidecar["export"]["plan"]["expectFrames"], 220_500);
+    assert_eq!(
+        sidecar["export"]["gridCheck"],
+        serde_json::json!({"result": "notChecked", "reason": {"type": "noGrid"}})
+    );
     // The original is in the backup root.
     let backed_up = common::files_under(&lib.backups)
         .into_iter()
@@ -167,6 +178,8 @@ fn json_has_one_document_per_file() {
         docs[0]["written"]["framesOut"]
     );
     assert_eq!(docs[0]["written"]["outputAnalysed"], true);
+    assert_eq!(docs[0]["written"]["gridCheck"]["result"], "notChecked");
+    assert_eq!(docs[0]["written"]["gridCheck"]["reason"]["type"], "noGrid");
     assert_eq!(docs[1]["export"]["type"], "skip");
     assert_eq!(docs[1]["export"]["reason"]["type"], "notDjSafeRate");
     assert!(docs[1].get("written").is_none());

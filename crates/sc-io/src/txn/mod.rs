@@ -96,7 +96,7 @@ pub use preflight::{
     resolve_backup_root, resolve_file, tag_family,
 };
 pub use recover::{Pending, Recovered, RecoveryReport, recover};
-pub use sidecar::{SIDECAR_SUFFIX, sidecar_path};
+pub use sidecar::{SIDECAR_SUFFIX, record_grid_check, sidecar_path};
 pub use undo::{SidecarAfterUndo, UndoReport};
 pub use volume::{SystemVolumes, Volume, VolumeProvider};
 

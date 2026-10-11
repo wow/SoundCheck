@@ -13,11 +13,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use sc_core::export::ExportRecord;
+use sc_core::export::{ExportRecord, GridCheck};
 use sc_core::{Error, RenderRequest, Result};
 
 use super::fsx::{hex, io_err, remove_if_exists, sync_dir, sync_file, temp_name};
-use super::journal::{Entry, TxnKind};
+use super::journal::{Entry, Journal, Line, State, TxnKind};
 use crate::render::{BlockFate, RenderReport};
 
 /// Version of the sidecar layout; a change that breaks readers increments it. Version 2 added
@@ -244,10 +244,7 @@ pub(crate) fn render_text(entry: &Entry, notes: &[String]) -> Result<String> {
         },
         export: record.export.clone(),
     };
-    let mut text = serde_json::to_string_pretty(&doc)
-        .map_err(|e| Error::Internal(format!("sidecar not serialisable: {e}")))?;
-    text.push('\n');
-    Ok(text)
+    doc_text(&doc)
 }
 
 /// Reads the sidecar at `path` (see [`sidecar_path`]): any schema from
@@ -274,7 +271,35 @@ pub fn read(path: &Path) -> Result<SidecarDoc> {
             "sidecar schema {schema}; this version reads {OLDEST_SIDECAR_SCHEMA} to {SIDECAR_SCHEMA}"
         )));
     }
+    let mut value = value;
+    drop_unreadable_grid_check(&mut value);
     serde_json::from_value(value).map_err(|e| corrupt(format!("not a sidecar: {e}")))
+}
+
+/// Removes `export.gridCheck` from a sidecar's JSON when this version cannot read it (a later
+/// version's result), so the sidecar still reads, without it.
+fn drop_unreadable_grid_check(value: &mut serde_json::Value) {
+    let Some(export) = value
+        .get_mut("export")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    let unreadable = export
+        .get("gridCheck")
+        .is_some_and(|c| serde_json::from_value::<GridCheck>(c.clone()).is_err());
+    if unreadable {
+        export.remove("gridCheck");
+    }
+}
+
+/// The text of `doc` as sidecars are written: keys in a fixed order, two-space indent, a final
+/// newline.
+fn doc_text(doc: &SidecarDoc) -> Result<String> {
+    let mut text = serde_json::to_string_pretty(doc)
+        .map_err(|e| Error::Internal(format!("sidecar not serialisable: {e}")))?;
+    text.push('\n');
+    Ok(text)
 }
 
 /// Writes the sidecar of `entry` next to its target, replacing an older one atomically.
@@ -284,8 +309,45 @@ pub fn read(path: &Path) -> Result<SidecarDoc> {
 pub(crate) fn write(entry: &Entry, notes: &[String]) -> Result<PathBuf> {
     let text = render_text(entry, notes)?;
     let path = sidecar_path(&entry.path);
+    replace(&path, &text, &entry.txn)?;
+    Ok(path)
+}
+
+/// Records `check`, the check of the grid exported by the transaction `txn` that wrote `file`:
+/// journaled in `backup_root` first (so a sidecar written again from the journal, as an undo of
+/// a later change does, keeps it), then added to the file's sidecar, which is otherwise left
+/// byte for byte as it was. A sidecar of another transaction (a later change wrote the file)
+/// or without an export is left alone.
+///
+/// # Errors
+/// [`Error::Io`] when the journal or the sidecar cannot be read or written; [`Error::Corrupt`]
+/// when the sidecar does not read.
+pub fn record_grid_check(
+    backup_root: &Path,
+    txn: &str,
+    file: &Path,
+    check: &GridCheck,
+) -> Result<()> {
+    let mut line = Line::new(txn, State::Done);
+    line.grid_check = Some(check.clone());
+    Journal::at(backup_root).append(&line)?;
+    let path = sidecar_path(file);
+    let mut doc = read(&path)?;
+    if doc.transaction != txn {
+        return Ok(());
+    }
+    let Some(export) = doc.export.as_mut() else {
+        return Ok(());
+    };
+    export.grid_check = Some(check.clone());
+    replace(&path, &doc_text(&doc)?, txn)
+}
+
+/// Replaces the file at `path` with `text` atomically (a temp file named for `txn`, synced,
+/// renamed over it, the folder synced).
+fn replace(path: &Path, text: &str, txn: &str) -> Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
-    let temp = dir.join(temp_name(path.file_name().unwrap_or_default(), &entry.txn));
+    let temp = dir.join(temp_name(path.file_name().unwrap_or_default(), txn));
     remove_if_exists(&temp)?;
     let written = (|| {
         let mut f = OpenOptions::new()
@@ -296,14 +358,14 @@ pub(crate) fn write(entry: &Entry, notes: &[String]) -> Result<PathBuf> {
         f.write_all(text.as_bytes()).map_err(|e| io_err(&temp, e))?;
         sync_file(&f, &temp)?;
         drop(f);
-        std::fs::rename(&temp, &path).map_err(|e| io_err(&path, e))
+        std::fs::rename(&temp, path).map_err(|e| io_err(path, e))
     })();
     if let Err(e) = written {
         let _ = remove_if_exists(&temp);
         return Err(e);
     }
     sync_dir(dir);
-    Ok(path)
+    Ok(())
 }
 
 /// Removes the sidecar of `file`; whether there was one.

@@ -124,9 +124,13 @@ fn process_in_place_writes_the_artefacts_into_a_new_batch_folder() {
         row.starts_with(&format!("{},prepare,written,+8.9", wav.display())),
         "{row}"
     );
-    // No cut, BPM or bar 1 without a grid; the note says why no tag was written.
+    // No cut, BPM or bar 1 without a grid, so no grid check; the note says why no tag was
+    // written.
     assert!(
-        row.ends_with(",,,,not in the XML: no grid,,tags not added: the file has no ID3 tag"),
+        row.ends_with(
+            ",,,,not in the XML: no grid,not checked: no grid exported,tags not added: the file \
+             has no ID3 tag"
+        ),
         "{row}"
     );
     // A second batch gets its own folder.

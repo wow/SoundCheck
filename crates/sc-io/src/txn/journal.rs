@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use sc_core::export::GridCheck;
 use sc_core::{Error, Result};
 
 use super::fsx::{io_err, remove_if_exists, sync_file};
@@ -171,6 +172,14 @@ pub(crate) struct Line {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+    /// The exported grid's check, recorded after the transaction ended; one this version
+    /// cannot read is dropped, so the line still reads.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_grid_check"
+    )]
+    pub grid_check: Option<GridCheck>,
 }
 
 impl Line {
@@ -200,8 +209,19 @@ impl Line {
             outcome: None,
             error: None,
             notes: Vec::new(),
+            grid_check: None,
         }
     }
+}
+
+/// Reads an optional [`GridCheck`], one this version cannot read (a later version's result) as
+/// `None`, so a journal line holding one still reads.
+fn lenient_grid_check<'de, D>(deserializer: D) -> std::result::Result<Option<GridCheck>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 /// A transaction as its journal lines describe it.
@@ -312,6 +332,12 @@ impl Entry {
         self.outcome = line.outcome.or(self.outcome);
         self.error = line.error.or(self.error.take());
         self.notes.extend(line.notes);
+        if let (Some(check), Some(export)) = (
+            line.grid_check,
+            self.record.as_mut().and_then(|r| r.export.as_mut()),
+        ) {
+            export.grid_check = Some(check);
+        }
     }
 }
 
