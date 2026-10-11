@@ -265,3 +265,23 @@ fn a_grid_check_is_journaled_and_only_touches_its_own_export_sidecar() {
     let other = dir.path().join("b.wav");
     assert!(record_grid_check(&root, "t-1", &other, &check).is_err());
 }
+
+#[test]
+fn a_grid_check_this_version_cannot_read_reads_as_absent() {
+    let mut value = serde_json::json!({
+        "schema": 2,
+        "export": {"gridCheck": {"result": "somethingLater", "x": 1}, "other": 1}
+    });
+    drop_unreadable_grid_check(&mut value);
+    assert_eq!(value["export"], serde_json::json!({"other": 1}));
+    let mut readable = serde_json::json!({"export": {"gridCheck": {"result": "noGridFound"}}});
+    let before = readable.clone();
+    drop_unreadable_grid_check(&mut readable);
+    assert_eq!(readable, before);
+    // A journal line with a later result still reads, without it.
+    let line: super::super::journal::Line = serde_json::from_str(
+        r#"{"txn":"t-1","state":"done","at":"2026-10-11T00:00:00Z","grid_check":{"result":"later"}}"#,
+    )
+    .expect("the line reads");
+    assert_eq!(line.grid_check, None);
+}

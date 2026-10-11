@@ -9,7 +9,7 @@ Run before tagging any `v0.x.0` or `-rc` (a patch release needs only the Files a
 ## Grid: the 20-track rekordbox protocol
 Owner-owned set (outside the repo), labelled once in rekordbox: BPM and first-downbeat time. Mix: house, techno, DnB, hip-hop; >= 5 MP3; >= 3 with Serato tags.
 - [ ] `sc-cli analyze --json` on the set: BPM within +/-0.02 of the label on >= 18/20 after at most one x2 / /2.
-- [ ] Prepare-mode export of the lossless tracks; `sc-cli grid-check` on every output: BPM +/-0.005, anchor 0 +/-5 ms.
+- [ ] Prepare-mode export of the lossless tracks with `sc-cli process`; every output's `grid check:` line (and the `grid_check` column of `grid-report.csv`) reads `pass`: BPM +/-0.005 and bar 1 +/-5 ms against the source's own analysis.
 - [ ] rekordbox 7, Track Analysis Mode Normal with the owner's BPM range (70-180), fresh import of the exported files (not XML): beat 1 is the first grid entry, within 15 ms of the start, same phase, BPM equal to the written value on >= 18/20. Record every miss with the file, rekordbox's BPM and first-beat time. Repeat one file with Cloud Analysis off.
 - [ ] XML path: import the batch XML (tracks, not only the playlist); confirm `Inizio`/`Bpm` match; enable Analysis Lock; export to USB; read `PQTZ` with pyrekordbox; record whether the grid survived.
 - [ ] Serato DJ Pro (Set Beatgrid/BPM on) and Traktor (Automatic range) on 5 tracks each: BPM equal, bar 1 on the downbeat; record cue drift on the Serato-tagged files (must be 0).

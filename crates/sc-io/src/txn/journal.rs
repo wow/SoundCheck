@@ -172,8 +172,13 @@ pub(crate) struct Line {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
-    /// The exported grid's check, recorded after the transaction ended.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The exported grid's check, recorded after the transaction ended; one this version
+    /// cannot read is dropped, so the line still reads.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "sc_core::export::lenient_grid_check"
+    )]
     pub grid_check: Option<GridCheck>,
 }
 

@@ -32,12 +32,9 @@ pub struct ExportRecord {
     pub source: SourceMeasurements,
     /// The check of the exported grid against the written file's own analysis, recorded after
     /// the write; absent until it ran, and in records written before it existed.
-    /// A value this version cannot read (a result of a later version) reads as absent.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "super::grid_check::lenient"
-    )]
+    /// Readers of sidecars drop a value they cannot read (a later version's result), so it
+    /// reads as absent (`sc_io`'s sidecar reader does).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grid_check: Option<GridCheck>,
 }
 

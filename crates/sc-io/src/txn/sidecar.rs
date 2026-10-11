@@ -271,7 +271,26 @@ pub fn read(path: &Path) -> Result<SidecarDoc> {
             "sidecar schema {schema}; this version reads {OLDEST_SIDECAR_SCHEMA} to {SIDECAR_SCHEMA}"
         )));
     }
+    let mut value = value;
+    drop_unreadable_grid_check(&mut value);
     serde_json::from_value(value).map_err(|e| corrupt(format!("not a sidecar: {e}")))
+}
+
+/// Removes `export.gridCheck` from a sidecar's JSON when this version cannot read it (a later
+/// version's result), so the sidecar still reads, without it.
+fn drop_unreadable_grid_check(value: &mut serde_json::Value) {
+    let Some(export) = value
+        .get_mut("export")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    let unreadable = export
+        .get("gridCheck")
+        .is_some_and(|c| serde_json::from_value::<GridCheck>(c.clone()).is_err());
+    if unreadable {
+        export.remove("gridCheck");
+    }
 }
 
 /// The text of `doc` as sidecars are written: keys in a fixed order, two-space indent, a final
