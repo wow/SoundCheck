@@ -6,19 +6,14 @@ fn wording() {
     let pass = GridCheck::Pass {
         offset_ms: -0.04,
         bpm_diff: 0.000_31,
-        period: CheckPeriod::Bar,
     };
     assert_eq!(pass.to_string(), "pass (bar line +0.0 ms, BPM +0.0003)");
     assert!(pass.passed() && !pass.failed());
     let off = GridCheck::OffBy {
         offset_ms: -20.26,
         bpm_diff: 0.0,
-        period: CheckPeriod::Beat,
     };
-    assert_eq!(
-        off.to_string(),
-        "off by -20.3 ms (beat line (beat 1 is the user's), BPM +0.0000)"
-    );
+    assert_eq!(off.to_string(), "off by -20.3 ms (BPM +0.0000)");
     assert!(off.failed());
     let bpm = GridCheck::BpmDiffers {
         bpm_diff: 0.012,
@@ -68,13 +63,9 @@ fn json_shape() {
     let check = GridCheck::Pass {
         offset_ms: 0.5,
         bpm_diff: 0.0,
-        period: CheckPeriod::Bar,
     };
     let json = serde_json::to_string(&check).expect("serialises");
-    assert_eq!(
-        json,
-        r#"{"result":"pass","offsetMs":0.5,"bpmDiff":0.0,"period":"bar"}"#
-    );
+    assert_eq!(json, r#"{"result":"pass","offsetMs":0.5,"bpmDiff":0.0}"#);
     let skipped = GridCheck::NotChecked {
         reason: GridCheckSkip::XmlOnly,
     };
@@ -86,5 +77,30 @@ fn json_shape() {
     assert_eq!(
         serde_json::from_str::<GridCheck>(&json).expect("reads"),
         skipped
+    );
+}
+
+#[test]
+fn an_unknown_result_reads_as_absent() {
+    #[derive(serde::Deserialize)]
+    struct Holder {
+        #[serde(default, deserialize_with = "lenient")]
+        check: Option<GridCheck>,
+    }
+    let read = |json: &str| {
+        serde_json::from_str::<Holder>(json)
+            .expect("the holder still reads")
+            .check
+    };
+    assert_eq!(read(r#"{"check":{"result":"somethingNew","x":1}}"#), None);
+    assert_eq!(
+        read(r#"{"check":{"result":"notChecked","reason":{"type":"later"}}}"#),
+        None
+    );
+    assert_eq!(read(r#"{"check":null}"#), None);
+    assert_eq!(read("{}"), None);
+    assert_eq!(
+        read(r#"{"check":{"result":"noGridFound"}}"#),
+        Some(GridCheck::NoGridFound)
     );
 }

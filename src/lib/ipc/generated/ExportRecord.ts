@@ -39,5 +39,6 @@ source: SourceMeasurements,
 /**
  * The check of the exported grid against the written file's own analysis, recorded after
  * the write; absent until it ran, and in records written before it existed.
+ * A value this version cannot read (a result of a later version) reads as absent.
  */
 gridCheck?: GridCheck | null, };

@@ -26,6 +26,8 @@ fn grid(bar1: u64, bpm: f64, meter: Meter) -> XmlGrid {
             meter,
             edited: false,
             confirmed: false,
+            detector_offset_ms: None,
+            detector_bpm: None,
         },
         sample_rate: SR,
     }

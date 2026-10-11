@@ -1,39 +1,119 @@
 //! GRID-CHECK: every exported file's grid compared with the written file's own analysis
 //! ([`sc_core::export::GridCheck`]).
 //!
-//! The written file is analysed once after the write (which also refreshes its cache entry);
-//! the check reads that analysis and the grid the export recorded, so it costs no second
-//! analysis. The fresh grid is the detector's own: an edit carried over to the written file pins
-//! the confirmed grid, which would only compare the grid with itself, so it is left out. Only
-//! the edit's choices that the detector is asked to follow on the source are kept: the meter,
-//! the tempo octave (as a tap at the exported tempo, which takes the fitted tempo of that
-//! lattice, never the typed value) and the part of the track fitted. When the user chose which
-//! beat is beat 1 (a placed bar line or a beat-1 shift), the detector cannot confirm it, so the
-//! lines are compared modulo the beat instead of the bar.
+//! The check is relative to the source's own analysis. When the export is planned, the
+//! detector's grid of the source (the analysed grid, or for a grid the user edited the same
+//! evidence solved with only the user's meter, a tap at the exported tempo for its octave, and
+//! the fitted part: never the bar line placed, the beat 1 chosen or the tempo typed) gives a bar
+//! line at some offset from the exported bar 1, and a tempo; the export records both
+//! ([`ExportedGrid::detector_offset_ms`], [`ExportedGrid::detector_bpm`]). After the write, the
+//! output's fresh analysis (made anyway, to refresh its cache entry) is solved with the same
+//! choices and must give a bar line within 5 ms of the same place, modulo the bar, and a tempo
+//! within 0.005 BPM of the same tempo. A nudged bar 1, a chosen beat 1 and a typed tempo are
+//! thereby neutral, and a cut that moved the music by a beat still fails. For a grid the user did
+//! not edit the source's analysis is the exported grid, so the relative check is the absolute
+//! one: the output's bar line against the exported bar 1, its tempo against the exported tempo.
+//! Each refit takes well under 5 ms; nothing is analysed twice.
 
+use sc_core::Bpm;
 use sc_core::analysis::{AnalysisRecord, Grid, GridEdit};
 use sc_core::export::{
-    CheckPeriod, ExportedGrid, GRID_CHECK_BPM_TOLERANCE, GRID_CHECK_OFFSET_MS, GridCheck,
-    GridCheckSkip,
+    ExportedGrid, GRID_CHECK_BPM_TOLERANCE, GRID_CHECK_OFFSET_MS, GridCheck, GridCheckSkip,
 };
 use sc_io::edits::SavedEdit;
 
-use crate::edits::refit_record;
+use crate::edits::{EditState, refit_record};
 
 /// Slack for comparisons of values that are equal when computed exactly.
 const EPSILON: f64 = 1e-9;
 
-/// Compares `found` (the written file's grid, `None` when its analysis found none) with
-/// `exported` at `sample_rate`: the meter, then the tempo, then the line of `found` nearest to
-/// the exported bar 1, modulo `period`. An exported meter whose beats differ in length is not
-/// checked.
+/// The choices both analyses are solved with: none for a grid the user did not edit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Choices {
+    /// The overrides: the meter, a tempo tap and the fitted part, or none.
+    pub edit: GridEdit,
+    /// The BPM range they are solved under.
+    pub bpm_range: (Bpm, Bpm),
+}
+
+impl Choices {
+    /// The choices for a source whose grid as shown is `grid`, given the user's `saved` edit and
+    /// what it did (`state`), or the analysis's `bpm_range` without an edit that applied.
+    #[must_use]
+    pub fn of(
+        grid: Option<&Grid>,
+        saved: Option<&SavedEdit>,
+        state: EditState,
+        bpm_range: (Bpm, Bpm),
+    ) -> Self {
+        let applied = saved.filter(|s| (state.edited || state.confirmed) && !s.edit.is_empty());
+        match (applied, grid) {
+            (Some(saved), Some(grid)) => Self {
+                edit: GridEdit {
+                    meter: Some(grid.meter.clone()),
+                    tempo_hint: Some(grid.bpm),
+                    fit: saved.edit.fit,
+                    ..GridEdit::default()
+                },
+                bpm_range: saved.bpm_range,
+            },
+            _ => Self {
+                edit: GridEdit::default(),
+                bpm_range,
+            },
+        }
+    }
+}
+
+/// The detector's grid of `record` under `choices`: its analysed grid when there are none
+/// (`record.grid` must then be the analysed one, no edit applied), else its evidence refitted
+/// (`None` without evidence).
 #[must_use]
-pub fn compare(
-    exported: &ExportedGrid,
-    found: Option<&Grid>,
+pub fn detector_grid(record: &AnalysisRecord, choices: &Choices) -> Option<Grid> {
+    if choices.edit.is_empty() {
+        record.grid.clone()
+    } else {
+        refit_record(record, choices.bpm_range, &choices.edit).map(|s| s.grid)
+    }
+}
+
+/// `grid`'s bar line nearest `at` (samples) minus `at`, in samples.
+fn bar_offset(grid: &Grid, at: f64, sample_rate: u32) -> f64 {
+    let pulses: u32 = grid.meter.grouping.iter().map(|&g| u32::from(g)).sum();
+    let bar = grid.samples_per_beat(sample_rate) * f64::from(pulses.max(1));
+    // u64 -> f64 is exact below 2^53 samples.
+    #[allow(clippy::cast_precision_loss)]
+    let anchor = grid.anchor.0 as f64;
+    anchor + ((at - anchor) / bar).round() * bar - at
+}
+
+/// `exported` with the source detector's offset and tempo recorded: `detector` is the source's
+/// detector grid and `anchor` the exported grid's bar 1, both in the source's samples.
+#[must_use]
+pub fn with_detector(
+    mut exported: ExportedGrid,
+    detector: Option<&Grid>,
+    anchor: sc_core::SampleIndex,
     sample_rate: u32,
-    period: CheckPeriod,
-) -> GridCheck {
+) -> ExportedGrid {
+    if let Some(d) = detector {
+        // u64 -> f64 is exact below 2^53 samples.
+        #[allow(clippy::cast_precision_loss)]
+        let at = anchor.0 as f64;
+        exported.detector_offset_ms =
+            Some(bar_offset(d, at, sample_rate) * 1000.0 / f64::from(sample_rate.max(1)));
+        exported.detector_bpm = Some(d.bpm);
+    }
+    exported
+}
+
+/// Compares `found` (the written file's detector grid, `None` when its analysis found none) with
+/// what `exported` expects at `sample_rate`: the meter, then the tempo (the source detector's,
+/// else the exported one), then the bar line of `found` nearest the expected place (the exported
+/// bar 1 moved by the source detector's offset), modulo the bar. An exported meter whose beats
+/// differ in length is not checked.
+#[must_use]
+pub fn compare(exported: &ExportedGrid, found: Option<&Grid>, sample_rate: u32) -> GridCheck {
     if !exported.meter.is_regular() {
         return GridCheck::NotChecked {
             reason: GridCheckSkip::OddMeter {
@@ -49,34 +129,29 @@ pub fn compare(
             found: found.meter.clone(),
         };
     }
-    let bpm_diff = found.bpm.0 - exported.bpm_exact.0;
+    let expected_bpm = exported.detector_bpm.unwrap_or(exported.bpm_exact);
+    let bpm_diff = found.bpm.0 - expected_bpm.0;
     if bpm_diff.is_nan() || bpm_diff.abs() > GRID_CHECK_BPM_TOLERANCE + EPSILON {
         return GridCheck::BpmDiffers {
             bpm_diff,
             found: found.bpm,
         };
     }
-    let pulses = match period {
-        CheckPeriod::Bar => found.meter.grouping.iter().map(|&g| u32::from(g)).sum(),
-        CheckPeriod::Beat => u32::from(found.meter.grouping.first().copied().unwrap_or(1)),
-    };
-    let length = found.samples_per_beat(sample_rate) * f64::from(pulses.max(1));
+    let rate = f64::from(sample_rate.max(1));
     // u64 -> f64 is exact below 2^53 samples.
     #[allow(clippy::cast_precision_loss)]
-    let (bar1, anchor) = (exported.bar1.0 as f64, found.anchor.0 as f64);
-    let nearest = anchor + ((bar1 - anchor) / length).round() * length;
-    let offset_ms = (nearest - bar1) * 1000.0 / f64::from(sample_rate.max(1));
+    let expected =
+        exported.bar1.0 as f64 + exported.detector_offset_ms.unwrap_or(0.0) * rate / 1000.0;
+    let offset_ms = bar_offset(found, expected, sample_rate) * 1000.0 / rate;
     if offset_ms.abs() <= GRID_CHECK_OFFSET_MS + EPSILON {
         GridCheck::Pass {
             offset_ms,
             bpm_diff,
-            period,
         }
     } else {
         GridCheck::OffBy {
             offset_ms,
             bpm_diff,
-            period,
         }
     }
 }
@@ -88,8 +163,8 @@ pub(crate) struct Exported<'a> {
     pub grid: Option<&'a ExportedGrid>,
     /// The grid was withheld because it needed review.
     pub withheld: bool,
-    /// The user's edit of the source, when one applied to its grid.
-    pub edit: Option<&'a SavedEdit>,
+    /// The choices the source's detector grid was solved with.
+    pub choices: &'a Choices,
 }
 
 /// The check of a written file: `record` is its fresh analysis, before any edit is applied.
@@ -102,28 +177,8 @@ pub(crate) fn check_written(record: &AnalysisRecord, exported: &Exported<'_>) ->
         };
         return GridCheck::NotChecked { reason };
     };
-    let rate = record.spec.sample_rate;
-    let applied = exported
-        .edit
-        .filter(|saved| (grid.edited || grid.confirmed) && !saved.edit.is_empty());
-    let Some(saved) = applied else {
-        return compare(grid, record.grid.as_ref(), rate, CheckPeriod::Bar);
-    };
-    let period = if saved.edit.anchor.is_some() || saved.edit.downbeat_shift != 0 {
-        CheckPeriod::Beat
-    } else {
-        CheckPeriod::Bar
-    };
-    let choices = GridEdit {
-        meter: Some(grid.meter.clone()),
-        tempo_hint: Some(grid.bpm_exact),
-        fit: saved.edit.fit,
-        ..GridEdit::default()
-    };
-    let refit = refit_record(record, saved.bpm_range, &choices).map(|s| s.grid);
-    // Without evidence (it is always kept by a fresh analysis) the analysed grid is used.
-    let found = refit.as_ref().or(record.grid.as_ref());
-    compare(grid, found, rate, period)
+    let found = detector_grid(record, exported.choices);
+    compare(grid, found.as_ref(), record.spec.sample_rate)
 }
 
 #[cfg(test)]

@@ -30,7 +30,7 @@ use sc_core::{Error, Result, Seconds};
 use sc_io::cache::Cache;
 use sc_io::edits::{EditStore, SavedEdit};
 
-use super::grid_check::{Exported, check_written};
+use super::grid_check::{Choices, Exported, check_written, detector_grid, with_detector};
 use super::plan::{Bars, ExportInput, ExportSource, bar1_after, grid_trusted};
 use super::plan_export_snapped;
 use crate::analyze::{Analyzer, Progress, Timings};
@@ -177,7 +177,13 @@ pub(crate) fn process_file(
         file_id,
         plan: Box::new(plan.clone()),
     });
-    let export = export_record(&record, &decided, &plan, settings, edit);
+    let choices = Choices::of(
+        record.grid.as_ref(),
+        saved.as_ref(),
+        edit,
+        analyzer.settings.bpm_range,
+    );
+    let export = export_record(&record, &decided, &plan, settings, edit, &choices);
     let exported = export.grid.clone();
     let request = ApplyRequest {
         gain_db: plan.gain_db,
@@ -219,7 +225,7 @@ pub(crate) fn process_file(
         exported: Exported {
             grid: exported.as_ref(),
             withheld: plan.grid_withheld,
-            edit: saved.as_ref(),
+            choices: &choices,
         },
         txn: &txn,
     };
@@ -264,13 +270,20 @@ fn export_record(
     plan: &ExportPlan,
     settings: &ProcessSettings,
     edit: EditState,
+    choices: &Choices,
 ) -> ExportRecord {
+    // The source detector's grid, which the check of the written file expects again.
+    let detector = detector_grid(record, choices);
+    let grid = exported_grid(record, plan.trim_frames, !plan.grid_withheld, edit).map(|g| {
+        let anchor = record.grid.as_ref().map_or(g.bar1, |r| r.anchor);
+        with_detector(g, detector.as_ref(), anchor, record.spec.sample_rate)
+    });
     ExportRecord {
         settings: settings.export,
         decide: settings.decide,
         decided: decided.clone(),
         plan: plan.clone(),
-        grid: exported_grid(record, plan.trim_frames, !plan.grid_withheld, edit),
+        grid,
         source: SourceMeasurements::of(record),
         grid_check: None,
     }
@@ -297,6 +310,8 @@ fn exported_grid(
         meter: grid.meter.clone(),
         edited: edit.edited,
         confirmed: edit.confirmed,
+        detector_offset_ms: None,
+        detector_bpm: None,
     })
 }
 

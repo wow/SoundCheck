@@ -36,4 +36,17 @@ edited: boolean,
 /**
  * The user confirmed the grid by ear.
  */
-confirmed: boolean, };
+confirmed: boolean, 
+/**
+ * Where the source's own analysis puts its bar line nearest `bar1` (in the output's
+ * samples), minus `bar1`, in milliseconds: the detector's grid solved with the user's
+ * meter, tempo octave and fitted part, but none of the bar line placed, the beat 1 chosen
+ * or the tempo typed. Zero for a grid the user did not edit. The check of the written file
+ * expects the same offset from its own analysis. Absent in records written before it and
+ * when the source's evidence was not at hand.
+ */
+detectorOffsetMs?: number | null, 
+/**
+ * That grid's tempo; absent as `detector_offset_ms` is.
+ */
+detectorBpm?: Bpm | null, };
