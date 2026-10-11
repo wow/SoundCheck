@@ -181,6 +181,7 @@ fn recheck(worse: &Path, exported: &ExportedGrid, edited: bool) -> GridCheck {
             GridEdit::default()
         },
         bpm_range: common::with_grid().bpm_range,
+        refit: edited,
     };
     compare(exported, detector_grid(&record, &choices).as_ref(), RATE)
 }
@@ -434,4 +435,50 @@ fn a_file_left_to_the_xml_is_not_checked() {
         cells[0].grid_check.as_deref(),
         Some("not checked: file not written (XML only)")
     );
+}
+
+#[test]
+fn a_grid_confirmed_under_another_bpm_range_passes() {
+    if !common::have_models() {
+        return;
+    }
+    let lib = Lib::new();
+    let path = track(&lib);
+    // Confirmed as analysed under 70-180 BPM (124 BPM)...
+    let first = common::with_grid();
+    let record = Analyzer::load(first.clone(), Some(lib.cache()), CancelToken::new())
+        .expect("model")
+        .analyze(&path)
+        .expect("analysed")
+        .record;
+    let analysed = record.grid.clone().expect("grid");
+    sc_engine::save_edit(
+        &lib.edits(),
+        &record,
+        first.bpm_range,
+        &GridEdit::default(),
+        true,
+    )
+    .expect("confirmed");
+    // ...then exported under 130-260 BPM, where the analysis alone takes 248 BPM; the confirmed
+    // grid (solved under its own range) is exported, and the check solves both analyses under
+    // that range too.
+    let later = sc_core::analysis::AnalysisSettings {
+        bpm_range: (sc_core::Bpm(130.0), sc_core::Bpm(260.0)),
+        ..first
+    };
+    let s = settings(&lib, later, process(&lib, BatchMode::Prepare, None));
+    let events = run(&batch(&[path.clone()]), &s, &CancelToken::new());
+    assert_eq!(
+        names(&events, 1),
+        ["started", "processing", "written", "done"]
+    );
+    let done = done_of(&events);
+    let grid = sidecar_of(&path)
+        .export
+        .expect("export")
+        .grid
+        .expect("grid");
+    assert!((grid.bpm_exact.0 - analysed.bpm.0).abs() < 1e-9, "{grid:?}");
+    assert!(done.grid_check.passed(), "{:?}", done.grid_check);
 }

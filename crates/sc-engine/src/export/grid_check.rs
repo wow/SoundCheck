@@ -14,6 +14,11 @@
 //! not edit the source's analysis is the exported grid, so the relative check is the absolute
 //! one: the output's bar line against the exported bar 1, its tempo against the exported tempo.
 //! Each refit takes well under 5 ms; nothing is analysed twice.
+//!
+//! Comparing modulo the bar means a cut off by a whole bar passes: the detector cannot tell
+//! which of two identical-looking downbeats is bar 1, so the check cannot either. The cut itself
+//! is pinned elsewhere: the write is refused unless the output has exactly the planned frame
+//! count (the source's minus the planned cut).
 
 use sc_core::Bpm;
 use sc_core::analysis::{AnalysisRecord, Grid, GridEdit};
@@ -34,6 +39,10 @@ pub struct Choices {
     pub edit: GridEdit,
     /// The BPM range they are solved under.
     pub bpm_range: (Bpm, Bpm),
+    /// Solve the evidence under `edit` and `bpm_range`: an edit applied, even an empty one
+    /// whose range (the one it was saved with) gives another grid than the analysis's. Without
+    /// it the analysed grid is the detector's.
+    pub refit: bool,
 }
 
 impl Choices {
@@ -46,31 +55,40 @@ impl Choices {
         state: EditState,
         bpm_range: (Bpm, Bpm),
     ) -> Self {
-        let applied = saved.filter(|s| (state.edited || state.confirmed) && !s.edit.is_empty());
+        // An edit applied: its overrides, or an empty edit that `state.edited` says was solved
+        // under its own range to another grid than the analysis's.
+        let applied = saved
+            .filter(|s| (state.edited || state.confirmed) && (!s.edit.is_empty() || state.edited));
         match (applied, grid) {
             (Some(saved), Some(grid)) => Self {
-                edit: GridEdit {
-                    meter: Some(grid.meter.clone()),
-                    tempo_hint: Some(grid.bpm),
-                    fit: saved.edit.fit,
-                    ..GridEdit::default()
+                edit: if saved.edit.is_empty() {
+                    GridEdit::default()
+                } else {
+                    GridEdit {
+                        meter: Some(grid.meter.clone()),
+                        tempo_hint: Some(grid.bpm),
+                        fit: saved.edit.fit,
+                        ..GridEdit::default()
+                    }
                 },
                 bpm_range: saved.bpm_range,
+                refit: true,
             },
             _ => Self {
                 edit: GridEdit::default(),
                 bpm_range,
+                refit: false,
             },
         }
     }
 }
 
-/// The detector's grid of `record` under `choices`: its analysed grid when there are none
+/// The detector's grid of `record` under `choices`: its analysed grid without a refit
 /// (`record.grid` must then be the analysed one, no edit applied), else its evidence refitted
 /// (`None` without evidence).
 #[must_use]
 pub fn detector_grid(record: &AnalysisRecord, choices: &Choices) -> Option<Grid> {
-    if choices.edit.is_empty() {
+    if !choices.refit {
         record.grid.clone()
     } else {
         refit_record(record, choices.bpm_range, &choices.edit).map(|s| s.grid)

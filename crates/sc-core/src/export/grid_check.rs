@@ -10,7 +10,8 @@
 //! downbeat), and a tempo within [`GRID_CHECK_BPM_TOLERANCE`] of that tempo. So a bar line the
 //! user nudged, a beat 1 they chose and a tempo they typed are neither confirmed nor failed;
 //! what is checked is that the audio was cut, scaled and encoded without moving the music
-//! against the grid, by as little as one beat. For a grid the user did not edit, the source's
+//! against the grid, by as little as one beat (a whole bar passes, as the bar lines are the
+//! same; the frame count the write is checked against pins the cut). For a grid the user did not edit, the source's
 //! analysis is the exported grid, so the check compares with the exported grid itself.
 //!
 //! It is the same detector checking its own result on the written audio, so a pass shows that
@@ -164,19 +165,6 @@ impl fmt::Display for GridCheck {
             Self::NotChecked { reason } => write!(f, "not checked: {reason}"),
         }
     }
-}
-
-/// Reads an optional [`GridCheck`], a value this version cannot read (a later version's
-/// result) as `None`, so a sidecar or journal line holding one still reads.
-///
-/// # Errors
-/// Only when the value is not JSON-like data at all.
-pub fn lenient<'de, D>(deserializer: D) -> Result<Option<GridCheck>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
-    Ok(value.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 /// `x` as zero when it rounds to zero at `decimals`, so such a difference reads `+0.0`, never

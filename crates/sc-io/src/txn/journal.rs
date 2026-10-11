@@ -177,7 +177,7 @@ pub(crate) struct Line {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "sc_core::export::lenient_grid_check"
+        deserialize_with = "lenient_grid_check"
     )]
     pub grid_check: Option<GridCheck>,
 }
@@ -212,6 +212,16 @@ impl Line {
             grid_check: None,
         }
     }
+}
+
+/// Reads an optional [`GridCheck`], one this version cannot read (a later version's result) as
+/// `None`, so a journal line holding one still reads.
+fn lenient_grid_check<'de, D>(deserializer: D) -> std::result::Result<Option<GridCheck>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 /// A transaction as its journal lines describe it.

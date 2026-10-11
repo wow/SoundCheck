@@ -79,28 +79,3 @@ fn json_shape() {
         skipped
     );
 }
-
-#[test]
-fn an_unknown_result_reads_as_absent() {
-    #[derive(serde::Deserialize)]
-    struct Holder {
-        #[serde(default, deserialize_with = "lenient")]
-        check: Option<GridCheck>,
-    }
-    let read = |json: &str| {
-        serde_json::from_str::<Holder>(json)
-            .expect("the holder still reads")
-            .check
-    };
-    assert_eq!(read(r#"{"check":{"result":"somethingNew","x":1}}"#), None);
-    assert_eq!(
-        read(r#"{"check":{"result":"notChecked","reason":{"type":"later"}}}"#),
-        None
-    );
-    assert_eq!(read(r#"{"check":null}"#), None);
-    assert_eq!(read("{}"), None);
-    assert_eq!(
-        read(r#"{"check":{"result":"noGridFound"}}"#),
-        Some(GridCheck::NoGridFound)
-    );
-}
