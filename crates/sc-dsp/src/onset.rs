@@ -19,10 +19,14 @@
 //! [`MAX_START_RAMP_MS`]); before that hop the envelope counts as holding the level it settles
 //! at, and before the input as holding it too, so windows that reach back past the start see
 //! neither a rise nor a step there. The band filter keeps settling for a cycle or two of its
-//! lowest frequency after that (a sustained tone's envelope climbs by up to about 8 dB more
-//! within the first [`MIN_SPACING_MS`]), so an attack there must rise by
-//! [`START_MIN_RISE_DB`]. A bar-1 kick a few milliseconds in, where a cut to bar 1 puts it, is
-//! found; an attack inside the ramp merges with it. The method
+//! lowest frequency after that, and a track may fade in over tens of milliseconds: both raise
+//! the envelope by 10 to 60 dB, sometimes as steeply as a kick, but the level they reach is
+//! held, while a kick decays. So within the first [`START_WINDOW_MS`] an attack must also stand
+//! [`START_MIN_ACCENT_DB`] above the median level [`AFTER_FROM_MS`] to [`AFTER_TO_MS`] after
+//! it. A bar-1 kick a few milliseconds in, where a cut to bar 1 puts it, is found; an attack
+//! inside the ramp merges with it; a kick at the start that does not stand out from what
+//! follows (a sub-bass as loud as the kick) is missed, as everything in the first 30 ms was
+//! before. The method
 //! is the classic energy-flux onset function (Bello et al., "A tutorial on onset detection in
 //! music signals", IEEE TSAP 2005, section III-A) restricted to one band.
 
@@ -56,9 +60,21 @@ pub const START_SETTLE_STEP_DB: f64 = 3.0;
 /// it.
 pub const MAX_START_RAMP_MS: usize = 4;
 
-/// Smallest rise of an attack within the first [`MIN_SPACING_MS`] of the input, where the
-/// band filter is still settling, in dB.
-pub const START_MIN_RISE_DB: f64 = 12.0;
+/// The start of the input where an attack must be steep, in hops (ms): the onsets of hops up
+/// to [`MIN_SPACING_MS`] plus [`RISE_WINDOW_MS`] in, whose rises and spacing reach back to the
+/// start, plus a few hops of margin.
+pub const START_WINDOW_MS: usize = 45;
+
+/// How far an attack in the first [`START_WINDOW_MS`] must stand above the median level from
+/// [`AFTER_FROM_MS`] to [`AFTER_TO_MS`] after it, in dB.
+pub const START_MIN_ACCENT_DB: f64 = 6.0;
+
+/// Start of the span after a start attack whose median level it must stand above, ms after
+/// the attack: past a kick's main decay.
+pub const AFTER_FROM_MS: usize = 30;
+
+/// End of that span, ms after the attack: before the next beat at 180 BPM (333 ms).
+pub const AFTER_TO_MS: usize = 100;
 
 /// Floor added before the logarithm, well below any audible level (about -140 dB).
 const AMPLITUDE_FLOOR: f64 = 1e-7;
@@ -165,8 +181,7 @@ impl OnsetDetector {
         let spacing = MIN_SPACING_MS.max(1);
         let mut onsets = Vec::new();
         for (k, &rise) in rises.iter().enumerate() {
-            if rise <= threshold || envelope[k] < gate || (k < spacing && rise < START_MIN_RISE_DB)
-            {
+            if rise <= threshold || envelope[k] < gate {
                 continue;
             }
             // The windows stop at the first hop: before it the envelope holds its first value,
@@ -194,6 +209,14 @@ impl OnsetDetector {
                 .iter()
                 .copied()
                 .fold(f64::NEG_INFINITY, f64::max);
+            // At the start, a fade-in or the band filter settling holds the level it reaches;
+            // a kick decays from it.
+            if k < START_WINDOW_MS
+                && level_after(&envelope, k)
+                    .is_some_and(|after| level - after < START_MIN_ACCENT_DB)
+            {
+                continue;
+            }
             // Rises and levels are dB values of modest size; f32 keeps every meaningful digit.
             #[allow(clippy::cast_possible_truncation)]
             let (rise_db, level_db) = (rise as f32, level as f32);
@@ -205,6 +228,14 @@ impl OnsetDetector {
         }
         onsets
     }
+}
+
+/// The median level of `envelope` from [`AFTER_FROM_MS`] to [`AFTER_TO_MS`] hops after hop
+/// `k`; `None` when the input ends before that span starts.
+fn level_after(envelope: &[f64], k: usize) -> Option<f64> {
+    let from = k + AFTER_FROM_MS;
+    let to = (k + AFTER_TO_MS).min(envelope.len());
+    (from < to).then(|| median(&envelope[from..to]))
 }
 
 /// `envelope` with the ramp at its start held at the level it settles at (see the module

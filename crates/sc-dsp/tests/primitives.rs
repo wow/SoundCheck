@@ -152,6 +152,81 @@ fn a_file_starting_on_a_sustained_tone_has_no_onset_at_its_start() {
     }
 }
 
+/// Fade-in shapes, as gain at `x` (0 to 1 of the fade).
+#[derive(Debug, Clone, Copy)]
+enum Fade {
+    Linear,
+    Cosine,
+    /// Linear in dB, from -60 dB.
+    Exponential,
+}
+
+impl Fade {
+    fn gain(self, x: f32) -> f32 {
+        match self {
+            Self::Linear => x,
+            Self::Cosine => 0.5 * (1.0 - (std::f32::consts::PI * x).cos()),
+            Self::Exponential => 10_f32.powf(-3.0 * (1.0 - x)),
+        }
+    }
+}
+
+#[test]
+fn a_fade_in_over_a_held_bass_is_no_attack() {
+    // A track that fades in over a held bass, with kicks from 300 ms on: the fade is not an
+    // attack at the start, whatever its length and shape, and every kick is still found.
+    let mut failures = Vec::new();
+    for sample_rate in [22_050_u32, 44_100] {
+        let spec = AudioSpec::new(sample_rate, 1);
+        for freq_hz in [40.0, 60.0, 80.0] {
+            for fade_ms in [5.0, 10.0, 20.0, 50.0, 100.0] {
+                for shape in [Fade::Linear, Fade::Cosine, Fade::Exponential] {
+                    let what =
+                        format!("{sample_rate} Hz, {freq_hz} Hz bass, {fade_ms} ms {shape:?}");
+                    let mut signal = testsig::seeded_noise(spec, 9, 0.002, 2.0).data;
+                    let bass = testsig::sine(spec, freq_hz, 0.3, 2.0).data;
+                    let fade = testsig::frames_for(spec, fade_ms / 1000.0);
+                    for (i, (s, b)) in signal.iter_mut().zip(&bass).enumerate() {
+                        let x = (i as f32 / fade as f32).min(1.0);
+                        *s = (*s + b) * shape.gain(x);
+                    }
+                    let burst = testsig::sine(spec, 60.0, 0.8, 0.04).data;
+                    let mut kicks = Vec::new();
+                    for k in 0..3 {
+                        let start = testsig::frames_for(spec, 0.3 + 0.5 * f64::from(k));
+                        for (i, b) in burst.iter().enumerate() {
+                            let ramp = (i as f32 / (0.005 * sample_rate as f32)).min(1.0);
+                            signal[start + i] += b * ramp;
+                        }
+                        kicks.push(start);
+                    }
+                    KickBand::new(sample_rate).process_block(&mut signal);
+                    let onsets = OnsetDetector::new(sample_rate).detect(&signal);
+                    // Nothing in the start window, where the start rules apply (a 60 dB
+                    // exponential fade over 100 ms still rises 10 dB within 10 ms after it,
+                    // which is an attack anywhere in a file).
+                    let window = sc_dsp::onset::START_WINDOW_MS * testsig::frames_for(spec, 0.001);
+                    let early = onsets.iter().any(|o| o.frame < window);
+                    let missed = kicks.iter().any(|&k| {
+                        !onsets
+                            .iter()
+                            .any(|o| o.frame.abs_diff(k) <= testsig::frames_for(spec, 0.003))
+                    });
+                    if early || missed {
+                        failures.push(format!("{what}: {onsets:?}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} cases:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
 #[test]
 fn onset_detection_is_deterministic() {
     let (mut signal, _) = kick_bursts(22_050, 4.0);
