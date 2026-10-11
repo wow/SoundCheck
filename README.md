@@ -11,7 +11,7 @@ SoundCheck is a free, open-source desktop app for DJs and producers. Drop a fold
 > - **`sc-cli process`** also writes the batch's **rekordbox XML** (`soundcheck-rekordbox.xml`: each gridded track's location, tags and a 4/4 `TEMPO` with bar 1 where the export put it; importing a track overwrites its rekordbox grid and info, so try one first) and a **`grid-report.csv`**, into the `--out` folder or `~/Music/SoundCheck/exports/<date time>/`; **`sc-cli xml <files>`** writes the XML for files already exported or only analysed.
 > - **`sc-cli plan --batch-mode prepare|library`** previews what an export will do to each file: the gain, the head cut (`Cut 0.21 s`, `Starts on bar 1`, `Starts on a bar line (bar 1 at 8.00 s)`, `Not cut: bar 1 1.00 s in`, or `Not cut: grid needs review` until the grid is confirmed), the tags, or why a file is left to the rekordbox XML (MP3/AAC for now) or skipped.
 >
-> Exporting from the app, the exported-grid self-check and MP3 output come next. The first pre-release, `v0.1.0-alpha.1`, follows once exported files pass rekordbox 7's own analysis; `v0.1.0` is the first release for everyone. Watch the releases page or the changelog.
+> Exporting from the app and MP3 output come next; `sc-cli process` already checks every exported file's grid against the written file's own analysis. The first pre-release, `v0.1.0-alpha.1`, follows once exported files pass rekordbox 7's own analysis; `v0.1.0` is the first release for everyone. Watch the releases page or the changelog.
 
 ## What v0.1 will do
 

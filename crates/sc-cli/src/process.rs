@@ -1,7 +1,8 @@
 //! `sc-cli process`: exporting files with the engine's process job (`sc_engine::Task::Process`),
 //! the one the app's Export button runs. Crash recovery runs first; every file is analysed (the
 //! cache is used), planned as `sc-cli plan --batch-mode` plans it, written in place after a
-//! backup (or as a copy with `--out`), verified, and analysed again. Each file prints one line
+//! backup (or as a copy with `--out`), verified, and analysed again, its grid checked against
+//! the one exported (`  grid check:` under its line). Each file prints one line
 //! (or one JSON document) in the order given: what was written, or why not; a refusal prints
 //! three lines on stderr. A summary line ends the text output. Unless `--no-xml`, the batch's
 //! rekordbox XML and grid report are written last (`sc_engine::write_artefacts`): into the
@@ -14,8 +15,8 @@ use std::sync::Arc;
 
 use clap::ValueEnum;
 use sc_core::export::{
-    BatchMode, DEFAULT_LEAD_MS, ExportOutcome, ExportPlan, ExportSettings, Place as ExportPlace,
-    XmlOnlyReason, XmlTrackInfo,
+    BatchMode, DEFAULT_LEAD_MS, ExportOutcome, ExportPlan, ExportSettings, GridCheck,
+    Place as ExportPlace, XmlOnlyReason, XmlTrackInfo,
 };
 use sc_core::plan::Codec;
 use sc_core::{Error, Seconds};
@@ -475,6 +476,7 @@ fn write_lines(
                 write_text(plan),
                 written_text(report, done)
             )?;
+            writeln!(out, "  grid check: {}", done.grid_check)?;
             for notice in &plan.notices {
                 writeln!(out, "  note: {}", notice_text(*notice))?;
             }
@@ -549,6 +551,7 @@ fn row_of(file: &Path, result: &FileResult, mode: BatchMode) -> BatchRow {
                 report.render.sample_rate_hz,
                 done.xml.clone(),
             );
+            row.grid_check = Some(done.grid_check.clone());
             row.notes
                 .extend(plan.notices.iter().map(|n| notice_text(*n)));
             if plan.grid_withheld {
@@ -614,6 +617,8 @@ struct WrittenDoc<'a> {
     edit_carried: bool,
     grid_confirmed: bool,
     output_analysed: bool,
+    /// The exported grid checked against the written file's analysis.
+    grid_check: &'a GridCheck,
     notes: Vec<&'a str>,
 }
 
@@ -637,6 +642,7 @@ fn doc<'a>(file: &Path, result: &'a FileResult) -> Option<ProcessDoc<'a>> {
                 edit_carried: done.edit_carried,
                 grid_confirmed: done.edit.confirmed,
                 output_analysed: done.analysis.is_some(),
+                grid_check: &done.grid_check,
                 notes: report
                     .notes
                     .iter()

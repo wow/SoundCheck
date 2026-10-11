@@ -20,7 +20,9 @@
 use std::path::{Path, PathBuf};
 
 use sc_core::analysis::AnalysisRecord;
-use sc_core::export::{BatchMode, Cut, ExportOutcome, ExportPlan, XmlGrid, XmlTrackInfo};
+use sc_core::export::{
+    BatchMode, Cut, ExportOutcome, ExportPlan, GridCheck, GridCheckSkip, XmlGrid, XmlTrackInfo,
+};
 use sc_core::plan::{Codec, Plan};
 use sc_core::{Result, SampleIndex, Seconds};
 use sc_io::rekordbox::{Speller, Tempo, TempoWithheld, XmlTrack};
@@ -108,6 +110,10 @@ pub struct BatchRow {
     pub cut: Option<Seconds>,
     /// What the XML may list; `None` for a file skipped or failed.
     pub track: Option<RowTrack>,
+    /// The check of the exported grid against the written file's analysis: set by the caller
+    /// for a file written ([`crate::ProcessDone::grid_check`]), read from the sidecar for one
+    /// exported earlier, "not checked" for one left to the XML; `None` otherwise.
+    pub grid_check: Option<GridCheck>,
     /// The caller's notes (reasons, notices), in order.
     pub notes: Vec<String>,
 }
@@ -136,6 +142,7 @@ impl BatchRow {
                 Codec::from_path(output),
                 xml,
             )),
+            grid_check: None,
             notes: Vec::new(),
         }
     }
@@ -150,12 +157,17 @@ impl BatchRow {
         codec: Codec,
         xml: XmlTrackInfo,
     ) -> Self {
-        let (action, track) = match outcome {
+        let (action, track, grid_check) = match outcome {
             ExportOutcome::XmlOnly { .. } => (
                 RowAction::XmlOnly,
                 Some(RowTrack::new(file, duration, codec, xml)),
+                Some(GridCheck::NotChecked {
+                    reason: GridCheckSkip::XmlOnly,
+                }),
             ),
-            ExportOutcome::Skip { .. } | ExportOutcome::Write { .. } => (RowAction::Skipped, None),
+            ExportOutcome::Skip { .. } | ExportOutcome::Write { .. } => {
+                (RowAction::Skipped, None, None)
+            }
         };
         Self {
             file: file.to_path_buf(),
@@ -164,6 +176,7 @@ impl BatchRow {
             gain_db: None,
             cut: None,
             track,
+            grid_check,
             notes: Vec::new(),
         }
     }
@@ -178,6 +191,7 @@ impl BatchRow {
             gain_db: None,
             cut: None,
             track: None,
+            grid_check: None,
             notes: Vec::new(),
         }
     }
@@ -209,6 +223,7 @@ impl BatchRow {
                 Codec::from_path(file),
                 xml_info(record, grid),
             )),
+            grid_check: export.grid_check.clone(),
             notes: Vec::new(),
         })
     }
@@ -229,6 +244,7 @@ impl BatchRow {
                 Codec::from_path(file),
                 xml_info(record, xml_grid(record, 0, grid_trusted(plan), edit)),
             )),
+            grid_check: None,
             notes: Vec::new(),
         }
     }
@@ -318,7 +334,7 @@ pub fn report_rows(rows: &[BatchRow], select: XmlSelect) -> Vec<ReportRow> {
                 bpm: grid.map(|(g, _)| g.bpm),
                 bar1: grid.map(|(g, rate)| g.bar1.to_seconds(rate.max(1))),
                 grid: grid_text(row, select),
-                grid_check: None,
+                grid_check: row.grid_check.as_ref().map(ToString::to_string),
                 notes: row.notes.clone(),
             }
         })

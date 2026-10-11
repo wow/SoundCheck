@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::{ExportPlan, ExportSettings};
+use super::{ExportPlan, ExportSettings, GridCheck};
 use crate::analysis::{AnalysisRecord, Meter};
 use crate::plan::{DecideSettings, Plan};
 use crate::units::{Bpm, DbTp, Lu, Lufs, SampleIndex, Seconds};
@@ -30,6 +30,10 @@ pub struct ExportRecord {
     pub grid: Option<ExportedGrid>,
     /// The source's measurements.
     pub source: SourceMeasurements,
+    /// The check of the exported grid against the written file's own analysis, recorded after
+    /// the write; absent until it ran, and in records written before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_check: Option<GridCheck>,
 }
 
 /// The grid of an exported file, in the output's samples (after the cut).

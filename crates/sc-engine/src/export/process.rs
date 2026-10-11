@@ -11,22 +11,26 @@
 //!    source's minus the cut). The sidecar records the plan, the exported grid and the
 //!    measurements ([`ExportRecord`]).
 //! 4. After the write: the user's grid edit is carried over to the output (bar 1 back by the
-//!    cut), and the output is analysed afresh, which replaces its cache entry. A failure here
-//!    leaves the file written and becomes a note.
+//!    cut), and the output is analysed afresh, which replaces its cache entry; its grid is
+//!    checked against the exported one ([`super::grid_check`]) and the result recorded in the
+//!    journal and the sidecar. A failure here leaves the file written and becomes a note (a
+//!    failed check is a result, never a failure of the export).
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use sc_core::analysis::{AnalysisRecord, AnalysisSettings, Grid};
 use sc_core::export::{
-    ExportOutcome, ExportPlan, ExportRecord, ExportSettings, ExportedGrid, Place as ExportPlace,
-    SourceMeasurements, XmlGrid, XmlTrackInfo,
+    ExportOutcome, ExportPlan, ExportRecord, ExportSettings, ExportedGrid, GridCheck,
+    GridCheckSkip, Place as ExportPlace, SourceMeasurements, XmlGrid, XmlTrackInfo,
 };
 use sc_core::plan::{DecideSettings, Plan};
 use sc_core::{Error, Result, Seconds};
 use sc_io::cache::Cache;
 use sc_io::edits::{EditStore, SavedEdit};
 
+use super::grid_check::{Exported, check_written};
 use super::plan::{Bars, ExportInput, ExportSource, bar1_after, grid_trusted};
 use super::plan_export_snapped;
 use crate::analyze::{Analyzer, Progress, Timings};
@@ -107,6 +111,8 @@ pub struct ProcessDone {
     pub edit: EditState,
     /// The user's grid edit was carried over to the output.
     pub edit_carried: bool,
+    /// The exported grid checked against the output's own analysis (recorded in the sidecar).
+    pub grid_check: GridCheck,
     /// What did not work after the write; the file stays written.
     pub notes: Vec<String>,
 }
@@ -172,6 +178,7 @@ pub(crate) fn process_file(
         plan: Box::new(plan.clone()),
     });
     let export = export_record(&record, &decided, &plan, settings, edit);
+    let exported = export.grid.clone();
     let request = ApplyRequest {
         gain_db: plan.gain_db,
         trim_frames: plan.trim_frames,
@@ -190,6 +197,7 @@ pub(crate) fn process_file(
     )?;
     // The output as the caller spells it (the transaction reports the path the file system
     // resolves), so the cache and the grid edits find it under the name the user knows.
+    let txn = report.txn.clone();
     let output = match (&settings.out_dir, report.output.file_name()) {
         (Some(dir), Some(name)) => dir.join(name),
         (Some(_), None) => report.output.clone(),
@@ -208,26 +216,44 @@ pub(crate) fn process_file(
         edit,
         grid: record.grid.as_ref(),
         trim: plan.trim_frames,
+        exported: Exported {
+            grid: exported.as_ref(),
+            withheld: plan.grid_withheld,
+            edit: saved.as_ref(),
+        },
+        txn: &txn,
     };
-    let done = catch_unwind(AssertUnwindSafe(|| {
-        after_write(analyzer, &output, settings, &carry, record.duration)
+    let done = after_write_guarded(analyzer, &output, settings, &carry, record.duration);
+    Ok(EngineEvent::Done {
+        file_id,
+        done: Box::new(ProcessDone { xml, ..done }),
+    })
+}
+
+/// [`after_write`], with a panic there turned into a note: the file is written, so it is done.
+fn after_write_guarded(
+    analyzer: &mut Analyzer,
+    output: &Path,
+    settings: &ProcessSettings,
+    carry: &Carry<'_>,
+    duration: Seconds,
+) -> ProcessDone {
+    catch_unwind(AssertUnwindSafe(|| {
+        after_write(analyzer, output, settings, carry, duration)
     }))
     .unwrap_or_else(|_| ProcessDone {
-        output: output.clone(),
-        duration: record.duration,
-        xml: xml.clone(),
+        output: output.to_path_buf(),
+        duration,
+        xml: xml_info_absent(),
         analysis: None,
         edit: EditState::default(),
         edit_carried: false,
+        grid_check: not_analysed(),
         notes: vec![
             "the steps after the write stopped unexpectedly (the file is written; it is \
              analysed when next opened)"
                 .to_owned(),
         ],
-    });
-    Ok(EngineEvent::Done {
-        file_id,
-        done: Box::new(ProcessDone { xml, ..done }),
     })
 }
 
@@ -246,6 +272,7 @@ fn export_record(
         plan: plan.clone(),
         grid: exported_grid(record, plan.trim_frames, !plan.grid_withheld, edit),
         source: SourceMeasurements::of(record),
+        grid_check: None,
     }
 }
 
@@ -321,6 +348,10 @@ struct Carry<'a> {
     grid: Option<&'a Grid>,
     /// Frames cut from the source's start.
     trim: u64,
+    /// What the export recorded about the grid, for the check.
+    exported: Exported<'a>,
+    /// The transaction that wrote the output.
+    txn: &'a str,
 }
 
 /// After the write: the grid edit carried over, then the output's own analysis (its cache entry
@@ -346,36 +377,53 @@ fn after_write(
         }
         _ => false,
     };
-    let (analysis, edit) = match analyzer.analyze_fresh(output, &mut Timings::default(), None) {
-        Ok(report) => {
-            let mut record = report.record;
-            let edit = settings
-                .edits
-                .as_ref()
-                .map(|store| apply_saved(&mut record, store))
-                .unwrap_or_default();
-            if edit_carried && carry.edit.confirmed && !edit.confirmed {
-                notes.push(
-                    "the confirmed grid did not come back from the written file's analysis; \
+    let started = Instant::now();
+    let (analysis, edit, grid_check) =
+        match analyzer.analyze_fresh(output, &mut Timings::default(), None) {
+            Ok(report) => {
+                let mut record = report.record;
+                // The detector's own grid, before the carried edit pins it.
+                let check = check_written(&record, &carry.exported);
+                let edit = settings
+                    .edits
+                    .as_ref()
+                    .map(|store| apply_saved(&mut record, store))
+                    .unwrap_or_default();
+                if edit_carried && carry.edit.confirmed && !edit.confirmed {
+                    notes.push(
+                        "the confirmed grid did not come back from the written file's analysis; \
                      confirm it again"
-                        .to_owned(),
-                );
+                            .to_owned(),
+                    );
+                }
+                (Some(Box::new(record)), edit, check)
             }
-            // The written file's own analysis: where its grid is compared with the one exported.
-            (Some(Box::new(record)), edit)
-        }
-        Err(Error::Cancelled) => {
-            notes.push(
+            Err(Error::Cancelled) => {
+                notes.push(
                 "cancelled before the written file was analysed; it is analysed when next opened"
                     .to_owned(),
             );
-            (None, EditState::default())
-        }
-        Err(e) => {
-            notes.push(format!("the written file could not be analysed: {e}"));
-            (None, EditState::default())
-        }
-    };
+                (None, EditState::default(), not_analysed())
+            }
+            Err(e) => {
+                notes.push(format!("the written file could not be analysed: {e}"));
+                (None, EditState::default(), not_analysed())
+            }
+        };
+    tracing::info!(
+        path = %output.display(),
+        stage = "grid_check",
+        grid_check = %grid_check,
+        elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        "written file analysed and its grid checked"
+    );
+    if let Err(e) =
+        sc_io::txn::record_grid_check(&settings.backup_root, carry.txn, output, &grid_check)
+    {
+        notes.push(format!(
+            "the grid check was not recorded in the sidecar: {e}"
+        ));
+    }
     if !notes.is_empty() {
         tracing::warn!(path = %output.display(), notes = ?notes, "after the write");
     }
@@ -387,7 +435,15 @@ fn after_write(
         analysis,
         edit,
         edit_carried,
+        grid_check,
         notes,
+    }
+}
+
+/// The check of a written file whose analysis did not finish.
+fn not_analysed() -> GridCheck {
+    GridCheck::NotChecked {
+        reason: GridCheckSkip::NotAnalysed,
     }
 }
 

@@ -4,9 +4,11 @@
 //! renderer makes, and [`plan_export_snapped`] does both for a file on disk; [`ExportSource`]
 //! holds what the planner needs to know about the source file; [`ProcessSettings`] says how a
 //! batch exports its files, one by one in `process` (the batch's `Task::Process`);
-//! [`artefacts`] turns what a batch did into its rekordbox XML and grid report.
+//! [`grid_check`] compares each written file's grid with the exported one; [`artefacts`]
+//! turns what a batch did into its rekordbox XML and grid report.
 
 pub mod artefacts;
+pub mod grid_check;
 mod plan;
 pub(crate) mod process;
 mod snap;

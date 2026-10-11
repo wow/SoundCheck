@@ -235,3 +235,33 @@ fn other_schemas_and_other_json_do_not_read() {
         Err(Error::Io { .. })
     ));
 }
+
+#[test]
+fn a_grid_check_is_journaled_and_only_touches_its_own_export_sidecar() {
+    use sc_core::export::{GridCheck, GridCheckSkip};
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().join("backups");
+    std::fs::create_dir_all(&root).expect("root");
+    let file = dir.path().join("a.wav");
+    let path = write(&entry(&file), &[]).expect("written");
+    let before = std::fs::read(&path).expect("bytes");
+    let check = GridCheck::NotChecked {
+        reason: GridCheckSkip::NoGrid,
+    };
+    // A sidecar without an export (a plain render) and one of another transaction stay as
+    // they are; the check is journaled all the same.
+    record_grid_check(&root, "t-1", &file, &check).expect("recorded");
+    assert_eq!(std::fs::read(&path).expect("bytes"), before);
+    record_grid_check(&root, "t-2", &file, &check).expect("recorded");
+    assert_eq!(std::fs::read(&path).expect("bytes"), before);
+    let journal =
+        std::fs::read_to_string(root.join(super::super::journal::JOURNAL_FILE)).expect("journal");
+    assert_eq!(journal.lines().count(), 2);
+    assert!(
+        journal.contains(r#""grid_check":{"result":"notChecked""#),
+        "{journal}"
+    );
+    // No sidecar at all is an error the caller turns into a note.
+    let other = dir.path().join("b.wav");
+    assert!(record_grid_check(&root, "t-1", &other, &check).is_err());
+}

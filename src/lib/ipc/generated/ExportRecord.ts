@@ -3,6 +3,7 @@ import type { DecideSettings } from "./DecideSettings";
 import type { ExportPlan } from "./ExportPlan";
 import type { ExportSettings } from "./ExportSettings";
 import type { ExportedGrid } from "./ExportedGrid";
+import type { GridCheck } from "./GridCheck";
 import type { Plan } from "./Plan";
 import type { SourceMeasurements } from "./SourceMeasurements";
 
@@ -34,4 +35,9 @@ grid: ExportedGrid | null,
 /**
  * The source's measurements.
  */
-source: SourceMeasurements, };
+source: SourceMeasurements, 
+/**
+ * The check of the exported grid against the written file's own analysis, recorded after
+ * the write; absent until it ran, and in records written before it existed.
+ */
+gridCheck?: GridCheck | null, };

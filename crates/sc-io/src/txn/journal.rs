@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use sc_core::export::GridCheck;
 use sc_core::{Error, Result};
 
 use super::fsx::{io_err, remove_if_exists, sync_file};
@@ -171,6 +172,9 @@ pub(crate) struct Line {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+    /// The exported grid's check, recorded after the transaction ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_check: Option<GridCheck>,
 }
 
 impl Line {
@@ -200,6 +204,7 @@ impl Line {
             outcome: None,
             error: None,
             notes: Vec::new(),
+            grid_check: None,
         }
     }
 }
@@ -312,6 +317,12 @@ impl Entry {
         self.outcome = line.outcome.or(self.outcome);
         self.error = line.error.or(self.error.take());
         self.notes.extend(line.notes);
+        if let (Some(check), Some(export)) = (
+            line.grid_check,
+            self.record.as_mut().and_then(|r| r.export.as_mut()),
+        ) {
+            export.grid_check = Some(check);
+        }
     }
 }
 
