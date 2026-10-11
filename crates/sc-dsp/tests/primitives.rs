@@ -58,6 +58,100 @@ fn onsets_land_within_one_hop_of_each_burst_and_nowhere_else() {
     }
 }
 
+/// `seconds` of mono at `sample_rate`: an optional sustained 50 Hz bass (`bass` amplitude) and a
+/// 60 Hz kick of 40 ms at 0.8 starting `kick_ms` in, both raised from silence by a 2 ms
+/// raised-cosine fade at the start of the file, as a Prepare cut leaves it, in a quiet noise floor.
+fn cut_file(sample_rate: u32, kick_ms: f64, bass: f32, seconds: f64) -> (Vec<f32>, usize) {
+    let spec = AudioSpec::new(sample_rate, 1);
+    let mut signal = testsig::seeded_noise(spec, 5, 0.002, seconds).data;
+    if bass > 0.0 {
+        let tone = testsig::sine(spec, 50.0, bass, seconds).data;
+        for (s, t) in signal.iter_mut().zip(&tone) {
+            *s += t;
+        }
+    }
+    let start = testsig::frames_for(spec, kick_ms / 1000.0);
+    let burst = testsig::sine(spec, 60.0, 0.8, 0.04).data;
+    for (i, s) in burst.iter().enumerate() {
+        let ramp = (i as f32 / (0.005 * sample_rate as f32)).min(1.0);
+        signal[start + i] += s * ramp;
+    }
+    // A later kick, so the file has more than one attack, as music does.
+    let later = testsig::frames_for(spec, 0.5);
+    for (i, s) in burst.iter().enumerate() {
+        let ramp = (i as f32 / (0.005 * sample_rate as f32)).min(1.0);
+        signal[later + i] += s * ramp;
+    }
+    let fade = testsig::frames_for(spec, 0.002);
+    for (i, s) in signal.iter_mut().take(fade).enumerate() {
+        let x = std::f32::consts::PI * i as f32 / fade as f32;
+        *s *= 0.5 * (1.0 - x.cos());
+    }
+    (signal, start)
+}
+
+/// The first onset of `signal` (kick band applied) relative to `start`, in ms.
+fn first_onset_error_ms(mut signal: Vec<f32>, sample_rate: u32, start: usize) -> (f64, usize) {
+    KickBand::new(sample_rate).process_block(&mut signal);
+    let onsets = OnsetDetector::new(sample_rate).detect(&signal);
+    let first = onsets.first().expect("an onset");
+    let error_ms = (first.frame as f64 - start as f64) * 1000.0 / f64::from(sample_rate);
+    (error_ms, onsets.len())
+}
+
+#[test]
+fn onsets_in_the_first_30_ms_are_found() {
+    // A Prepare cut leaves bar 1 a lead of 5 to 15 ms after the start of the file; its kick must
+    // be found there, and the fade-in is no attack. Over silence: within the 2 ms the burst
+    // tests allow. Over a bass that was sounding when the file was cut: within one hop of where
+    // the same kick is placed in the middle of the file over the bass at the same phase (a bass
+    // at -18 dB under the kick delays the start the detector reads by up to 3.5 ms anywhere).
+    for sample_rate in [22_050_u32, 44_100] {
+        for bass in [0.0_f32, 0.1] {
+            for kick_ms in [5.0, 6.0, 10.0, 15.0, 29.0] {
+                let what = format!("{sample_rate} Hz, bass {bass}, kick at {kick_ms} ms");
+                let (signal, start) = cut_file(sample_rate, kick_ms, bass, 1.0);
+                let (error_ms, count) = first_onset_error_ms(signal, sample_rate, start);
+                assert_eq!(count, 2, "{what}: one onset per kick");
+                if bass == 0.0 {
+                    assert!(error_ms.abs() <= 2.0, "{what}: {error_ms:+.2} ms");
+                } else {
+                    // 200 ms later the 50 Hz bass is at the same phase.
+                    let (signal, start) = cut_file(sample_rate, kick_ms + 200.0, bass, 1.0);
+                    let (inside_ms, _) = first_onset_error_ms(signal, sample_rate, start);
+                    assert!(
+                        (error_ms - inside_ms).abs() <= 1.0 && error_ms.abs() <= 3.5,
+                        "{what}: {error_ms:+.2} ms, {inside_ms:+.2} ms in the middle"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_file_starting_on_a_sustained_tone_has_no_onset_at_its_start() {
+    // A cut in the middle of a held bass, at a zero crossing: the fade-in and the first quarter
+    // cycle raise it, but nothing attacks.
+    for sample_rate in [22_050_u32, 44_100] {
+        for freq_hz in [30.0, 40.0, 50.0, 60.0, 80.0, 100.0, 140.0] {
+            let spec = AudioSpec::new(sample_rate, 1);
+            let mut signal = testsig::sine(spec, freq_hz, 0.5, 1.0).data;
+            let fade = testsig::frames_for(spec, 0.002);
+            for (i, s) in signal.iter_mut().take(fade).enumerate() {
+                let x = std::f32::consts::PI * i as f32 / fade as f32;
+                *s *= 0.5 * (1.0 - x.cos());
+            }
+            KickBand::new(sample_rate).process_block(&mut signal);
+            assert_eq!(
+                OnsetDetector::new(sample_rate).detect(&signal),
+                Vec::new(),
+                "{sample_rate} Hz, {freq_hz} Hz tone"
+            );
+        }
+    }
+}
+
 #[test]
 fn onset_detection_is_deterministic() {
     let (mut signal, _) = kick_bursts(22_050, 4.0);
