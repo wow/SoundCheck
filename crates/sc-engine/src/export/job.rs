@@ -238,8 +238,8 @@ pub fn new_artefacts_folder(root: Option<&Path>, now: SystemTime) -> sc_core::Re
     sc_io::artefacts::new_batch_folder(root, now)
 }
 
-/// Where a batch's artefacts go: its export folder (created if no copy was written), else a new
-/// folder under `root`.
+/// Where a batch's artefacts go: its export folder (created if no copy was written, never on a
+/// rekordbox USB export), else a new folder under `root`.
 fn artefacts_folder(
     out: Option<&Path>,
     root: Option<&Path>,
@@ -247,6 +247,7 @@ fn artefacts_folder(
 ) -> sc_core::Result<PathBuf> {
     match out {
         Some(dir) => {
+            sc_io::txn::check_folder_not_rekordbox(dir, &sc_io::txn::SystemVolumes)?;
             std::fs::create_dir_all(dir).map_err(|source| Error::Io {
                 path: dir.to_path_buf(),
                 source,

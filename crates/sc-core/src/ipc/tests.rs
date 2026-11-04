@@ -23,8 +23,8 @@ fn progress_event_stays_within_budget() {
     assert!(json_len(&ev) <= MAX_EVENT_BYTES, "{} bytes", json_len(&ev));
 }
 
-#[test]
-fn a_worst_case_analysed_row_stays_within_budget() {
+/// The largest analysed row with its plan.
+fn worst_case_row() -> (RowAnalysis, Plan) {
     use crate::analysis::Meter;
     use crate::plan::{GainPlan, ReviewReason};
     let grid = RowGrid {
@@ -87,6 +87,12 @@ fn a_worst_case_analysed_row_stays_within_budget() {
         ],
         status: JobStage::NeedsReview,
     };
+    (row, plan)
+}
+
+#[test]
+fn a_worst_case_analysed_row_stays_within_budget() {
+    let (row, plan) = worst_case_row();
     let ev = JobEvent::Analysed {
         job_id: u32::MAX,
         file_id: u32::MAX,
@@ -434,6 +440,28 @@ fn a_worst_case_export_row_stays_within_budget() {
 }
 
 #[test]
+fn a_worst_case_export_done_stays_within_budget() {
+    let (row, plan) = worst_case_row();
+    let ev = JobEvent::ExportDone {
+        job_id: u32::MAX,
+        file_id: u32::MAX,
+        row: Box::new(worst_case_export_row()),
+        in_place: true,
+        update: Some(Box::new(RowUpdate {
+            file_id: u32::MAX,
+            row: Box::new(row),
+            plan,
+            revision: u32::MAX,
+        })),
+    };
+    assert!(
+        json_len(&ev) <= MAX_EXPORT_DONE_BYTES,
+        "{} bytes",
+        json_len(&ev)
+    );
+}
+
+#[test]
 fn bounded_strings_stay_within_their_json_bytes() {
     let json = |items: &[String]| serde_json::to_string(items).expect("serialisable").len();
     let kinds = ["plain", "\"quote", "\u{1}control", "\u{1f3a7}emoji", "\n"];
@@ -469,4 +497,6 @@ fn an_export_row_crosses_with_camel_case_keys() {
     assert_eq!(back, row);
     let kind = serde_json::to_string(&IpcErrorKind::RecoveryRunning).expect("serialisable");
     assert_eq!(kind, r#""recoveryRunning""#);
+    let kind = serde_json::to_string(&IpcErrorKind::Busy).expect("serialisable");
+    assert_eq!(kind, r#""busy""#);
 }

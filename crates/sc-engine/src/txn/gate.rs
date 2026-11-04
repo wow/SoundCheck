@@ -52,6 +52,17 @@ impl RecoveryGate {
         self.changed.notify_all();
     }
 
+    /// Changes what recovery found, in one step, so two changes at once cannot lose either, and
+    /// returns the new status.
+    pub fn update(&self, change: impl FnOnce(&mut RecoveryStatus)) -> RecoveryStatus {
+        let mut status = self.lock();
+        change(&mut status);
+        let now = status.clone();
+        drop(status);
+        self.changed.notify_all();
+        now
+    }
+
     /// What recovery found so far.
     #[must_use]
     pub fn status(&self) -> RecoveryStatus {

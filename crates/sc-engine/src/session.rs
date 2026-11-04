@@ -39,6 +39,8 @@ struct Tracked {
     export: Option<Box<ExportRow>>,
     /// The export running now: a failure or a cancel leaves [`Self::export`] as it was.
     export_running: Option<Box<ExportRow>>,
+    /// A change of the file made in place is in effect: `revert_file` can put it back.
+    revertible: bool,
 }
 
 impl Tracked {
@@ -138,6 +140,7 @@ impl Session {
                     edit: EditState::default(),
                     export: None,
                     export_running: None,
+                    revertible: false,
                 },
             );
             added.push(entry);
@@ -229,6 +232,7 @@ impl Session {
                     row: t.row(true).map(Box::new),
                     plan: t.plan(&self.settings),
                     export: t.export_running.clone().or_else(|| t.export.clone()),
+                    revertible: t.revertible,
                 })
                 .collect(),
         }
@@ -285,12 +289,14 @@ impl Session {
 
     /// The file `file_id` is its original again (a revert): `info` is what its headers say and
     /// `analysis` its own analysis with its saved edit applied, or `None` when it could not be
-    /// analysed. No export of it stands any more. Returns the row and its plan, when analysed.
+    /// analysed. No export of it stands any more; with `earlier_changes` still in effect, another
+    /// revert can go further back. Returns the row and its plan, when analysed.
     pub fn set_reverted(
         &mut self,
         file_id: u32,
         info: FileInfo,
         analysis: Option<(AnalysisRecord, EditState)>,
+        earlier_changes: usize,
     ) -> Option<RowUpdate> {
         let revision = self.revision;
         let settings = self.settings;
@@ -298,6 +304,7 @@ impl Session {
         t.entry.info = info;
         t.export = None;
         t.export_running = None;
+        t.revertible = earlier_changes > 0;
         let (record, edit) = analysis.unzip();
         t.record = record.map(|mut record| {
             record.evidence = None;
@@ -390,7 +397,7 @@ impl Session {
             },
             EngineEvent::Processing { file_id, plan } => {
                 let t = self.files.get_mut(&file_id)?;
-                let row = export_row::planned(&plan, t.export.as_deref());
+                let row = export_row::planned(&plan, t.revertible);
                 t.export_running = Some(row.clone());
                 JobEvent::Processing {
                     job_id,
@@ -404,6 +411,7 @@ impl Session {
                     return Some(lost_report(job_id, file_id));
                 };
                 let row = export_row::written(row, &report);
+                t.revertible = row.revertible;
                 t.export_running = Some(row.clone());
                 JobEvent::Written {
                     job_id,
@@ -415,7 +423,7 @@ impl Session {
                 file_id, outcome, ..
             } => {
                 let t = self.files.get_mut(&file_id)?;
-                let row = export_row::skipped(&outcome, t.export.as_deref());
+                let row = export_row::skipped(&outcome, t.revertible);
                 t.export_running = None;
                 t.export = Some(row.clone());
                 JobEvent::ExportSkipped {
@@ -446,7 +454,8 @@ impl Session {
         };
         let row = export_row::done(row, &done);
         t.export = Some(row.clone());
-        let update = if done.output == Path::new(&t.entry.path) {
+        let in_place = done.output == Path::new(&t.entry.path);
+        let update = if in_place {
             t.record = done.analysis.take().map(|mut record| {
                 record.evidence = None;
                 *record
@@ -464,6 +473,7 @@ impl Session {
             job_id,
             file_id,
             row,
+            in_place,
             update,
         })
     }

@@ -300,6 +300,17 @@ pub(crate) fn check_not_rekordbox(path: &Path, volume: &Volume) -> Result<()> {
     Ok(())
 }
 
+/// Refuses a folder (which may not exist yet) on a rekordbox USB export: nothing SoundCheck writes
+/// goes there, its rekordbox XML and grid report included.
+///
+/// # Errors
+/// [`Error::RekordboxUsbExport`]; [`Error::Io`] when no folder above it resolves.
+pub fn check_folder_not_rekordbox(dir: &Path, volumes: &dyn VolumeProvider) -> Result<()> {
+    let (base, below) = nearest_existing(dir)?;
+    let volume = volumes.volume_of(&base)?;
+    check_not_rekordbox(&base.join(below), &volume)
+}
+
 /// The container of the regular file `path` and an upper bound of its rendered size.
 ///
 /// # Errors

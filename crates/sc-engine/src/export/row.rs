@@ -11,13 +11,8 @@ use sc_io::txn::{TxnKind, TxnReport};
 
 use super::ProcessDone;
 
-/// Whether the file can be put back: it was changed in place, by this export or an earlier one.
-fn revertible_before(earlier: Option<&ExportRow>) -> bool {
-    earlier.is_some_and(|row| row.revertible)
-}
-
-/// A file planned, its write starting.
-pub(crate) fn planned(plan: &ExportPlan, earlier: Option<&ExportRow>) -> Box<ExportRow> {
+/// A file planned, its write starting; `revertible`: an earlier change of it is in effect.
+pub(crate) fn planned(plan: &ExportPlan, revertible: bool) -> Box<ExportRow> {
     Box::new(ExportRow {
         stage: JobStage::Processing,
         action: ExportAction::Write {
@@ -30,13 +25,13 @@ pub(crate) fn planned(plan: &ExportPlan, earlier: Option<&ExportRow>) -> Box<Exp
         verification: None,
         grid_check: None,
         edit_carried: false,
-        revertible: revertible_before(earlier),
+        revertible,
         notes: Vec::new(),
     })
 }
 
-/// A file not written.
-pub(crate) fn skipped(outcome: &ExportOutcome, earlier: Option<&ExportRow>) -> Box<ExportRow> {
+/// A file not written; `revertible`: an earlier change of it is in effect.
+pub(crate) fn skipped(outcome: &ExportOutcome, revertible: bool) -> Box<ExportRow> {
     let (action, notices, grid_withheld) = match outcome {
         ExportOutcome::XmlOnly { reason } => {
             (ExportAction::XmlOnly { reason: *reason }, Vec::new(), false)
@@ -63,7 +58,7 @@ pub(crate) fn skipped(outcome: &ExportOutcome, earlier: Option<&ExportRow>) -> B
         verification: None,
         grid_check: None,
         edit_carried: false,
-        revertible: revertible_before(earlier),
+        revertible,
         notes: Vec::new(),
     })
 }
@@ -136,3 +131,6 @@ pub(crate) fn done(row: Box<ExportRow>, done: &ProcessDone) -> Box<ExportRow> {
         ..*row
     })
 }
+
+#[cfg(test)]
+mod tests;

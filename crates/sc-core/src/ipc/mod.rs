@@ -29,8 +29,11 @@ use crate::units::{Bpm, DbTp, Lu, Lufs, Seconds};
 /// Largest JSON encoding allowed for a progress event or meter frame.
 pub const MAX_EVENT_BYTES: usize = 256;
 
-/// Largest JSON encoding allowed for one analysed row with its plan.
+/// Largest JSON encoding allowed for one analysed row with its plan, and for one export row.
 pub const MAX_ROW_BYTES: usize = 2048;
+
+/// Largest JSON encoding allowed for an `exportDone` event, which holds both of those.
+pub const MAX_EXPORT_DONE_BYTES: usize = 2 * MAX_ROW_BYTES;
 
 /// A batch job, unique within a session.
 pub type JobId = u32;
@@ -327,6 +330,9 @@ pub struct SessionRow {
     pub plan: Option<Plan>,
     /// Where the latest export of it stands, until it is reverted or exported again.
     pub export: Option<Box<ExportRow>>,
+    /// A change of it is in effect that `revert_file` can put back: also true with no `export`
+    /// after a revert that left an earlier change standing.
+    pub revertible: bool,
 }
 
 /// Everything the session holds, in the order the files were added.
@@ -472,10 +478,14 @@ pub enum JobEvent {
         file_id: u32,
         /// What the row shows, now with the grid check and any notes.
         row: Box<ExportRow>,
+        /// The file was replaced in place (not copied to a folder).
+        in_place: bool,
         /// The row's analysis and plan after an export in place: the written file's own, with
-        /// the grid edit carried over. `None` for a copy in a folder, whose source and row do
-        /// not change, and when the written file's analysis did not finish (the row's `notes`
-        /// say so; analyse the row again).
+        /// the grid edit carried over. `null` means two different things. With `inPlace` false
+        /// (a copy in a folder) the source did not change and the row stays as it is. With
+        /// `inPlace` true the written file's analysis did not finish (`row.notes` say why): the
+        /// numbers the row shows describe audio that is gone, so clear them and analyse the row
+        /// again. The session has already dropped them.
         update: Option<Box<RowUpdate>>,
     },
     /// Export: the batch's rekordbox XML and grid report are written, after its last file.
@@ -554,9 +564,14 @@ pub enum IpcErrorKind {
     ListedTwice,
     /// See [`crate::Error::SameOutputName`].
     SameOutputName,
-    /// The start-up recovery is still running: until it ends, a file it may be about to repair
-    /// is neither analysed nor written. Nothing was done; asking again once it ends works.
+    /// The start-up recovery is still running, and it may be about to repair the file: an
+    /// export, a revert, a rekordbox XML and forgetting a change wait until it ends (analysing a
+    /// row and opening it in the grid view do not). Nothing was done; asking again once it ends
+    /// works.
     RecoveryRunning,
+    /// Another job or command is working on the file (`file_id`): exporting it, reverting it,
+    /// or, for a change of it, analysing it. Nothing was done; asking again once that ends works.
+    Busy,
 }
 
 /// An error crossing IPC: a class the UI can branch on plus a human-readable message.
