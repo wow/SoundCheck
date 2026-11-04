@@ -289,7 +289,11 @@ fn a_container_the_render_cannot_parse_fails_with_its_error_not_about_serato() {
         sc_io::probe(&path).serato_unknown,
         "Serato data cannot be ruled out"
     );
-    // The plan alone would have skipped the file with the Serato wording: the grid is there.
+    // Its grid confirmed, the plan alone would cut it, and so skip the file in place with the
+    // Serato wording; the export's snap of that cut reads the container first.
+    let record = analysed(&lib, &path);
+    let bpm_range = common::with_grid().bpm_range;
+    save_edit(&lib.edits(), &record, bpm_range, &GridEdit::default(), true).expect("saved");
     let before = hash(&path);
     let s = settings(
         &lib,

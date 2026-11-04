@@ -561,20 +561,5 @@ fn write_file(
     done.ok_or_else(|| Error::Internal("the plan held no audio chunk".into()))
 }
 
-/// Checks that a render can parse the container of `path` (WAV, RF64, AIFF, AIFF-C or FLAC), as
-/// the first thing it would do, without rendering.
-///
-/// # Errors
-/// What the render would return for it: [`Error::UnsupportedFormat`], [`Error::Corrupt`],
-/// [`Error::Io`].
-pub fn check_container(path: &Path) -> Result<()> {
-    let family = crate::txn::tag_family(path)?;
-    let mut src = File::open(path).map_err(|e| io_error(path, e))?;
-    match family {
-        crate::txn::TagFamily::Id3 => iff::read_header(&mut src, path).map(drop),
-        crate::txn::TagFamily::Vorbis => crate::flac::read_layout(&mut src, path).map(drop),
-    }
-}
-
 #[cfg(test)]
 mod tests;
