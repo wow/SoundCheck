@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use sc_core::Error;
+use sc_core::analysis::AnalysisRecord;
 use sc_core::export::Place as ExportPlace;
 use sc_core::ipc::{
     ExportArtefacts, ExportRequest, ForgetResult, IpcError, IpcErrorKind, JobEvent, JobId,
@@ -176,6 +177,15 @@ impl Shell {
     /// for a file with no change to revert; `fileChanged` for one edited since it was written;
     /// `verifyFailed`, the in-place refusals and `io` from the undo.
     pub fn revert(&self, file_id: u32) -> Result<RevertResult, IpcError> {
+        self.revert_analysing(file_id, |path| self.analyse_original(path))
+    }
+
+    /// [`Self::revert`], with the original analysed by `analyse`.
+    pub(super) fn revert_analysing(
+        &self,
+        file_id: u32,
+        analyse: impl FnOnce(&Path) -> sc_core::Result<(AnalysisRecord, EditState)>,
+    ) -> Result<RevertResult, IpcError> {
         self.refuse_while_recovering()?;
         let root = self.backup_root()?;
         let Some(entry) = self.session().entry(file_id) else {
@@ -189,7 +199,7 @@ impl Shell {
             undo_file(&path, &root, self.inner.cache.as_ref()).map_err(|e| about(file_id, e))?;
         self.close_track_of(&[file_id]);
         let mut notes = undone.notes;
-        let analysis = match self.analyse_original(&path) {
+        let analysis = match analyse(&path) {
             Ok(analysis) => Some(analysis),
             Err(e) => {
                 tracing::warn!(path = %path.display(), error = %e, "reverted file not analysed");
@@ -212,10 +222,7 @@ impl Shell {
     }
 
     /// The analysis of the file at `path`, with its saved edit applied.
-    fn analyse_original(
-        &self,
-        path: &Path,
-    ) -> sc_core::Result<(sc_core::analysis::AnalysisRecord, EditState)> {
+    fn analyse_original(&self, path: &Path) -> sc_core::Result<(AnalysisRecord, EditState)> {
         let mut analyzer = Analyzer::load(
             self.analysis_settings(),
             self.inner.cache.clone(),

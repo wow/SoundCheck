@@ -72,6 +72,39 @@ fn revert_restores_hash() {
 }
 
 #[test]
+fn a_revert_whose_analysis_fails_leaves_the_original_and_no_cached_output() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    let before = sha256(&wav);
+    let (_, events) = export(&shell, request(&ids, prepare(), None));
+    assert!(steps(&events, ids[0]).contains(&"exportDone"));
+
+    let reverted = shell
+        .revert_analysing(ids[0], |_| {
+            Err(sc_core::Error::Internal("the analysis broke".into()))
+        })
+        .unwrap();
+
+    assert_eq!(sha256(&wav), before, "the file is reverted all the same");
+    assert!(reverted.update.is_none());
+    assert_eq!(reverted.notes.len(), 1);
+    assert!(
+        reverted.notes[0].contains("the analysis broke"),
+        "{:?}",
+        reverted.notes
+    );
+    // What the export left in the cache went with the undo: nothing about the output is served.
+    assert!(!lib.cache().remove(&wav).unwrap(), "no entry for the file");
+    // The row no longer claims measurements of a file that is gone, and no export stands.
+    let snapshot = shell.restore();
+    assert_eq!(snapshot.rows[0].row, None);
+    assert_eq!(snapshot.rows[0].plan, None);
+    assert_eq!(snapshot.rows[0].export, None);
+}
+
+#[test]
 fn revert_refuses_a_file_edited_since_it_was_written() {
     let lib = Lib::new();
     let wav = lib.tone("a.wav", 0.1);
