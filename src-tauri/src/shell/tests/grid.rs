@@ -88,6 +88,59 @@ fn confirm(shell: &Shell, id: u32) -> RowUpdate {
     shell.commit(id, &GridEdit::default(), true).unwrap()
 }
 
+/// A Prepare cut with a confirmed edit, as its events show it.
+fn the_cut_row_shows_the_export(events: &[JobEvent], wav: &Path) {
+    for event in events {
+        let text = serde_json::to_string(event).unwrap();
+        assert!(!text.contains("evidence"), "the evidence stays off IPC");
+        assert!(text.len() <= 4096, "{} bytes", text.len());
+    }
+    let (row, update) = events
+        .iter()
+        .find_map(|e| match e {
+            JobEvent::ExportDone { row, update, .. } => Some((row, update)),
+            _ => None,
+        })
+        .expect("done");
+    let ExportAction::Write { cut, .. } = row.action else {
+        panic!("{:?}", row.action);
+    };
+    let Cut::Cut { seconds, .. } = cut else {
+        panic!("{cut:?}");
+    };
+    assert!(seconds.0 > 0.2, "{cut:?}");
+    assert!(
+        row.positions_shift && row.edit_carried && row.revertible,
+        "{row:?}"
+    );
+    // The chip is the check the engine recorded. On clicks with little accent the detector's
+    // downbeat is not this test's matter; the check ran, and the row says what it found.
+    let doc = sc_io::txn::sidecar::read(&sc_io::txn::sidecar_path(wav)).unwrap();
+    let recorded = doc.export.expect("the export is recorded").grid_check;
+    assert!(
+        matches!(
+            recorded,
+            Some(GridCheck::Pass { .. } | GridCheck::OffBy { .. })
+        ),
+        "{recorded:?}"
+    );
+    assert_eq!(row.grid_check, recorded);
+    let v = row.verification.as_ref().expect("verified");
+    let Cut::Cut { frames, .. } = cut else {
+        panic!("{cut:?}");
+    };
+    assert_eq!(v.frames_in - v.frames_out, frames, "the cut, exactly");
+    // The row follows the written file: bar 1 a lead after its start, and the edit carried.
+    let update = update.as_ref().expect("the row follows");
+    assert!(update.row.confirmed, "the confirmed edit is carried over");
+    let moved = update.row.grid.as_ref().expect("a grid").bar1.0;
+    assert!((0.0..0.012).contains(&moved), "bar 1 at {moved} s");
+    assert!(events.iter().any(|e| matches!(
+        e,
+        JobEvent::Artefacts { artefacts, .. } if artefacts.listed == 1
+    )));
+}
+
 #[test]
 fn revert_restores_hash_and_the_confirmed_edit() {
     if !have_models() {
@@ -134,55 +187,7 @@ fn revert_restores_hash_and_the_confirmed_edit() {
         steps(&events, id),
         ["started", "processing", "written", "exportDone"],
     );
-    for event in &events {
-        let text = serde_json::to_string(event).unwrap();
-        assert!(!text.contains("evidence"), "the evidence stays off IPC");
-        assert!(text.len() <= 4096, "{} bytes", text.len());
-    }
-    let (row, update) = events
-        .iter()
-        .find_map(|e| match e {
-            JobEvent::ExportDone { row, update, .. } => Some((row, update)),
-            _ => None,
-        })
-        .expect("done");
-    let ExportAction::Write { cut, .. } = row.action else {
-        panic!("{:?}", row.action);
-    };
-    let Cut::Cut { seconds, .. } = cut else {
-        panic!("{cut:?}");
-    };
-    assert!(seconds.0 > 0.2, "{cut:?}");
-    assert!(
-        row.positions_shift && row.edit_carried && row.revertible,
-        "{row:?}"
-    );
-    // The chip is the check the engine recorded. On clicks with little accent the detector's
-    // downbeat is not this test's matter; the check ran, and the row says what it found.
-    let doc = sc_io::txn::sidecar::read(&sc_io::txn::sidecar_path(&wav)).unwrap();
-    let recorded = doc.export.expect("the export is recorded").grid_check;
-    assert!(
-        matches!(
-            recorded,
-            Some(GridCheck::Pass { .. } | GridCheck::OffBy { .. })
-        ),
-        "{recorded:?}"
-    );
-    assert_eq!(row.grid_check, recorded);
-    let v = row.verification.as_ref().expect("verified");
-    let Cut::Cut { frames, .. } = cut else {
-        panic!("{cut:?}");
-    };
-    assert_eq!(v.frames_in - v.frames_out, frames, "the cut, exactly");
-    // The row follows the written file: bar 1 a lead after its start, and the edit carried.
-    let update = update.as_ref().expect("the row follows");
-    assert!(update.row.confirmed, "the confirmed edit is carried over");
-    let moved = update.row.grid.as_ref().expect("a grid").bar1.0;
-    assert!((0.0..0.012).contains(&moved), "bar 1 at {moved} s");
-    assert!(events.iter().any(|e| matches!(
-        e,
-        JobEvent::Artefacts { artefacts, .. } if artefacts.listed == 1
-    )));
+    the_cut_row_shows_the_export(&events, &wav);
     assert_ne!(sha256(&wav), before);
 
     let reverted = shell.revert(id).unwrap();

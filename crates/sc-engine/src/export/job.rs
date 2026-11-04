@@ -44,7 +44,7 @@ struct Rows<'a> {
     index: BTreeMap<u32, usize>,
     plans: BTreeMap<u32, Box<ExportPlan>>,
     reports: BTreeMap<u32, Box<TxnReport>>,
-    rows: Vec<Option<BatchRow>>,
+    found: Vec<Option<BatchRow>>,
 }
 
 impl<'a> Rows<'a> {
@@ -59,13 +59,13 @@ impl<'a> Rows<'a> {
                 .collect(),
             plans: BTreeMap::new(),
             reports: BTreeMap::new(),
-            rows: files.iter().map(|_| None).collect(),
+            found: files.iter().map(|_| None).collect(),
         }
     }
 
     fn set(&mut self, file_id: u32, row: impl FnOnce(&Path, BatchMode) -> BatchRow) {
         if let Some(&i) = self.index.get(&file_id) {
-            self.rows[i] = Some(row(&self.files[i].path, self.mode));
+            self.found[i] = Some(row(&self.files[i].path, self.mode));
         }
     }
 
@@ -114,7 +114,7 @@ impl<'a> Rows<'a> {
     }
 
     fn finish(self) -> Vec<BatchRow> {
-        self.rows.into_iter().flatten().collect()
+        self.found.into_iter().flatten().collect()
     }
 }
 

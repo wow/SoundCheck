@@ -98,6 +98,8 @@ pub struct ExportVerification {
 
 /// Where one file of an export stands, and all its row shows: sent whole with every step, and at
 /// most [`super::MAX_ROW_BYTES`] of JSON.
+// Four independent facts the row shows, not states of one thing.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]

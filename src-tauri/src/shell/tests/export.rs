@@ -16,6 +16,45 @@ use super::support::{
     Lib, analysed, events_until_finished, export, in_folder, no_temp_left, prepare, request,
     sha256, steps, tone_wav,
 };
+/// What the UI shows for the written file: the gain up to -11 LUFS S-P95, no grid to cut to, and
+/// the verification; the row updated to the written file's own measurements.
+fn written_row_shows_the_export(events: &[JobEvent]) {
+    let (row, update) = events
+        .iter()
+        .find_map(|e| match e {
+            JobEvent::ExportDone { row, update, .. } => Some((row, update)),
+            _ => None,
+        })
+        .expect("done");
+    let ExportAction::Write { gain_db, cut } = row.action else {
+        panic!("{:?}", row.action);
+    };
+    assert!(gain_db > 0.5, "{gain_db}");
+    assert_eq!(cut, Cut::NoGrid);
+    assert!(!row.positions_shift && !row.grid_withheld && row.revertible);
+    assert_eq!(
+        row.grid_check,
+        Some(GridCheck::NotChecked {
+            reason: GridCheckSkip::NoGrid
+        })
+    );
+    let v = row.verification.as_ref().expect("verified");
+    assert_eq!(v.frames_in, v.frames_out);
+    assert_eq!(v.frames_in, 5 * 44_100);
+    assert_eq!(v.bits_out, 16);
+    assert_eq!(
+        v.blocks,
+        v.carried + v.patched + v.edited + v.replaced + v.dropped
+    );
+    assert!(v.blocks >= 2 && v.dropped == 0, "{v:?}");
+    // A tagless file gets its gain; no tag is created for the record, and the row says so.
+    assert_eq!(row.notes, ["tags not added: the file has no ID3 tag"]);
+    let update = update.as_ref().expect("the row follows the written file");
+    let p95 = update.row.short_term_p95.expect("S-P95").0;
+    assert!((p95 + 11.0).abs() < 0.05, "{p95} LUFS");
+    assert_eq!(update.plan.gain, Some(sc_core::plan::GainPlan::AtTarget));
+}
+
 #[test]
 fn export_round_trip_testsig() {
     let lib = Lib::new();
@@ -60,42 +99,7 @@ fn export_round_trip_testsig() {
         [JobStage::Processing, JobStage::Writing, JobStage::Done]
     );
 
-    // What the UI shows for the written file: the gain up to -11 LUFS S-P95, no grid to cut to,
-    // and the verification; the row updated to the written file's own measurements.
-    let (row, update) = events
-        .iter()
-        .find_map(|e| match e {
-            JobEvent::ExportDone { row, update, .. } => Some((row, update)),
-            _ => None,
-        })
-        .expect("done");
-    let ExportAction::Write { gain_db, cut } = row.action else {
-        panic!("{:?}", row.action);
-    };
-    assert!(gain_db > 0.5, "{gain_db}");
-    assert_eq!(cut, Cut::NoGrid);
-    assert!(!row.positions_shift && !row.grid_withheld && row.revertible);
-    assert_eq!(
-        row.grid_check,
-        Some(GridCheck::NotChecked {
-            reason: GridCheckSkip::NoGrid
-        })
-    );
-    let v = row.verification.as_ref().expect("verified");
-    assert_eq!(v.frames_in, v.frames_out);
-    assert_eq!(v.frames_in, 5 * 44_100);
-    assert_eq!(v.bits_out, 16);
-    assert_eq!(
-        v.blocks,
-        v.carried + v.patched + v.edited + v.replaced + v.dropped
-    );
-    assert!(v.blocks >= 2 && v.dropped == 0, "{v:?}");
-    // A tagless file gets its gain; no tag is created for the record, and the row says so.
-    assert_eq!(row.notes, ["tags not added: the file has no ID3 tag"]);
-    let update = update.as_ref().expect("the row follows the written file");
-    let p95 = update.row.short_term_p95.expect("S-P95").0;
-    assert!((p95 + 11.0).abs() < 0.05, "{p95} LUFS");
-    assert_eq!(update.plan.gain, Some(sc_core::plan::GainPlan::AtTarget));
+    written_row_shows_the_export(&events);
 
     // The skipped file says why.
     assert!(events.iter().any(|e| matches!(
@@ -113,7 +117,7 @@ fn export_round_trip_testsig() {
         Some(JobEvent::Finished { job_id, cancelled: false }) if *job_id == job
     ));
     let JobEvent::Artefacts { artefacts, .. } = &events[events.len() - 2] else {
-        panic!("{:?}", &events[events.len() - 2]);
+        panic!("{:?}", events[events.len() - 2]);
     };
     assert!(Path::new(&artefacts.folder).starts_with(lib.exports()));
     assert!(Path::new(artefacts.xml.as_ref().unwrap()).is_file());
@@ -165,7 +169,7 @@ fn an_export_to_a_folder_leaves_the_source_and_its_row() {
     assert!(!row.revertible, "a copy leaves nothing to revert");
     assert_eq!(shell.restore().rows[0].row, row_before);
     let JobEvent::Artefacts { artefacts, .. } = &events[events.len() - 2] else {
-        panic!("{:?}", &events[events.len() - 2]);
+        panic!("{:?}", events[events.len() - 2]);
     };
     assert_eq!(artefacts.folder, out.display().to_string());
     assert!(out.join("grid-report.csv").is_file());
