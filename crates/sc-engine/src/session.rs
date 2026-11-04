@@ -7,14 +7,14 @@
 //! analysed grid before the evidence is dropped, and a confirmed grid needs no review.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use sc_core::analysis::{AnalysisRecord, Grid};
 use sc_core::ipc::{
-    FileEntry, FileInfo, IpcError, JobEvent, JobId, Replan, RowAnalysis, RowPlan, RowUpdate,
-    SessionRow, SessionSnapshot,
+    ExportRow, FileEntry, FileInfo, IpcError, JobEvent, JobId, Replan, RowAnalysis, RowPlan,
+    RowUpdate, SessionRow, SessionSnapshot,
 };
 use sc_core::plan::{DecideSettings, GainPlan, Plan};
 use sc_core::{Lufs, Result};
@@ -26,6 +26,8 @@ use crate::batch::{BatchFile, BatchSettings, EngineEvent, Task, run_batch};
 use crate::cancel::CancelToken;
 use crate::decide::decide;
 use crate::edits::{EditState, apply_saved};
+use crate::export::ProcessDone;
+use crate::export::row as export_row;
 
 /// One file the user added.
 #[derive(Debug, Clone)]
@@ -33,6 +35,10 @@ struct Tracked {
     entry: FileEntry,
     record: Option<AnalysisRecord>,
     edit: EditState,
+    /// The latest export that ended, written or not.
+    export: Option<Box<ExportRow>>,
+    /// The export running now: a failure or a cancel leaves [`Self::export`] as it was.
+    export_running: Option<Box<ExportRow>>,
 }
 
 impl Tracked {
@@ -48,6 +54,16 @@ impl Tracked {
 
     fn row(&self, cached: bool) -> Option<RowAnalysis> {
         Some(row_of(self.record.as_ref()?, self.edit, cached))
+    }
+
+    /// The row and its plan, when analysed; never served from the cache (a file just changed).
+    fn update(&self, file_id: u32, settings: &DecideSettings, revision: u32) -> Option<RowUpdate> {
+        Some(RowUpdate {
+            file_id,
+            row: Box::new(self.row(false)?),
+            plan: self.plan(settings)?,
+            revision,
+        })
     }
 }
 
@@ -120,6 +136,8 @@ impl Session {
                     entry: entry.clone(),
                     record: None,
                     edit: EditState::default(),
+                    export: None,
+                    export_running: None,
                 },
             );
             added.push(entry);
@@ -210,6 +228,7 @@ impl Session {
                     entry: t.entry.clone(),
                     row: t.row(true).map(Box::new),
                     plan: t.plan(&self.settings),
+                    export: t.export_running.clone().or_else(|| t.export.clone()),
                 })
                 .collect(),
         }
@@ -257,6 +276,37 @@ impl Session {
         })
     }
 
+    /// What the file's headers now say, after a change of the file.
+    pub fn set_info(&mut self, file_id: u32, info: FileInfo) {
+        if let Some(t) = self.files.get_mut(&file_id) {
+            t.entry.info = info;
+        }
+    }
+
+    /// The file `file_id` is its original again (a revert): `info` is what its headers say and
+    /// `analysis` its own analysis with its saved edit applied, or `None` when it could not be
+    /// analysed. No export of it stands any more. Returns the row and its plan, when analysed.
+    pub fn set_reverted(
+        &mut self,
+        file_id: u32,
+        info: FileInfo,
+        analysis: Option<(AnalysisRecord, EditState)>,
+    ) -> Option<RowUpdate> {
+        let revision = self.revision;
+        let settings = self.settings;
+        let t = self.files.get_mut(&file_id)?;
+        t.entry.info = info;
+        t.export = None;
+        t.export_running = None;
+        let (record, edit) = analysis.unzip();
+        t.record = record.map(|mut record| {
+            record.evidence = None;
+            record
+        });
+        t.edit = edit.unwrap_or_default();
+        t.update(file_id, &settings, revision)
+    }
+
     /// The plan of one analysed file under the current settings.
     #[must_use]
     pub fn plan(&self, file_id: u32) -> Option<Plan> {
@@ -285,8 +335,9 @@ impl Session {
         Some(Lufs(median))
     }
 
-    /// Turns an engine event of an analysis job into what the UI receives, storing analyses on
-    /// the way; `None` for the events only an export sends, which this job never runs.
+    /// Turns an engine event of a job into what the UI receives, storing analyses and export
+    /// rows on the way; the evidence of an analysis stays out of both. `None` for an export event
+    /// of a file no longer in the session (the list was cleared meanwhile).
     pub fn on_engine_event(&mut self, job_id: JobId, event: EngineEvent) -> Option<JobEvent> {
         Some(match event {
             EngineEvent::Started { file_id } => JobEvent::Started { job_id, file_id },
@@ -320,15 +371,14 @@ impl Session {
                     revision: self.revision,
                 }
             }
-            EngineEvent::Failed { file_id, error } => JobEvent::Failed {
-                job_id,
-                file_id,
-                error: IpcError {
-                    file_id: Some(file_id),
-                    ..IpcError::from(error)
-                },
-            },
-            EngineEvent::Cancelled { file_id } => JobEvent::Cancelled { job_id, file_id },
+            EngineEvent::Failed { file_id, error } => {
+                self.end_running_export(file_id);
+                failed_event(job_id, file_id, error)
+            }
+            EngineEvent::Cancelled { file_id } => {
+                self.end_running_export(file_id);
+                JobEvent::Cancelled { job_id, file_id }
+            }
             EngineEvent::Batch(p) => JobEvent::Batch {
                 job_id,
                 done: saturating_u32(p.done),
@@ -338,15 +388,110 @@ impl Session {
                 #[allow(clippy::cast_possible_truncation)]
                 realtime_x: p.realtime_x.map(|x| x as f32),
             },
-            EngineEvent::Processing { .. }
-            | EngineEvent::Written { .. }
-            | EngineEvent::ExportSkipped { .. }
-            | EngineEvent::Done { .. } => return None,
+            EngineEvent::Processing { file_id, plan } => {
+                let t = self.files.get_mut(&file_id)?;
+                let row = export_row::planned(&plan, t.export.as_deref());
+                t.export_running = Some(row.clone());
+                JobEvent::Processing {
+                    job_id,
+                    file_id,
+                    row,
+                }
+            }
+            EngineEvent::Written { file_id, report } => {
+                let t = self.files.get_mut(&file_id)?;
+                let Some(row) = t.export_running.take() else {
+                    return Some(lost_report(job_id, file_id));
+                };
+                let row = export_row::written(row, &report);
+                t.export_running = Some(row.clone());
+                JobEvent::Written {
+                    job_id,
+                    file_id,
+                    row,
+                }
+            }
+            EngineEvent::ExportSkipped {
+                file_id, outcome, ..
+            } => {
+                let t = self.files.get_mut(&file_id)?;
+                let row = export_row::skipped(&outcome, t.export.as_deref());
+                t.export_running = None;
+                t.export = Some(row.clone());
+                JobEvent::ExportSkipped {
+                    job_id,
+                    file_id,
+                    row,
+                }
+            }
+            EngineEvent::Done { file_id, done } => return self.on_done(job_id, file_id, *done),
+        })
+    }
+
+    /// A file's export ended without changing it: its last export stands.
+    fn end_running_export(&mut self, file_id: u32) {
+        if let Some(t) = self.files.get_mut(&file_id) {
+            t.export_running = None;
+        }
+    }
+
+    /// A file is written and checked. Written in place, the row now is the written file: its own
+    /// analysis (none when that did not finish: what was measured before no longer holds).
+    fn on_done(&mut self, job_id: JobId, file_id: u32, mut done: ProcessDone) -> Option<JobEvent> {
+        let revision = self.revision;
+        let settings = self.settings;
+        let t = self.files.get_mut(&file_id)?;
+        let Some(row) = t.export_running.take() else {
+            return Some(lost_report(job_id, file_id));
+        };
+        let row = export_row::done(row, &done);
+        t.export = Some(row.clone());
+        let update = if done.output == Path::new(&t.entry.path) {
+            t.record = done.analysis.take().map(|mut record| {
+                record.evidence = None;
+                *record
+            });
+            t.edit = if t.record.is_some() {
+                done.edit
+            } else {
+                EditState::default()
+            };
+            t.update(file_id, &settings, revision).map(Box::new)
+        } else {
+            None
+        };
+        Some(JobEvent::ExportDone {
+            job_id,
+            file_id,
+            row,
+            update,
         })
     }
 }
 
-/// Runs one analysis job over `file_ids` (whatever `settings.task` says), sending its events in
+/// The failed event of `file_id`.
+fn failed_event(job_id: JobId, file_id: u32, error: sc_core::Error) -> JobEvent {
+    JobEvent::Failed {
+        job_id,
+        file_id,
+        error: IpcError {
+            file_id: Some(file_id),
+            ..IpcError::from(error)
+        },
+    }
+}
+
+/// An export event that came without the ones before it, which a batch never sends.
+fn lost_report(job_id: JobId, file_id: u32) -> JobEvent {
+    failed_event(
+        job_id,
+        file_id,
+        sc_core::Error::Internal("a written file lost its report".into()),
+    )
+}
+
+/// Runs one analysis job over `file_ids` (whatever `settings.task` says; an export runs through
+/// [`crate::export::run_export_job`]), sending its events in
 /// order and ending with `finished`.
 ///
 /// The session is locked only while an event is turned into its IPC form, never while a file is

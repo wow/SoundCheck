@@ -4,7 +4,8 @@
 //!    the plan under the batch's loudness settings ([`crate::decide()`]).
 //! 2. The source read again ([`ExportSource::read`]: headers, chunks, Serato data, hashed),
 //!    never taken from an older probe, and the export planned from the cut the renderer makes
-//!    ([`super::plan_export_snapped`]). A file that is not written ends here.
+//!    ([`super::plan_export_snapped`]). A file that is not written ends here; so does one whose
+//!    container the render cannot parse, with the render's error.
 //! 3. The write ([`crate::apply_file`]): in place after a backup, or a copy into a folder;
 //!    asked to cut exactly the planned (snapped) cut, and refused before anything is replaced
 //!    unless the output has the planned frame count (Library: the source's; Prepare: the
@@ -31,7 +32,7 @@ use sc_io::cache::Cache;
 use sc_io::edits::{EditStore, SavedEdit};
 
 use super::grid_check::{Choices, Exported, check_written, detector_grid, with_detector};
-use super::plan::{Bars, ExportInput, ExportSource, bar1_after, grid_trusted};
+use super::plan::{Bars, ExportInput, ExportSource, SeratoPresence, bar1_after, grid_trusted};
 use super::plan_export_snapped;
 use crate::analyze::{Analyzer, Progress, Timings};
 use crate::batch::EngineEvent;
@@ -147,6 +148,11 @@ pub(crate) fn process_file(
         .map(|store| apply_saved(&mut record, store))
         .unwrap_or_default();
     let mut source = ExportSource::read(path);
+    // Serato data cannot be ruled out, perhaps because the container does not parse: then the
+    // render's own error is what is wrong with the file, not a guess about Serato.
+    if source.serato == SeratoPresence::Unknown && source.codec.is_writable() {
+        sc_io::render::check_container(path)?;
+    }
     if source.codec.is_writable() {
         source.blake3 = Some(sc_io::txn::hash_file(path)?.1);
     }

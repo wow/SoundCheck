@@ -271,6 +271,15 @@ impl Shell {
         *self.view() = None;
     }
 
+    /// Closes the grid view if it shows one of `file_ids`, whose file is about to change: what
+    /// it holds, and what would be saved from it, is about the file as it was.
+    pub(crate) fn close_track_of(&self, file_ids: &[u32]) {
+        let open = self.view().as_ref().map(|open| open.file_id);
+        if open.is_some_and(|id| file_ids.contains(&id)) {
+            self.close_track();
+        }
+    }
+
     /// Runs `f` on the open track when it is `file_id`.
     fn with_open<T>(
         &self,

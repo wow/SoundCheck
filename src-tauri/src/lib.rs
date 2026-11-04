@@ -11,8 +11,9 @@ mod shell;
 
 use sc_core::analysis::GridEdit;
 use sc_core::ipc::{
-    AnalyzeRequest, FileEntry, IpcError, IpcErrorKind, JobEvent, JobId, Listen, RecoveryStatus,
-    Replan, RowUpdate, SessionSnapshot, TrackEvent, TrackOpened,
+    AnalyzeRequest, ExportRequest, FileEntry, ForgetResult, IpcError, IpcErrorKind, JobEvent,
+    JobId, Listen, RecoveryStatus, Replan, RevertResult, RowUpdate, SessionSnapshot, TrackEvent,
+    TrackOpened, WriteXmlRequest, XmlWritten,
 };
 use sc_core::plan::DecideSettings;
 use sc_core::{DbFs, Lufs, SampleIndex};
@@ -67,6 +68,48 @@ async fn analyze(
         // A closed channel means the window went away; the job still ends normally.
         let _ = on_event.send(event);
     })
+}
+
+/// Starts exporting files; refused while start-up recovery runs. Events arrive on `on_event`,
+/// the batch's artefacts and then `finished` last.
+#[tauri::command]
+async fn export(
+    shell: State<'_, Shell>,
+    req: ExportRequest,
+    on_event: Channel<JobEvent>,
+) -> Result<JobId, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || {
+        shell.export(req, move |event| {
+            // A closed channel means the window went away; the job still ends normally.
+            let _ = on_event.send(event);
+        })
+    })
+    .await
+}
+
+/// Puts a file's original back and refreshes its row.
+#[tauri::command]
+async fn revert_file(shell: State<'_, Shell>, file_id: u32) -> Result<RevertResult, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || shell.revert(file_id)).await
+}
+
+/// Writes a rekordbox XML of analysed rows; nothing else is exported.
+#[tauri::command]
+async fn write_rekordbox_xml(
+    shell: State<'_, Shell>,
+    req: WriteXmlRequest,
+) -> Result<XmlWritten, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || shell.write_xml(req)).await
+}
+
+/// Gives up on a change recovery left pending; nothing is deleted.
+#[tauri::command]
+async fn forget_pending(shell: State<'_, Shell>, txn: String) -> Result<ForgetResult, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || shell.forget(&txn)).await
 }
 
 /// Asks a running job to stop.
@@ -260,6 +303,10 @@ pub fn run() {
             recovery_status,
             expand_paths,
             analyze,
+            export,
+            revert_file,
+            write_rekordbox_xml,
+            forget_pending,
             cancel_job,
             set_decide_settings,
             calibration_target,

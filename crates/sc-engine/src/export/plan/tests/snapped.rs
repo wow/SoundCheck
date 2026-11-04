@@ -70,7 +70,7 @@ fn bar1_lands_within_1ms_and_a_sample_after_the_lead_for_every_snap() {
         (48_000, 174.5, 10_001),
         (48_000, 122.37, 17_001),
     ] {
-        for lead_ms in [0.0, 5.0, 12.3] {
+        for lead_ms in [sc_core::export::LEAD_MS_RANGE.0, 5.0, 12.3] {
             let mut r = record(rate, anchor);
             r.grid.as_mut().expect("grid").bpm = Bpm(bpm);
             let (plan, settings, export) = prepared(&r, lead_ms);

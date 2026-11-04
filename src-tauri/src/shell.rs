@@ -1,6 +1,6 @@
 //! The command bodies, as plain Rust so they are tested without a window: the session, the jobs
 //! in flight with their cancel tokens, and the cache. Each `#[tauri::command]` in `lib.rs` is a
-//! one-line call into this.
+//! one-line call into this. Exporting, reverting and the rekordbox XML are in [`export`].
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -14,17 +14,29 @@ use sc_core::ipc::{
 use sc_core::plan::{DecideSettings, check_bpm_range};
 use sc_engine::player::Player;
 use sc_engine::{
-    BatchSettings, CancelToken, Session, Task, collect_audio_files, default_workers, probe_all,
-    recover_at_start, run_job,
+    BatchSettings, CancelToken, RecoveryGate, Session, Task, collect_audio_files, default_workers,
+    probe_all, recover_at_start, run_job,
 };
+use sc_io::artefacts::default_exports_root;
 use sc_io::cache::Cache;
 use sc_io::edits::EditStore;
 use sc_io::txn::default_backup_root;
+
+mod export;
 
 fn no_backup_folder() -> RecoveryStatus {
     RecoveryStatus::Skipped {
         reason: "there is no backup folder (no home folder found)".into(),
     }
+}
+
+/// The folders the shell writes under.
+#[derive(Debug, Clone, Default)]
+pub struct Roots {
+    /// Where SoundCheck keeps its backups and journal; nothing in it is ever added as a row.
+    pub backup: Option<PathBuf>,
+    /// Where an export in place makes the folder for its rekordbox XML and grid report.
+    pub exports: Option<PathBuf>,
 }
 
 /// State shared by every command.
@@ -45,10 +57,9 @@ pub(crate) struct Inner {
     pub(crate) view: Mutex<Option<crate::grid_view::OpenTrack>>,
     /// The click player, started with the first track opened.
     pub(crate) player: Mutex<Option<Player>>,
-    /// Where SoundCheck keeps its backups; nothing in it is ever added as a row.
-    backup_root: Option<PathBuf>,
-    /// What the crash recovery run at start found.
-    recovery: Mutex<RecoveryStatus>,
+    roots: Roots,
+    /// The crash recovery run at start, which exports wait for: running, or what it found.
+    recovery: Arc<RecoveryGate>,
     workers: usize,
 }
 
@@ -59,18 +70,19 @@ impl Shell {
     #[cfg(test)]
     #[must_use]
     pub fn new(cache: Option<Cache>, edits: Option<EditStore>, workers: usize) -> Self {
-        Self::with_backup_root(cache, edits, workers, None)
+        Self::with_roots(cache, edits, workers, Roots::default())
     }
 
     /// A shell with an empty session deciding with the DJ defaults, analysing on `workers`
-    /// threads with `cache`, applying the grid edits saved in `edits`, and never adding a file
-    /// in `backup_root` as a row.
+    /// threads with `cache`, applying the grid edits saved in `edits`, and writing under `roots`.
+    /// With a backup folder, recovery counts as running until
+    /// [`Shell::recover_in_background`] ends.
     #[must_use]
-    pub fn with_backup_root(
+    pub fn with_roots(
         cache: Option<Cache>,
         edits: Option<EditStore>,
         workers: usize,
-        backup_root: Option<PathBuf>,
+        roots: Roots,
     ) -> Self {
         let session = Session::new(DecideSettings::dj());
         let session = match &edits {
@@ -86,34 +98,38 @@ impl Shell {
                 analysis: Mutex::new(AnalysisSettings::default()),
                 view: Mutex::new(None),
                 player: Mutex::new(None),
-                recovery: Mutex::new(match &backup_root {
+                recovery: Arc::new(RecoveryGate::new(match &roots.backup {
                     Some(_) => RecoveryStatus::Running,
                     None => no_backup_folder(),
-                }),
-                backup_root,
+                })),
+                roots,
                 workers,
             }),
         }
     }
 
     /// The shell the app runs: the user's analysis cache and saved grid edits, the default
-    /// worker count, and the user's backup root kept out of the rows.
+    /// worker count, and the user's backup and exports folders.
     #[must_use]
     pub fn for_app() -> Self {
-        Self::with_backup_root(
+        Self::with_roots(
             Cache::default_dir().ok().map(Cache::open),
             EditStore::default_dir().ok().map(EditStore::open),
             default_workers(),
-            default_backup_root().ok(),
+            Roots {
+                backup: default_backup_root().ok(),
+                exports: default_exports_root().ok(),
+            },
         )
     }
 
     /// Recovers, on a background thread so the window opens at once, the file changes a crash
     /// interrupted (see `sc_engine::recover_at_start`, which logs what it did); the result is
-    /// kept for [`Shell::recovery_status`]. A failure never stops the app. Returns the thread,
-    /// or `None` without a backup folder.
+    /// kept for [`Shell::recovery_status`] and opens the gate exports wait at. A failure, even a
+    /// panic, never stops the app or keeps that gate closed. Returns the thread, or `None`
+    /// without a backup folder.
     pub(crate) fn recover_in_background(&self) -> Option<std::thread::JoinHandle<()>> {
-        let Some(root) = self.inner.backup_root.clone() else {
+        let Some(root) = self.inner.roots.backup.clone() else {
             tracing::warn!("no backup folder; recovery skipped");
             return None;
         };
@@ -121,36 +137,27 @@ impl Shell {
         let spawned = std::thread::Builder::new()
             .name("sc-recover".into())
             .spawn(move || {
-                let status = recover_at_start(&root, inner.cache.as_ref());
-                tracing::info!(status = ?status, "startup recovery finished");
-                *inner
-                    .recovery
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner) = status;
+                run_recovery(&inner.recovery, || {
+                    recover_at_start(&root, inner.cache.as_ref())
+                });
             });
         match spawned {
             Ok(handle) => Some(handle),
             Err(e) => {
                 tracing::warn!(error = %e, "recovery thread not started");
-                *self.recovery() = RecoveryStatus::Failed {
+                self.inner.recovery.set(RecoveryStatus::Failed {
                     message: format!("the recovery thread did not start: {e}"),
-                };
+                });
                 None
             }
         }
     }
 
-    /// What the start-up recovery found (`Running` until it ends).
+    /// What the start-up recovery found (`Running` until it ends): the banner's running, pending
+    /// (each change's path and reason) or failed.
     #[must_use]
     pub fn recovery_status(&self) -> RecoveryStatus {
-        self.recovery().clone()
-    }
-
-    fn recovery(&self) -> std::sync::MutexGuard<'_, RecoveryStatus> {
-        self.inner
-            .recovery
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.inner.recovery.status()
     }
 
     pub(crate) fn session(&self) -> std::sync::MutexGuard<'_, Session> {
@@ -172,7 +179,7 @@ impl Shell {
     #[must_use]
     pub fn expand(&self, paths: Vec<String>) -> Vec<FileEntry> {
         let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-        let files = collect_audio_files(&paths, self.inner.backup_root.as_deref());
+        let files = collect_audio_files(&paths, self.inner.roots.backup.as_deref());
         let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
         let infos = probe_all(&files, threads);
         self.session().add(files.into_iter().zip(infos).collect())
@@ -186,7 +193,7 @@ impl Shell {
     pub fn start(
         &self,
         req: AnalyzeRequest,
-        mut send: impl FnMut(JobEvent) + Send + 'static,
+        send: impl FnMut(JobEvent) + Send + 'static,
     ) -> Result<JobId, IpcError> {
         check_bpm_range(req.analysis.bpm_range)?;
         *self
@@ -195,20 +202,40 @@ impl Shell {
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = req.analysis.clone();
         let job_id = self.session().next_job_id();
-        let cancel = CancelToken::new();
-        self.jobs().insert(job_id, cancel.clone());
-        let shell = self.clone();
         let settings = BatchSettings {
             analysis: req.analysis,
             workers: self.inner.workers,
             cache: self.inner.cache.clone(),
             task: Task::Analyze,
         };
+        self.spawn_job(job_id, send, move |shell, cancel, forward| {
+            run_job(
+                &shell.inner.session,
+                job_id,
+                &req.file_ids,
+                &settings,
+                cancel,
+                forward,
+            );
+        });
+        Ok(job_id)
+    }
+
+    /// Runs a job on its own thread, its events going to `send`. The job leaves the running set
+    /// before its last event goes out, so a caller that has seen `finished` never finds it still
+    /// cancellable.
+    fn spawn_job(
+        &self,
+        job_id: JobId,
+        send: impl FnMut(JobEvent) + Send + 'static,
+        run: impl FnOnce(&Shell, &CancelToken, &mut dyn FnMut(JobEvent)) + Send + 'static,
+    ) {
+        let cancel = CancelToken::new();
+        self.jobs().insert(job_id, cancel.clone());
+        let shell = self.clone();
         std::thread::Builder::new()
             .name(format!("sc-job-{job_id}"))
             .spawn(move || {
-                // The job leaves the running set before its last event goes out, so a caller
-                // that has seen `finished` never finds it still cancellable.
                 let jobs = shell.clone();
                 let mut forward = |event: JobEvent| {
                     if matches!(event, JobEvent::Finished { .. }) {
@@ -216,18 +243,19 @@ impl Shell {
                     }
                     send(event);
                 };
-                run_job(
-                    &shell.inner.session,
-                    job_id,
-                    &req.file_ids,
-                    &settings,
-                    &cancel,
-                    &mut forward,
-                );
+                run(&shell, &cancel, &mut forward);
                 shell.jobs().remove(&job_id);
             })
             .expect("the OS can start a thread for a job");
-        Ok(job_id)
+    }
+
+    /// The analysis settings of the latest job.
+    fn analysis_settings(&self) -> AnalysisSettings {
+        self.inner
+            .analysis
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Asks a running job to stop; `false` when no such job is running.
@@ -271,6 +299,15 @@ impl Shell {
     pub fn calibration_target(&self) -> Option<Lufs> {
         self.session().median_short_term_p95()
     }
+}
+
+/// Runs the start-up recovery behind `gate`'s guard: whatever `recover` does, a panic included,
+/// the gate opens when it ends, so exports never wait forever.
+fn run_recovery(gate: &Arc<RecoveryGate>, recover: impl FnOnce() -> RecoveryStatus) {
+    let guard = gate.guard();
+    let status = recover();
+    tracing::info!(status = ?status, "startup recovery finished");
+    guard.finish(status);
 }
 
 #[cfg(test)]

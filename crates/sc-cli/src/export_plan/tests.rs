@@ -1,4 +1,6 @@
 //! Unit tests of `crates/sc-cli/src/export_plan.rs`: the text of every outcome.
+use sc_core::export::{ExportNotice, XmlOnlyReason};
+
 use super::*;
 use sc_core::plan::Codec;
 use sc_core::{SampleIndex, Seconds, Tag};

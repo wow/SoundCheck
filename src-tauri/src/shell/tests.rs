@@ -186,7 +186,7 @@ fn files_in_the_backup_folder_never_become_rows() {
     std::fs::create_dir_all(backups.join("2026-10-07")).unwrap();
     tone_wav(dir.path(), "a.wav", 0.1);
     tone_wav(&backups.join("2026-10-07"), "a.wav", 0.1);
-    let shell = Shell::with_backup_root(None, None, 1, Some(backups));
+    let shell = Shell::with_roots(None, None, 1, backup_only(backups));
     let rows = shell.expand(vec![dir.path().display().to_string()]);
     assert_eq!(rows.len(), 1);
 }
@@ -208,7 +208,7 @@ fn startup_recovery_rolls_back_an_interrupted_change_and_keeps_the_result() {
     });
     std::fs::write(backups.join("journal.jsonl"), format!("{line}\n")).unwrap();
 
-    let shell = Shell::with_backup_root(None, None, 1, Some(backups));
+    let shell = Shell::with_roots(None, None, 1, backup_only(backups));
     let handle = shell.recover_in_background().expect("a recovery thread");
     handle.join().expect("recovery does not panic");
     match shell.recovery_status() {
