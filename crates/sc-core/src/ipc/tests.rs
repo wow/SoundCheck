@@ -455,7 +455,7 @@ fn bounded_strings_stay_within_their_json_bytes() {
         "kept as they are"
     );
     let cut = bounded_strings(vec!["abcdefghij".to_owned(), "next".to_owned()], 11);
-    assert_eq!(cut, ["abcd..."], "cut, marked, and nothing after it");
+    assert_eq!(cut, ["abc..."], "cut, marked, and nothing after it");
 }
 
 #[test]

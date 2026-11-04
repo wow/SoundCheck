@@ -16,8 +16,6 @@ use super::support::{
     Lib, analysed, events_until_finished, export, in_folder, no_temp_left, prepare, request,
     sha256, steps, tone_wav,
 };
-use crate::shell::Shell;
-
 #[test]
 fn export_round_trip_testsig() {
     let lib = Lib::new();

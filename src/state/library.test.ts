@@ -157,8 +157,13 @@ describe('library store', () => {
       {
         revision: 4,
         rows: [
-          { entry: entry(7), row: analysis(), plan: plan({ status: 'needsReview', review: [{ type: 'drifts' }] }) },
-          { entry: entry(8), row: null, plan: null },
+          {
+            entry: entry(7),
+            row: analysis(),
+            plan: plan({ status: 'needsReview', review: [{ type: 'drifts' }] }),
+            export: null,
+          },
+          { entry: entry(8), row: null, plan: null, export: null },
         ],
       },
       [70, 180],

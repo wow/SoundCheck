@@ -8,4 +8,8 @@ export type ExportNotice = { "type": "seratoCuesShifted",
 /**
  * The cut, seconds.
  */
+cutS: Seconds, } | { "type": "seratoCuesMayHaveShifted", 
+/**
+ * The cut, seconds.
+ */
 cutS: Seconds, };
