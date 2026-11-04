@@ -236,29 +236,60 @@ fn bar_1_inside_the_cut_is_refused() {
     assert!(matches!(err, sc_core::Error::InvalidArgument(_)), "{err}");
 }
 
-/// `path` with a chunk appended whose size runs past the end of the file: decoders stop at the
-/// audio and never see it, but the container no longer parses, so no tag can be read from it.
-fn break_the_container(path: &std::path::Path) {
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .append(true)
-        .open(path)
-        .expect("open");
-    f.write_all(b"LIST\x00\x00\x00\x7f").expect("write");
+/// `path`, 16-bit stereo, rewritten as G.711 mu-law: decoders play it, but the render does not
+/// parse its format, and so no tag can be read from it to rule out Serato data.
+fn as_mu_law(path: &std::path::Path) {
+    let mut reader = hound::WavReader::open(path).expect("wav");
+    let spec = reader.spec();
+    let encoded: Vec<u8> = reader
+        .samples::<i16>()
+        .map(|s| mu_law(s.expect("sample")))
+        .collect();
+    drop(reader);
+    let len = u32::try_from(encoded.len()).expect("a short file");
+    let mut bytes = Vec::with_capacity(encoded.len() + 46);
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(len + 38).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&18_u32.to_le_bytes());
+    bytes.extend_from_slice(&7_u16.to_le_bytes());
+    bytes.extend_from_slice(&spec.channels.to_le_bytes());
+    bytes.extend_from_slice(&spec.sample_rate.to_le_bytes());
+    bytes.extend_from_slice(&(spec.sample_rate * u32::from(spec.channels)).to_le_bytes());
+    bytes.extend_from_slice(&spec.channels.to_le_bytes());
+    bytes.extend_from_slice(&8_u16.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&len.to_le_bytes());
+    bytes.extend_from_slice(&encoded);
+    std::fs::write(path, bytes).expect("write");
+}
+
+/// One G.711 mu-law byte.
+fn mu_law(sample: i16) -> u8 {
+    const BIAS: i32 = 0x84;
+    let sign: u8 = if sample < 0 { 0x80 } else { 0 };
+    let magnitude = i32::from(sample).abs().min(32_635) + BIAS;
+    // The highest bit set is 7 to 14: the segment, with the four bits below it the step.
+    let exponent = 31 - i32::try_from(magnitude.leading_zeros()).expect("few") - 7;
+    let mantissa = (magnitude >> (exponent + 3)) & 0x0F;
+    let code = u8::try_from((exponent << 4) | mantissa).expect("seven bits");
+    !(sign | code)
 }
 
 #[test]
-fn a_container_that_does_not_parse_fails_with_the_renders_error_not_about_serato() {
+fn a_container_the_render_cannot_parse_fails_with_its_error_not_about_serato() {
     if !common::have_models() {
         return;
     }
     let lib = Lib::new();
     let path = click(&lib);
-    break_the_container(&path);
+    as_mu_law(&path);
     assert!(
         sc_io::probe(&path).serato_unknown,
         "Serato data cannot be ruled out"
     );
+    // The plan alone would have skipped the file with the Serato wording: the grid is there.
     let before = hash(&path);
     let s = settings(
         &lib,
@@ -274,7 +305,7 @@ fn a_container_that_does_not_parse_fails_with_the_renders_error_not_about_serato
             _ => None,
         })
         .expect("failed");
-    assert!(matches!(error, Error::Corrupt { .. }), "{error}");
+    assert!(matches!(error, Error::UnsupportedFormat { .. }), "{error}");
     assert!(!error.to_string().contains("Serato"), "{error}");
     assert_eq!(hash(&path), before);
 }
