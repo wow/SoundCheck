@@ -227,7 +227,7 @@ impl Shell {
     fn spawn_job(
         &self,
         job_id: JobId,
-        send: impl FnMut(JobEvent) + Send + 'static,
+        mut send: impl FnMut(JobEvent) + Send + 'static,
         run: impl FnOnce(&Shell, &CancelToken, &mut dyn FnMut(JobEvent)) + Send + 'static,
     ) {
         let cancel = CancelToken::new();

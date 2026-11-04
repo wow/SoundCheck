@@ -144,7 +144,13 @@ fn tags_that_could_not_be_read_block_an_in_place_cut() {
         place: Place::Folder,
         ..prepare()
     };
-    assert_eq!(written(plan_with(&r, &source, &folder)).trim_frames, 13_009);
+    let copy = written(plan_with(&r, &source, &folder));
+    assert_eq!(copy.trim_frames, 13_009);
+    assert_eq!(
+        copy.notices,
+        [ExportNotice::SeratoCuesMayHaveShifted { cut_s }],
+        "a cut copy says its cues may have shifted"
+    );
     let library = ExportSettings::new(BatchMode::Library);
     assert!(matches!(
         plan_with(&r, &source, &library),
@@ -152,4 +158,5 @@ fn tags_that_could_not_be_read_block_an_in_place_cut() {
     ));
     let on_bar = written(plan_with(&record(48_000, 240), &source, &prepare()));
     assert_eq!(on_bar.trim_frames, 0);
+    assert_eq!(on_bar.notices, [], "nothing cut, nothing shifted");
 }

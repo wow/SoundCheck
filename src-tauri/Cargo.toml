@@ -33,4 +33,5 @@ directories = { workspace = true }
 [dev-dependencies]
 sc-core = { workspace = true, features = ["testsig"] }
 hound = { workspace = true }
+sha2 = { workspace = true }
 tempfile = { workspace = true }

@@ -5,9 +5,10 @@
 mod common;
 
 use common::export::*;
+use sc_core::Error;
 use sc_core::analysis::GridEdit;
 use sc_core::export::{BatchMode, Cut};
-use sc_engine::{Analyzer, CancelToken, apply_saved, save_edit};
+use sc_engine::{Analyzer, CancelToken, EngineEvent, apply_saved, save_edit};
 
 #[test]
 fn prepare_puts_bar_1_at_the_lead() {
@@ -233,4 +234,47 @@ fn bar_1_inside_the_cut_is_refused() {
     )
     .expect_err("refused");
     assert!(matches!(err, sc_core::Error::InvalidArgument(_)), "{err}");
+}
+
+/// `path` with a chunk appended whose size runs past the end of the file: decoders stop at the
+/// audio and never see it, but the container no longer parses, so no tag can be read from it.
+fn break_the_container(path: &std::path::Path) {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .expect("open");
+    f.write_all(b"LIST\x00\x00\x00\x7f").expect("write");
+}
+
+#[test]
+fn a_container_that_does_not_parse_fails_with_the_renders_error_not_about_serato() {
+    if !common::have_models() {
+        return;
+    }
+    let lib = Lib::new();
+    let path = click(&lib);
+    break_the_container(&path);
+    assert!(
+        sc_io::probe(&path).serato_unknown,
+        "Serato data cannot be ruled out"
+    );
+    let before = hash(&path);
+    let s = settings(
+        &lib,
+        common::with_grid(),
+        process(&lib, BatchMode::Prepare, None),
+    );
+    let events = run(&batch(std::slice::from_ref(&path)), &s, &CancelToken::new());
+    assert_eq!(names(&events, 1), ["started", "failed"]);
+    let error = events
+        .iter()
+        .find_map(|e| match e {
+            EngineEvent::Failed { error, .. } => Some(error),
+            _ => None,
+        })
+        .expect("failed");
+    assert!(matches!(error, Error::Corrupt { .. }), "{error}");
+    assert!(!error.to_string().contains("Serato"), "{error}");
+    assert_eq!(hash(&path), before);
 }

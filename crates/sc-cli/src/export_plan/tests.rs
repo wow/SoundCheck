@@ -221,3 +221,14 @@ fn a_withheld_grid_is_noted() {
         "{t}"
     );
 }
+
+#[test]
+fn a_cut_copy_of_a_file_with_unread_tags_says_its_cues_may_have_shifted() {
+    let text = notice_text(ExportNotice::SeratoCuesMayHaveShifted {
+        cut_s: Seconds(0.25),
+    });
+    assert!(
+        text.contains("may have shifted") && text.contains("0.25 s"),
+        "{text}"
+    );
+}

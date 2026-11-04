@@ -1,5 +1,6 @@
-//! Unit tests of the private parts of `src-tauri/src/shell.rs`.
-use std::path::Path;
+//! Unit tests of the private parts of `src-tauri/src/shell.rs`; those of the export commands are
+//! in `tests/export.rs`, `tests/commands.rs` and, with the grid, `tests/grid.rs`.
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -9,11 +10,24 @@ use sc_core::{AudioSpec, Bpm, testsig};
 
 use super::*;
 
+mod commands;
+mod export;
+mod grid;
+mod support;
+
 fn tone_wav(dir: &Path, name: &str, amp: f32) {
-    let buf = testsig::sine(AudioSpec::CD, 1000.0, amp, 5.0);
+    tone_wav_at(dir, name, amp, 44_100);
+}
+
+fn tone_wav_at(dir: &Path, name: &str, amp: f32, rate: u32) {
+    let audio = AudioSpec {
+        sample_rate: rate,
+        channels: 2,
+    };
+    let buf = testsig::sine(audio, 1000.0, amp, 5.0);
     let spec = hound::WavSpec {
         channels: 2,
-        sample_rate: 44_100,
+        sample_rate: rate,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
@@ -31,6 +45,13 @@ fn loudness_only() -> AnalysisSettings {
         bpm_range: (Bpm(70.0), Bpm(180.0)),
         grid: false,
         model: Model::Small,
+    }
+}
+
+fn backup_only(backup: PathBuf) -> Roots {
+    Roots {
+        backup: Some(backup),
+        exports: None,
     }
 }
 
@@ -227,4 +248,17 @@ fn startup_recovery_rolls_back_an_interrupted_change_and_keeps_the_result() {
         none.recovery_status(),
         RecoveryStatus::Skipped { .. }
     ));
+}
+
+#[test]
+fn a_recovery_that_panics_still_opens_the_gate_for_exports() {
+    let gate = Arc::new(RecoveryGate::running());
+    let thread_gate = Arc::clone(&gate);
+    let joined = std::thread::spawn(move || {
+        run_recovery(&thread_gate, || panic!("recovery broke"));
+    })
+    .join();
+    assert!(joined.is_err(), "it panicked");
+    assert!(!gate.is_running(), "the gate is open");
+    assert!(matches!(gate.status(), RecoveryStatus::Failed { .. }));
 }
