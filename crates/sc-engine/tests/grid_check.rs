@@ -2,9 +2,9 @@
 //! tracks with an accented bar (the grid tests need the model files and are skipped without): a
 //! Prepare export checks itself and records the result in the event, the sidecar, the journal
 //! and the grid report; the user's own choices (a nudged bar 1, a typed tempo, another beat 1)
-//! pass; audio that lost 20 ms or a beat more than the export recorded fails, also when the user
-//! chose beat 1; a bar-1 kick 5 ms into a file is found there. Files without a grid are reported
-//! as not checked.
+//! pass; audio that lost 20 ms more than the export recorded is reported on a grid not confirmed,
+//! a whole beat more asks to check bar 1, and either is advisory on a confirmed grid; a bar-1
+//! kick 5 ms into a file is found there. Files without a grid are reported as not checked.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -20,7 +20,8 @@ use common::export::*;
 use sc_core::Seconds;
 use sc_core::analysis::{AnalysisRecord, Grid, GridEdit};
 use sc_core::export::{
-    BatchMode, ExportOutcome, GridCheck, GridCheckSkip, XmlGrid, XmlOnlyReason, XmlTrackInfo,
+    BatchMode, ExportOutcome, GridCheck, GridCheckSkip, GridDisagreement, XmlGrid, XmlOnlyReason,
+    XmlTrackInfo,
 };
 use sc_core::export::{ExportRecord, ExportedGrid};
 use sc_core::plan::Codec;
@@ -158,8 +159,21 @@ fn recheck(worse: &Path, exported: &ExportedGrid, edited: bool) -> GridCheck {
 
 fn offset(check: &GridCheck) -> f64 {
     match check {
-        GridCheck::Pass { offset_ms, .. } | GridCheck::OffBy { offset_ms, .. } => *offset_ms,
+        GridCheck::Pass { offset_ms, .. }
+        | GridCheck::OffBy { offset_ms, .. }
+        | GridCheck::CheckBar1 { offset_ms, .. }
+        | GridCheck::Advisory {
+            disagreement: GridDisagreement::OffBy { offset_ms, .. },
+        } => *offset_ms,
         other => panic!("no offset: {other:?}"),
+    }
+}
+
+/// `grid` as it would be had the user not confirmed it.
+fn unconfirmed(grid: &ExportedGrid) -> ExportedGrid {
+    ExportedGrid {
+        confirmed: false,
+        ..grid.clone()
     }
 }
 
@@ -235,7 +249,7 @@ fn done_report(path: &Path, done: &sc_engine::ProcessDone, export: &ExportRecord
 }
 
 #[test]
-fn extra_20_ms_trim_fails() {
+fn an_extra_20_ms_cut_is_reported_and_an_extra_beat_asks_to_check_bar_1() {
     if !common::have_models() {
         return;
     }
@@ -244,19 +258,42 @@ fn extra_20_ms_trim_fails() {
     let (done, export, _) = export_with(&lib, &path, |_| GridEdit::default());
     assert!(done.grid_check.passed(), "{:?}", done.grid_check);
     let grid = export.grid.expect("grid exported");
+    assert!(grid.confirmed, "{grid:?}");
     // The same audio with 20 ms (882 frames) more cut than the export recorded: bar 1 now sits
     // 20 ms before where the record puts it.
     let worse = lib.dir.path().join("worse.wav");
     cut_more(&path, 882, &worse);
-    let check = recheck(&worse, &grid, false);
-    assert!(matches!(check, GridCheck::OffBy { .. }), "{check:?}");
+    let check = recheck(&worse, &unconfirmed(&grid), false);
+    assert!(
+        matches!(check, GridCheck::OffBy { .. }) && check.failed(),
+        "{check:?}"
+    );
     assert!((offset(&check) + 20.0).abs() <= 2.0, "{check:?}");
     assert!(check.to_string().starts_with("off by -"), "{check}");
-    // A whole beat more: a beat off, modulo the bar.
+    // The user confirmed this grid by ear: the same reading is advisory, with the same number.
+    let check = recheck(&worse, &grid, false);
+    assert!(
+        matches!(check, GridCheck::Advisory { .. }) && !check.failed(),
+        "{check:?}"
+    );
+    assert!((offset(&check) + 20.0).abs() <= 2.0, "{check:?}");
+    // A whole beat more: a beat off, modulo the bar. On a grid not confirmed the check asks which
+    // beat bar 1 is.
     let beat = lib.dir.path().join("beat.wav");
     cut_more(&path, BEAT_FRAMES, &beat);
-    let check = recheck(&beat, &grid, false);
     let beat_ms = 60_000.0 / BPM;
+    let check = recheck(&beat, &unconfirmed(&grid), false);
+    assert!(
+        matches!(check, GridCheck::CheckBar1 { beats, .. } if beats.abs() == 1),
+        "{check:?}"
+    );
+    assert!((offset(&check).abs() - beat_ms).abs() <= 2.0, "{check:?}");
+    assert!(!check.failed(), "{check:?}");
+    let check = recheck(&beat, &grid, false);
+    assert!(
+        matches!(check, GridCheck::Advisory { .. }) && !check.failed(),
+        "{check:?}"
+    );
     assert!((offset(&check).abs() - beat_ms).abs() <= 2.0, "{check:?}");
 }
 
@@ -303,7 +340,7 @@ fn a_typed_tempo_passes() {
 }
 
 #[test]
-fn a_chosen_beat_1_passes_and_an_extra_beat_cut_still_fails() {
+fn a_chosen_beat_1_passes_and_an_extra_beat_cut_is_not_a_failure() {
     if !common::have_models() {
         return;
     }
@@ -323,8 +360,32 @@ fn a_chosen_beat_1_passes_and_an_extra_beat_cut_still_fails() {
     let beat = lib.dir.path().join("beat.wav");
     cut_more(&path, BEAT_FRAMES, &beat);
     let check = recheck(&beat, &grid, true);
-    assert!(matches!(check, GridCheck::OffBy { .. }), "{check:?}");
+    assert!(
+        matches!(check, GridCheck::Advisory { .. }) && !check.failed(),
+        "{check:?}"
+    );
     assert!((offset(&check).abs() - beat_ms).abs() <= 2.0, "{check:?}");
+    let check = recheck(&beat, &unconfirmed(&grid), true);
+    assert!(
+        matches!(check, GridCheck::CheckBar1 { .. }) && !check.failed(),
+        "{check:?}"
+    );
+    assert!((offset(&check).abs() - beat_ms).abs() <= 2.0, "{check:?}");
+}
+
+#[test]
+fn a_plain_click_track_confirmed_never_reads_as_failed() {
+    if !common::have_models() {
+        return;
+    }
+    // Clicks with little to tell its beats apart: which beat the detector calls bar 1 is close
+    // to a tie, and may differ across platforms, so this asserts only that nothing reads as
+    // failed on a grid the user confirmed.
+    let lib = Lib::new();
+    let path = click(&lib);
+    let (done, export, _) = export_with(&lib, &path, |_| GridEdit::default());
+    assert!(!done.grid_check.failed(), "{:?}", done.grid_check);
+    assert!(export.grid.expect("grid exported").confirmed);
 }
 
 #[test]

@@ -272,11 +272,11 @@ fn a_grid_check_this_version_cannot_read_reads_as_absent() {
         "schema": 2,
         "export": {"gridCheck": {"result": "somethingLater", "x": 1}, "other": 1}
     });
-    drop_unreadable_grid_check(&mut value);
+    drop_unreadable_grid_check::<GridCheck>(&mut value);
     assert_eq!(value["export"], serde_json::json!({"other": 1}));
     let mut readable = serde_json::json!({"export": {"gridCheck": {"result": "noGridFound"}}});
     let before = readable.clone();
-    drop_unreadable_grid_check(&mut readable);
+    drop_unreadable_grid_check::<GridCheck>(&mut readable);
     assert_eq!(readable, before);
     // A journal line with a later result still reads, without it.
     let line: super::super::journal::Line = serde_json::from_str(
@@ -284,4 +284,95 @@ fn a_grid_check_this_version_cannot_read_reads_as_absent() {
     )
     .expect("the line reads");
     assert_eq!(line.grid_check, None);
+}
+
+/// The result as a version without the advisory outcomes knew it, frozen here: what an older
+/// reader does with a sidecar this version writes.
+#[derive(Debug, serde::Deserialize)]
+#[serde(
+    tag = "result",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[allow(dead_code)]
+enum OlderGridCheck {
+    Pass { offset_ms: f64, bpm_diff: f64 },
+    OffBy { offset_ms: f64, bpm_diff: f64 },
+    BpmDiffers { bpm_diff: f64, found: f64 },
+    MeterDiffers { found: serde_json::Value },
+    NoGridFound,
+    NotChecked { reason: serde_json::Value },
+}
+
+#[test]
+fn an_older_reader_sees_the_new_outcomes_as_absent_and_keeps_the_rest_of_the_sidecar() {
+    use sc_core::Bpm;
+    use sc_core::analysis::Meter;
+    use sc_core::export::{GridCheck, GridDisagreement};
+    let new_outcomes = [
+        GridCheck::CheckBar1 {
+            offset_ms: 500.0,
+            bpm_diff: 0.0,
+            beats: 1,
+        },
+        GridCheck::Advisory {
+            disagreement: GridDisagreement::OffBy {
+                offset_ms: -416.7,
+                bpm_diff: 0.0,
+            },
+        },
+        GridCheck::Advisory {
+            disagreement: GridDisagreement::BpmDiffers {
+                bpm_diff: 0.006,
+                found: Bpm(120.006),
+            },
+        },
+        GridCheck::Advisory {
+            disagreement: GridDisagreement::MeterDiffers {
+                found: Meter::three_four(),
+                exported: Some(Meter::four_four()),
+            },
+        },
+        GridCheck::Advisory {
+            disagreement: GridDisagreement::NoGridFound,
+        },
+    ];
+    for check in new_outcomes {
+        let mut value = serde_json::json!({
+            "schema": 2,
+            "export": {"gridCheck": check, "other": 1}
+        });
+        // The older reader cannot read it, and drops it alone.
+        drop_unreadable_grid_check::<OlderGridCheck>(&mut value);
+        assert_eq!(
+            value["export"],
+            serde_json::json!({"other": 1}),
+            "{check:?}"
+        );
+        // This version keeps it.
+        let mut value = serde_json::json!({"export": {"gridCheck": check}});
+        drop_unreadable_grid_check::<GridCheck>(&mut value);
+        assert!(value["export"].get("gridCheck").is_some(), "{check:?}");
+    }
+    // What both versions know stays readable to the older reader.
+    for check in [
+        GridCheck::OffBy {
+            offset_ms: 20.0,
+            bpm_diff: 0.0,
+        },
+        GridCheck::BpmDiffers {
+            bpm_diff: 0.006,
+            found: Bpm(120.006),
+        },
+        // The exported meter is a field it ignores.
+        GridCheck::MeterDiffers {
+            found: Meter::three_four(),
+            exported: Some(Meter::four_four()),
+        },
+        GridCheck::NoGridFound,
+    ] {
+        let mut value = serde_json::json!({"export": {"gridCheck": check}});
+        drop_unreadable_grid_check::<OlderGridCheck>(&mut value);
+        assert!(value["export"].get("gridCheck").is_some(), "{check:?}");
+    }
 }

@@ -1,5 +1,5 @@
 //! GRID-CHECK: every exported file's grid compared with the written file's own analysis
-//! ([`sc_core::export::GridCheck`]).
+//! ([`sc_core::export::GridCheck`], whose docs say what the check proves and what it does not).
 //!
 //! The check is relative to the source's own analysis. When the export is planned, the
 //! detector's grid of the source (the analysed grid, or for a grid the user edited the same
@@ -8,17 +8,24 @@
 //! line at some offset from the exported bar 1, and a tempo; the export records both
 //! ([`ExportedGrid::detector_offset_ms`], [`ExportedGrid::detector_bpm`]). After the write, the
 //! output's fresh analysis (made anyway, to refresh its cache entry) is solved with the same
-//! choices and must give a bar line within 5 ms of the same place, modulo the bar, and a tempo
-//! within 0.005 BPM of the same tempo. A nudged bar 1, a chosen beat 1 and a typed tempo are
-//! thereby neutral, and a cut that moved the music by a beat still fails. For a grid the user did
-//! not edit the source's analysis is the exported grid, so the relative check is the absolute
-//! one: the output's bar line against the exported bar 1, its tempo against the exported tempo.
-//! Each refit takes well under 5 ms; nothing is analysed twice.
+//! choices and is expected to give a bar line within 5 ms of the same place, modulo the bar, and
+//! a tempo within 0.005 BPM of the same tempo. A nudged bar 1, a chosen beat 1 and a typed tempo
+//! are thereby neutral. For a grid the user did not edit the source's analysis is the exported
+//! grid, so the relative check is the absolute one: the output's bar line against the exported
+//! bar 1, its tempo against the exported tempo. Each refit takes well under 5 ms; nothing is
+//! analysed twice.
 //!
-//! Comparing modulo the bar means a cut off by a whole bar passes: the detector cannot tell
-//! which of two identical-looking downbeats is bar 1, so the check cannot either. The cut itself
-//! is pinned elsewhere: the write is refused unless the output has exactly the planned frame
-//! count (the source's minus the planned cut).
+//! A disagreement says the detector reads the written audio differently, not that the file is
+//! wrong: a gain change alone can move its bar 1 by a whole beat. So on a grid the user confirmed
+//! any disagreement is advisory; on another grid, bar lines a whole number of the meter's beats
+//! away ask the user to check bar 1, and the rest are reported with their numbers. None of them
+//! fails the export. The price is that on a confirmed grid a real misplacement would show only as
+//! an advisory with its numbers.
+//!
+//! Comparing modulo the bar means a cut off by a whole bar agrees: the detector cannot tell which
+//! of two identical-looking downbeats is bar 1, so the check cannot either. How much was cut is
+//! pinned elsewhere: the write is refused unless the output has exactly the planned frame count
+//! (the source's minus the planned cut). That compares counts, not where the music landed.
 
 use sc_core::Bpm;
 use sc_core::analysis::{AnalysisRecord, Grid, GridEdit};
@@ -124,11 +131,21 @@ pub fn with_detector(
     exported
 }
 
+/// How many beats `offset_ms` is from agreement, when it is within [`GRID_CHECK_OFFSET_MS`] of a
+/// whole number of them other than 0.
+fn whole_beats(offset_ms: f64, beat_ms: f64) -> Option<i32> {
+    let beats = (offset_ms / beat_ms).round();
+    let on_a_beat = (offset_ms - beats * beat_ms).abs() <= GRID_CHECK_OFFSET_MS + EPSILON;
+    // A nearest bar line is at most half a bar away, and a bar has at most 255 pulses.
+    #[allow(clippy::cast_possible_truncation)]
+    (on_a_beat && beats != 0.0).then_some(beats as i32)
+}
+
 /// Compares `found` (the written file's detector grid, `None` when its analysis found none) with
 /// what `exported` expects at `sample_rate`: the meter, then the tempo (the source detector's,
 /// else the exported one), then the bar line of `found` nearest the expected place (the exported
 /// bar 1 moved by the source detector's offset), modulo the bar. An exported meter whose beats
-/// differ in length is not checked.
+/// differ in length is not checked. On a grid the user confirmed, a disagreement is advisory.
 #[must_use]
 pub fn compare(exported: &ExportedGrid, found: Option<&Grid>, sample_rate: u32) -> GridCheck {
     if !exported.meter.is_regular() {
@@ -138,12 +155,23 @@ pub fn compare(exported: &ExportedGrid, found: Option<&Grid>, sample_rate: u32) 
             },
         };
     }
+    let measured = measure(exported, found, sample_rate);
+    if exported.confirmed {
+        measured.on_confirmed_grid()
+    } else {
+        measured
+    }
+}
+
+/// What [`compare`] measures, before it asks who chose the grid.
+fn measure(exported: &ExportedGrid, found: Option<&Grid>, sample_rate: u32) -> GridCheck {
     let Some(found) = found else {
         return GridCheck::NoGridFound;
     };
     if found.meter != exported.meter {
         return GridCheck::MeterDiffers {
             found: found.meter.clone(),
+            exported: Some(exported.meter.clone()),
         };
     }
     let expected_bpm = exported.detector_bpm.unwrap_or(exported.bpm_exact);
@@ -161,15 +189,26 @@ pub fn compare(exported: &ExportedGrid, found: Option<&Grid>, sample_rate: u32) 
         exported.bar1.0 as f64 + exported.detector_offset_ms.unwrap_or(0.0) * rate / 1000.0;
     let offset_ms = bar_offset(found, expected, sample_rate) * 1000.0 / rate;
     if offset_ms.abs() <= GRID_CHECK_OFFSET_MS + EPSILON {
-        GridCheck::Pass {
+        return GridCheck::Pass {
             offset_ms,
             bpm_diff,
-        }
-    } else {
-        GridCheck::OffBy {
+        };
+    }
+    // A beat of the meter is one of its groups: three pulses in 6/8, one in 4/4. A regular meter's
+    // groups are all the same length.
+    let pulses_per_beat = found.meter.grouping.first().map_or(1, |&g| g.max(1));
+    let beat_ms =
+        found.samples_per_beat(sample_rate.max(1)) * f64::from(pulses_per_beat) * 1000.0 / rate;
+    match whole_beats(offset_ms, beat_ms) {
+        Some(beats) => GridCheck::CheckBar1 {
             offset_ms,
             bpm_diff,
-        }
+            beats,
+        },
+        None => GridCheck::OffBy {
+            offset_ms,
+            bpm_diff,
+        },
     }
 }
 

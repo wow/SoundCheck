@@ -2,6 +2,7 @@
 //! At 44.1 kHz and 120 BPM a beat is 22,050 samples and a 4/4 bar 88,200; 5 ms is 220.5 samples.
 use super::*;
 use sc_core::analysis::{Alternatives, Confidence, Meter, Verdict};
+use sc_core::export::GridDisagreement;
 use sc_core::{Bpm, SampleIndex};
 
 const RATE: u32 = 44_100;
@@ -43,7 +44,12 @@ fn exported(meter: Meter) -> ExportedGrid {
 
 fn offset(check: &GridCheck) -> f64 {
     match check {
-        GridCheck::Pass { offset_ms, .. } | GridCheck::OffBy { offset_ms, .. } => *offset_ms,
+        GridCheck::Pass { offset_ms, .. }
+        | GridCheck::OffBy { offset_ms, .. }
+        | GridCheck::CheckBar1 { offset_ms, .. }
+        | GridCheck::Advisory {
+            disagreement: GridDisagreement::OffBy { offset_ms, .. },
+        } => *offset_ms,
         other => panic!("no offset: {other:?}"),
     }
 }
@@ -90,12 +96,233 @@ fn an_extra_20_ms_cut_is_off_by_20_ms() {
     assert_eq!(check.to_string(), "off by -20.0 ms (BPM +0.0000)");
 }
 
+/// [`exported`] as the user confirmed it by ear.
+fn confirmed(meter: Meter) -> ExportedGrid {
+    ExportedGrid {
+        confirmed: true,
+        ..exported(meter)
+    }
+}
+
+/// The advisory `check` holds, or a panic.
+fn advisory(check: &GridCheck) -> &GridDisagreement {
+    match check {
+        GridCheck::Advisory { disagreement } => disagreement,
+        other => panic!("not advisory: {other:?}"),
+    }
+}
+
+/// A 4/4 grid at 120 BPM whose bar line sits `samples` after the exported bar 1, modulo the bar.
+fn shifted_by(samples: i64) -> Grid {
+    let anchor = u64::try_from(220 + 88_200 + samples).expect("positive");
+    grid(anchor, 120.0, Meter::four_four())
+}
+
 #[test]
-fn another_beat_is_off_by_a_beat() {
+fn one_beat_off_on_an_unconfirmed_grid_asks_to_check_bar_1() {
     let e = exported(Meter::four_four());
-    let beat_2 = grid(220 + 22_050, 120.0, Meter::four_four());
-    let check = compare(&e, Some(&beat_2), RATE);
-    assert!((offset(&check) - 500.0).abs() < 1e-6, "{check:?}");
+    let check = compare(&e, Some(&shifted_by(22_050)), RATE);
+    assert_eq!(
+        check,
+        GridCheck::CheckBar1 {
+            offset_ms: 500.0,
+            bpm_diff: 0.0,
+            beats: 1,
+        }
+    );
+    assert!(!check.failed() && !check.passed());
+    let earlier = compare(&e, Some(&shifted_by(-22_050)), RATE);
+    assert!(
+        matches!(earlier, GridCheck::CheckBar1 { beats: -1, .. }),
+        "{earlier:?}"
+    );
+    assert!((offset(&earlier) + 500.0).abs() < 1e-6, "{earlier:?}");
+    // Half a bar away is the farthest a nearest bar line can be: two beats.
+    let two = compare(&e, Some(&shifted_by(44_100)), RATE);
+    assert!(
+        matches!(two, GridCheck::CheckBar1 { beats, .. } if beats.abs() == 2),
+        "{two:?}"
+    );
+}
+
+#[test]
+fn one_beat_off_on_a_confirmed_grid_is_advisory() {
+    let check = compare(
+        &confirmed(Meter::four_four()),
+        Some(&shifted_by(22_050)),
+        RATE,
+    );
+    assert_eq!(
+        advisory(&check),
+        &GridDisagreement::OffBy {
+            offset_ms: 500.0,
+            bpm_diff: 0.0,
+        }
+    );
+    assert!(!check.failed() && !check.passed());
+    assert_eq!(
+        check.to_string(),
+        "the analysis reads this differently; your confirmed grid was kept: \
+         off by +500.0 ms (BPM +0.0000)"
+    );
+}
+
+#[test]
+fn a_whole_beat_is_recognised_within_the_window_and_not_outside_it() {
+    let e = exported(Meter::four_four());
+    // 216 samples is 4.9 ms and 225 samples 5.1 ms, either side of a beat.
+    for (shift, on_a_beat) in [(216_i64, true), (-216, true), (225, false), (-225, false)] {
+        for beat in [22_050_i64, -22_050] {
+            let check = compare(&e, Some(&shifted_by(beat + shift)), RATE);
+            assert_eq!(
+                matches!(check, GridCheck::CheckBar1 { .. }),
+                on_a_beat,
+                "{beat} {shift}: {check:?}"
+            );
+            assert_eq!(check.failed(), !on_a_beat, "{beat} {shift}: {check:?}");
+            #[allow(clippy::cast_precision_loss)]
+            let expected = (beat + shift) as f64 * 1000.0 / f64::from(RATE);
+            assert!((offset(&check) - expected).abs() < 1e-6, "{check:?}");
+            // On a confirmed grid neither reads as a failure, and the number stays.
+            let on_confirmed = compare(
+                &confirmed(Meter::four_four()),
+                Some(&shifted_by(beat + shift)),
+                RATE,
+            );
+            assert!(
+                matches!(on_confirmed, GridCheck::Advisory { .. }) && !on_confirmed.failed(),
+                "{on_confirmed:?}"
+            );
+            assert!((offset(&on_confirmed) - expected).abs() < 1e-6);
+        }
+    }
+}
+
+#[test]
+fn a_beat_of_6_8_is_a_group_of_three_pulses() {
+    // At 120 pulses a minute a pulse is 22,050 samples (500 ms); a bar has two beats of three.
+    let meter = Meter::six_eight();
+    let bar: u64 = 6 * 22_050;
+    let at = |pulses: u64| {
+        compare(
+            &exported(meter.clone()),
+            Some(&grid(220 + bar + pulses * 22_050, 120.0, meter.clone())),
+            RATE,
+        )
+    };
+    // Half a bar off is one beat, not three.
+    let half_bar = at(3);
+    assert!(
+        matches!(half_bar, GridCheck::CheckBar1 { beats, .. } if beats.abs() == 1),
+        "{half_bar:?}"
+    );
+    assert!(half_bar.to_string().contains(" 1 beat "), "{half_bar}");
+    // An eighth note or two off is not on a beat, so it stays reported.
+    for pulses in [1, 2, 4, 5] {
+        let check = at(pulses);
+        assert!(
+            matches!(check, GridCheck::OffBy { .. }) && check.failed(),
+            "{pulses}: {check:?}"
+        );
+    }
+    // A bar elsewhere is the same downbeat.
+    assert!(at(6).passed(), "{:?}", at(6));
+}
+
+#[test]
+fn a_beat_of_3_4_is_one_pulse() {
+    let meter = Meter::three_four();
+    let check = compare(
+        &exported(meter.clone()),
+        Some(&grid(220 + 3 * 22_050 + 22_050, 120.0, meter)),
+        RATE,
+    );
+    assert!(
+        matches!(check, GridCheck::CheckBar1 { beats: 1, .. }),
+        "{check:?}"
+    );
+}
+
+#[test]
+fn just_over_5_ms_is_reported_unconfirmed_and_advisory_confirmed() {
+    // 225 samples at 44.1 kHz is 5.1 ms.
+    let found = shifted_by(225);
+    let check = compare(&exported(Meter::four_four()), Some(&found), RATE);
+    assert!(
+        matches!(check, GridCheck::OffBy { .. }) && check.failed(),
+        "{check:?}"
+    );
+    assert_eq!(check.to_string(), "off by +5.1 ms (BPM +0.0000)");
+    let check = compare(&confirmed(Meter::four_four()), Some(&found), RATE);
+    assert!(
+        matches!(advisory(&check), GridDisagreement::OffBy { .. }) && !check.failed(),
+        "{check:?}"
+    );
+    assert_eq!(
+        check.to_string(),
+        "the analysis reads this differently; your confirmed grid was kept: \
+         off by +5.1 ms (BPM +0.0000)"
+    );
+}
+
+#[test]
+fn a_tempo_0_006_bpm_off_is_reported_unconfirmed_and_advisory_confirmed() {
+    let found = grid(220, 120.006, Meter::four_four());
+    let check = compare(&exported(Meter::four_four()), Some(&found), RATE);
+    assert!(
+        matches!(check, GridCheck::BpmDiffers { .. }) && check.failed(),
+        "{check:?}"
+    );
+    let check = compare(&confirmed(Meter::four_four()), Some(&found), RATE);
+    assert!(
+        matches!(advisory(&check), GridDisagreement::BpmDiffers { bpm_diff, found }
+            if (bpm_diff - 0.006).abs() < 1e-9 && *found == Bpm(120.006)),
+        "{check:?}"
+    );
+    assert!(!check.failed());
+    // A whole beat at another tempo is another tempo first.
+    let beat_off = grid(220 + 22_050, 120.006, Meter::four_four());
+    let check = compare(&exported(Meter::four_four()), Some(&beat_off), RATE);
+    assert!(matches!(check, GridCheck::BpmDiffers { .. }), "{check:?}");
+}
+
+#[test]
+fn another_meter_or_no_grid_on_a_confirmed_grid_is_advisory() {
+    let e = confirmed(Meter::four_four());
+    let waltz = compare(&e, Some(&grid(220, 120.0, Meter::three_four())), RATE);
+    assert_eq!(
+        advisory(&waltz),
+        &GridDisagreement::MeterDiffers {
+            found: Meter::three_four(),
+            exported: Some(Meter::four_four()),
+        }
+    );
+    assert!(!waltz.failed());
+    let none = compare(&e, None, RATE);
+    assert_eq!(advisory(&none), &GridDisagreement::NoGridFound);
+    assert!(!none.failed());
+}
+
+#[test]
+fn a_confirmed_grid_that_agrees_still_passes_and_an_odd_meter_is_still_not_checked() {
+    let check = compare(
+        &confirmed(Meter::four_four()),
+        Some(&grid(220, 120.0, Meter::four_four())),
+        RATE,
+    );
+    assert!(check.passed(), "{check:?}");
+    let aksak = Meter::nine_eight_aksak();
+    let check = compare(
+        &confirmed(aksak.clone()),
+        Some(&grid(220, 120.0, Meter::four_four())),
+        RATE,
+    );
+    assert_eq!(
+        check,
+        GridCheck::NotChecked {
+            reason: GridCheckSkip::OddMeter { meter: aksak }
+        }
+    );
 }
 
 /// `exported` as the user edited it, with what the source's detector found: its bar line
@@ -146,18 +373,24 @@ fn the_users_own_choices_are_neutral() {
 }
 
 #[test]
-fn a_cut_one_beat_off_fails_even_when_the_user_chose_beat_1() {
-    // The audio lost a beat more than recorded: every detector line comes a beat (500 ms)
-    // earlier than expected, modulo the bar.
+fn a_beat_off_is_measured_from_where_the_source_detector_was_when_the_user_chose_beat_1() {
+    // Every detector line comes a beat (500 ms) earlier than expected, modulo the bar.
     let shifted = edited(exported(Meter::four_four()), -500.0, 120.0);
     let detector_at = 220 + 88_200 - 22_050 - 22_050;
-    let check = compare(
-        &shifted,
-        Some(&grid(detector_at, 120.0, Meter::four_four())),
-        RATE,
-    );
-    assert!(matches!(check, GridCheck::OffBy { .. }), "{check:?}");
+    let found = grid(detector_at, 120.0, Meter::four_four());
+    let check = compare(&shifted, Some(&found), RATE);
+    assert!(matches!(check, GridCheck::Advisory { .. }), "{check:?}");
     assert!((offset(&check) + 500.0).abs() < 1e-6, "{check:?}");
+    // The same edit, not confirmed.
+    let unconfirmed = ExportedGrid {
+        confirmed: false,
+        ..shifted
+    };
+    let check = compare(&unconfirmed, Some(&found), RATE);
+    assert!(
+        matches!(check, GridCheck::CheckBar1 { beats: -1, .. }),
+        "{check:?}"
+    );
     let plain = compare(
         &exported(Meter::four_four()),
         Some(&grid(220 + 88_200 - 22_050, 120.0, Meter::four_four())),
@@ -182,7 +415,8 @@ fn tempo_meter_and_missing_grids_fail() {
     assert_eq!(
         waltz,
         GridCheck::MeterDiffers {
-            found: Meter::three_four()
+            found: Meter::three_four(),
+            exported: Some(Meter::four_four()),
         }
     );
     assert_eq!(compare(&e, None, RATE), GridCheck::NoGridFound);

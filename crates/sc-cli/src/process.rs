@@ -610,3 +610,6 @@ fn doc<'a>(file: &Path, result: &'a FileResult) -> Option<ProcessDoc<'a>> {
         written,
     })
 }
+
+#[cfg(test)]
+mod tests;

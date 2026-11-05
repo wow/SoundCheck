@@ -6,8 +6,10 @@ mod common;
 
 use common::export::*;
 use sc_core::Error;
-use sc_core::analysis::GridEdit;
-use sc_core::export::{BatchMode, Cut};
+use sc_core::SampleIndex;
+use sc_core::analysis::{Grid, GridEdit};
+use sc_core::export::{BatchMode, Cut, GridCheck};
+use sc_engine::export::grid_check::compare;
 use sc_engine::{Analyzer, CancelToken, EngineEvent, apply_saved, save_edit};
 
 #[test]
@@ -194,6 +196,12 @@ fn an_unconfirmed_edit_keeps_its_overrides() {
     );
     let events = run(&batch(std::slice::from_ref(&path)), &s, &CancelToken::new());
     let done = done_of(&events);
+    let g = sidecar_of(&path)
+        .export
+        .expect("export")
+        .grid
+        .expect("grid");
+    assert!(g.edited && !g.confirmed, "{g:?}");
     assert!(
         done.edit_carried && !done.edit.confirmed,
         "{:?}",
@@ -206,6 +214,32 @@ fn an_unconfirmed_edit_keeps_its_overrides() {
     // The typed tempo stays typed; nothing else is pinned.
     assert_eq!(carried.edit, edit);
     assert_eq!(out.grid.as_ref().map(|g| g.bpm), Some(sc_core::Bpm(120.01)));
+    // Edited is not confirmed all the way to the check's result: whatever this file read, it is
+    // not advisory, and a reading a beat from what the record expects asks to check bar 1.
+    assert!(
+        !matches!(done.grid_check, GridCheck::Advisory { .. }),
+        "{:?}",
+        done.grid_check
+    );
+    let bpm = g.detector_bpm.unwrap_or(g.bpm_exact);
+    let beat = 60.0 * 44_100.0 / bpm.0;
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    let anchor =
+        (g.bar1.0 as f64 + g.detector_offset_ms.unwrap_or(0.0) * 44.1 + 5.0 * beat).round() as u64;
+    let a_beat_away = Grid {
+        anchor: SampleIndex(anchor),
+        bpm,
+        ..out.grid.clone().expect("grid")
+    };
+    let check = compare(&g, Some(&a_beat_away), 44_100);
+    assert!(
+        matches!(check, GridCheck::CheckBar1 { beats: 1, .. }),
+        "{check:?}"
+    );
 }
 
 #[test]

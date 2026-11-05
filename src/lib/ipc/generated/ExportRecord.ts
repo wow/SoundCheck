@@ -40,6 +40,7 @@ source: SourceMeasurements,
  * The check of the exported grid against the written file's own analysis, recorded after
  * the write; absent until it ran, and in records written before it existed.
  * Readers of sidecars drop a value they cannot read (a later version's result), so it
- * reads as absent (`sc_io`'s sidecar reader does).
+ * reads as absent, and read a disagreement an earlier version recorded on a confirmed grid
+ * as advisory (`sc_io`'s sidecar reader does both).
  */
 gridCheck?: GridCheck | null, };

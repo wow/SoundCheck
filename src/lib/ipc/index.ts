@@ -38,6 +38,7 @@ export type { FileInfo } from './generated/FileInfo';
 export type { ForgetResult } from './generated/ForgetResult';
 export type { GridCheck } from './generated/GridCheck';
 export type { GridCheckSkip } from './generated/GridCheckSkip';
+export type { GridDisagreement } from './generated/GridDisagreement';
 export type { GainPlan } from './generated/GainPlan';
 export type { IpcError } from './generated/IpcError';
 export type { IpcErrorKind } from './generated/IpcErrorKind';

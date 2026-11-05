@@ -13,7 +13,7 @@ use super::{FileEntry, JobStage};
 use crate::export::{Cut, ExportNotice, ExportSettings, ExportSkip, GridCheck, XmlOnlyReason};
 
 /// Most JSON bytes the notes of one [`ExportRow`] take; [`bounded_strings`] keeps them there.
-pub const MAX_ROW_NOTES_JSON_BYTES: usize = 800;
+pub const MAX_ROW_NOTES_JSON_BYTES: usize = 700;
 
 /// Most JSON bytes the stale tag labels of one [`ExportVerification`] take.
 pub const MAX_STALE_TAGS_JSON_BYTES: usize = 300;
