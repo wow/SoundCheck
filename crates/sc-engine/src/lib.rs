@@ -39,6 +39,6 @@ pub use export::{
 pub use session::{PlanningRow, RevertedAnalysis, Session, run_job};
 pub use track::{Track, TrackProgress};
 pub use txn::{
-    ApplyOptions, ApplyRequest, Place, RecoveryGate, RecoveryGuard, Tag, apply_file, check_inputs,
-    forget_cached, forget_recovered, recover_at_start, undo_file,
+    ApplyOptions, ApplyRequest, FolderNames, Place, RecoveryGate, RecoveryGuard, Tag, apply_file,
+    check_inputs, forget_cached, forget_recovered, recover_at_start, undo_file,
 };

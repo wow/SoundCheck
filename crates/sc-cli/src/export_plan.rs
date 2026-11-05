@@ -181,7 +181,9 @@ fn what_to_do(reason: ExportSkip) -> &'static str {
         ExportSkip::UnsupportedChannels { .. } => "export a stereo version first",
         ExportSkip::NothingToWrite { .. } => "run it again without --no-xml",
         ExportSkip::OtherFileInFolder => "move that file away, or export into another folder",
-        ExportSkip::CopyOfOtherTrack => "rename one of the two, or export into another folder",
+        ExportSkip::CopyOfOtherTrack | ExportSkip::SameNameInBatch => {
+            "rename one of the two, or export into another folder"
+        }
         ExportSkip::Unsupported { .. } => "convert it to AIFF, WAV or FLAC first",
         ExportSkip::Silent => "check that it is the right file",
         ExportSkip::NoGrid => "set the grid in the app, or export without --grid-only",

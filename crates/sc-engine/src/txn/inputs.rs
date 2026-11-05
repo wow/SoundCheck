@@ -3,8 +3,9 @@
 //! case or Unicode form on macOS), and two files a copy into one folder would write under the
 //! same name.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 use sc_core::Error;
 use sc_io::txn::{folder_folds_case, resolve_file};
@@ -50,6 +51,30 @@ pub fn check_inputs(files: &[PathBuf], place: &Place) -> Vec<Option<Error>> {
             None
         })
         .collect()
+}
+
+/// The names files of a batch take in one folder, as the folder's volume compares them.
+#[derive(Debug, Clone)]
+pub struct FolderNames {
+    folds: bool,
+    taken: BTreeSet<String>,
+}
+
+impl FolderNames {
+    /// No name taken yet in `dir`, which need not exist.
+    #[must_use]
+    pub fn new(dir: &Path) -> Self {
+        Self {
+            folds: folder_folds_case(dir),
+            taken: BTreeSet::new(),
+        }
+    }
+
+    /// Takes `name`; `false` when an earlier file took it.
+    pub fn claim(&mut self, name: &OsStr) -> bool {
+        self.taken
+            .insert(name_key(&name.to_string_lossy(), self.folds))
+    }
 }
 
 /// How the folder compares a name: `folds` when `Track.wav` and `track.wav` are one file there.

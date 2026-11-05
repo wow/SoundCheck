@@ -7,7 +7,7 @@ import { pipeline } from '@/features/pipeline/actions';
 import { Toggle } from '@/features/settings/controls';
 import { useLibrary } from '@/state/library';
 import { confirmExport, dismissExportConfirm, setExportAgain, useExportFlow } from './flow';
-import { countPreview, shortPath, summaryLine, type ExportCounts } from './summary';
+import { countPreview, isRefusal, shortPath, summaryLine, type ExportCounts } from './summary';
 
 const buttonClass =
   'inline-flex h-[30px] items-center whitespace-nowrap rounded-[7px] border px-3 text-[13px] font-medium disabled:cursor-default disabled:opacity-45';
@@ -52,7 +52,7 @@ function Particulars({ rows: planned }: { rows: ExportPreviewRow[] }) {
     const name = entry ? displayTitle(entry.info, entry.path) : `Track ${fileId}`;
     if (error) {
       const text = entry ? rowErrorCopy(error, entry.path) : sentence(error.message);
-      return [{ fileId, name, head: 'Cannot be planned', text }];
+      return [{ fileId, name, head: isRefusal(error) ? 'Refused' : 'Cannot be planned', text }];
     }
     if (!row) return [];
     const text = sentence(row.notes.join(' '));
@@ -133,8 +133,15 @@ export function ExportConfirm() {
             {counts.otherTrack > 0 && (
               <p className="text-[12px] text-fg-1">
                 {counts.otherTrack === 1
-                  ? '1 file skipped: a copy of another track already has its name.'
-                  : `${counts.otherTrack} files skipped: copies of other tracks already have their names.`}
+                  ? '1 file skipped: the folder has a copy of that name made from another file.'
+                  : `${counts.otherTrack} files skipped: the folder has copies of those names made from other files.`}
+              </p>
+            )}
+            {counts.sameName > 0 && (
+              <p className="text-[12px] text-fg-1">
+                {counts.sameName === 1
+                  ? '1 file skipped: a file earlier in this export takes its name.'
+                  : `${counts.sameName} files skipped: files earlier in this export take their names.`}
               </p>
             )}
             {preview.artefactsFolder && (

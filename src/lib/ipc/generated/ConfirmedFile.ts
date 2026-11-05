@@ -11,4 +11,9 @@ fileId: number,
 /**
  * Its identity then (length, modification time, inode): opaque, compared whole.
  */
-identity: string, };
+identity: string, 
+/**
+ * The plan skipped it because a file earlier in the batch takes its name: it stays skipped,
+ * whatever else drops out of the job.
+ */
+sameName: boolean, };

@@ -1,4 +1,4 @@
-import type { ExportRow, IpcError, RevertResult, RowUpdate, SessionRow, SessionSnapshot } from '@/lib/ipc';
+import type { ExportRow, IpcError, JobEvent, RevertResult, RowUpdate, SessionRow, SessionSnapshot } from '@/lib/ipc';
 import { analysed, analysis, artefacts, doneRow, entry, exportRow, plan, previewRow, verification } from '@/test/fixtures';
 import { counts, isLocked, staleIds, useLibrary, visibleIds, xmlRowIds } from './library';
 
@@ -245,15 +245,37 @@ describe('a file that changed', () => {
     expect(staleIds(lib(), [70, 180])).toEqual([]);
   });
 
-  it('with an export standing, its new analysis makes that export stale', () => {
+  it('takes whether the export stands from the engine, with the new analysis', () => {
     exporting(1);
     lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 1, row: doneRow(), inPlace: false, update: null });
     lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
     lib().markChanged([1]);
     expect(staleIds(lib(), [70, 180])).toEqual([1]);
     lib().queue([1], [70, 180]);
-    lib().applyEvent(analysed(1));
+    lib().applyEvent({ ...analysed(1), exportStale: true } as JobEvent);
     expect(row(1).exportStale).toBe(true);
+    expect(row(1).changedOnDisk).toBe(false);
+  });
+
+  it('a file changed with no word to the UI, then read again for another reason, shows stale at once', () => {
+    exporting(1);
+    lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 1, row: doneRow(), inPlace: false, update: null });
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
+    // Say a BPM range change: nothing marked the row changed, and only the engine saw the file differ.
+    expect(row(1).changedOnDisk).toBeFalsy();
+    lib().queue([1], [60, 120]);
+    lib().applyEvent({ ...analysed(1), exportStale: true } as JobEvent);
+    expect(row(1).exportStale).toBe(true);
+  });
+
+  it('a row marked changed whose file the engine read as it was is not stale', () => {
+    exporting(1);
+    lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 1, row: doneRow(), inPlace: false, update: null });
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
+    lib().markChanged([1]);
+    lib().queue([1], [70, 180]);
+    lib().applyEvent(analysed(1));
+    expect(row(1).exportStale).toBe(false);
     expect(row(1).changedOnDisk).toBe(false);
   });
 });

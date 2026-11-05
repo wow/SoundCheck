@@ -362,9 +362,13 @@ pub enum ExportSkip {
     /// The folder already holds a file of this name that is not a copy SoundCheck wrote, or that
     /// changed since: it is left as it is.
     OtherFileInFolder,
-    /// A copy of another track has this name in the folder, or would have it first in this batch:
-    /// it is left as it is, since it is not this file's to replace.
+    /// The folder holds a copy of this name that SoundCheck made from another file, or from this
+    /// one before it was moved and changed: it is left as it is, since it is not this file's to
+    /// replace.
     CopyOfOtherTrack,
+    /// A file earlier in this batch is written under this name, and nothing of that name need be
+    /// in the folder yet: the first in the list is written.
+    SameNameInBatch,
     /// An MP3 or AAC file, which only the rekordbox XML carries, without a grid: the XML would
     /// list nothing for it.
     XmlNoGrid {
@@ -401,7 +405,8 @@ pub enum SkipCure {
     Grid,
     /// Other export settings.
     Settings,
-    /// What is in the folder, which can change with no word to the app.
+    /// What is in the folder or goes along in the batch, which can change with no word to the
+    /// row.
     Disk,
 }
 
@@ -422,7 +427,9 @@ impl ExportSkip {
             Self::SeratoInPlaceCut { .. }
             | Self::SeratoUnknownInPlaceCut { .. }
             | Self::NothingToWrite { .. } => SkipCure::Settings,
-            Self::OtherFileInFolder | Self::CopyOfOtherTrack => SkipCure::Disk,
+            Self::OtherFileInFolder | Self::CopyOfOtherTrack | Self::SameNameInBatch => {
+                SkipCure::Disk
+            }
         }
     }
 }

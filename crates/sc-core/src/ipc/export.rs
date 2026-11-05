@@ -61,6 +61,9 @@ pub struct ConfirmedFile {
     pub file_id: u32,
     /// Its identity then (length, modification time, inode): opaque, compared whole.
     pub identity: String,
+    /// The plan skipped it because a file earlier in the batch takes its name: it stays skipped,
+    /// whatever else drops out of the job.
+    pub same_name: bool,
 }
 
 /// What a row's export was made with, so the row can say when the settings have moved on.
@@ -123,8 +126,8 @@ pub struct ExportPreviewRow {
     /// What its row would show: `stage` `processing` for a file that would be written, `skipped`
     /// for one that would not, with the plan's notes worded. `None` when it could not be planned.
     pub row: Option<Box<ExportRow>>,
-    /// Why it could not be planned: not analysed yet, changed since it was analysed, or its start
-    /// could not be read.
+    /// Why it could not be planned: not analysed yet, changed since it was analysed, its start
+    /// could not be read, or an export in place would refuse it.
     pub error: Option<IpcError>,
     /// The file as it was planned, to send back ([`ConfirmedFile`]); `None` without a plan.
     pub identity: Option<String>,

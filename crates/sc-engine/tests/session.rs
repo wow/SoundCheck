@@ -361,3 +361,52 @@ fn confirming_a_grid_does_not_mark_a_row_skipped_for_the_file_itself() {
     };
     assert!(!s.set_grid(id, None, edit).unwrap().export_stale);
 }
+
+/// An analysis of the file as `identity`, through the session; what the UI is told of its export.
+fn analysed_as(session: &Mutex<Session>, id: u32, identity: &str) -> bool {
+    let record = session.lock().unwrap().planning_row(id).unwrap().record;
+    let report = sc_engine::AnalyzeReport {
+        schema: sc_engine::REPORT_SCHEMA,
+        cache: sc_engine::CacheStatus::Bypassed,
+        record,
+        identity: Some(identity.to_owned()),
+        bpm_range: (sc_core::Bpm(60.0), sc_core::Bpm(120.0)),
+    };
+    let event = session.lock().unwrap().on_engine_event(
+        2,
+        sc_engine::EngineEvent::Analysed {
+            file_id: id,
+            report: Box::new(report),
+            edit: sc_engine::EditState::default(),
+        },
+    );
+    match event {
+        Some(sc_core::ipc::JobEvent::Analysed { export_stale, .. }) => export_stale,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn regression_the_analysed_event_says_what_the_session_says_of_the_export() {
+    use sc_core::export::ExportSkip;
+    let dir = tempfile::tempdir().unwrap();
+    let (session, id) = analysed_tone(dir.path());
+    let stored = |s: &Mutex<Session>| s.lock().unwrap().snapshot().rows[0].export_stale;
+    // No export stands: a changed file has nothing to make stale.
+    assert!(!analysed_as(&session, id, "first"));
+    assert!(!stored(&session));
+    session
+        .lock()
+        .unwrap()
+        .on_engine_event(2, skipped_event(id, ExportSkip::GridNeedsReview));
+
+    // Read again for another reason, the file as it was: the export stands.
+    assert!(!analysed_as(&session, id, "first"));
+    assert!(!stored(&session));
+    // The file changed on disk, and nothing in the UI knew: the event says so.
+    assert!(analysed_as(&session, id, "second"));
+    assert!(stored(&session));
+    // Read again, unchanged since: it stays stale until exported again.
+    assert!(analysed_as(&session, id, "second"));
+    assert!(stored(&session));
+}

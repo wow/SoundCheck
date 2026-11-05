@@ -95,6 +95,9 @@ export function hasExportWork(work: ExportWork): boolean {
 /** Bumped by every opening and closing, so an old answer lands nowhere. */
 let attempt = 0;
 
+/** The plan the engine is working on: it holds its files until it answers, whoever still wants it. */
+let running: Promise<unknown> = Promise.resolve();
+
 /** Opens the confirm step and plans the export, once what is being typed has reached the engine. */
 export async function openExportConfirm(): Promise<void> {
   const mine = ++attempt;
@@ -133,15 +136,23 @@ export async function openExportConfirm(): Promise<void> {
   await planRows(mine);
 }
 
-/** Asks the engine about exactly what would go out, so what the step says is what happens. */
+/**
+ * Asks the engine about exactly what would go out, so what the step says is what happens. One plan
+ * at a time: a superseded plan still holds its files, so the next waits for it, and the step stays
+ * in `planning` (Write disabled) until then. A plan superseded while waiting never starts.
+ */
 async function planRows(mine: number): Promise<void> {
   const { request, planned, differing, again } = useExportFlow.getState();
   if (!request) return;
   const fileIds = again ? planned : planned.filter((id) => !differing.includes(id));
   const asked = { ...request, fileIds };
   useExportFlow.setState({ phase: 'planning', preview: null, request: asked, error: null });
+  await running;
+  if (mine !== attempt) return;
   try {
-    const preview = fileIds.length > 0 ? await planExport(asked) : null;
+    const answer = fileIds.length > 0 ? planExport(asked) : null;
+    running = answer?.catch(() => undefined) ?? running;
+    const preview = await answer;
     if (mine !== attempt) return;
     useExportFlow.setState({ phase: 'ready', preview });
     const changed = (preview?.rows ?? [])
@@ -174,7 +185,11 @@ export function confirmExport(): void {
         fileIds,
         confirmed: {
           revision: preview.revision,
-          files: planned.map((r) => ({ fileId: r.fileId, identity: r.identity as string })),
+          files: planned.map((r) => ({
+            fileId: r.fileId,
+            identity: r.identity as string,
+            sameName: r.row?.action.type === 'skip' && r.row.action.reason.type === 'sameNameInBatch',
+          })),
         },
       },
       planned,

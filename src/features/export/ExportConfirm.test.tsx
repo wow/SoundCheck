@@ -89,8 +89,8 @@ describe('the confirm step', () => {
     expect(exported[0]?.confirmed).toEqual({
       revision: 7,
       files: [
-        { fileId: 1, identity: 'id-1' },
-        { fileId: 2, identity: 'id-2' },
+        { fileId: 1, identity: 'id-1', sameName: false },
+        { fileId: 2, identity: 'id-2', sameName: false },
       ],
     });
   });
@@ -202,7 +202,7 @@ describe('the confirm step', () => {
     );
     render(<ExportConfirm />);
     void openExportConfirm();
-    expect(await screen.findByText('1 file skipped: a copy of another track already has its name.')).toBeInTheDocument();
+    expect(await screen.findByText('1 file skipped: the folder has a copy of that name made from another file.')).toBeInTheDocument();
     expect(screen.getByText('1 file replaces your earlier copy.')).toBeInTheDocument();
     expect(screen.queryByText(/isn't SoundCheck's/)).toBeNull();
   });

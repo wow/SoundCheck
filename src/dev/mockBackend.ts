@@ -190,7 +190,7 @@ function runJob(jobId: number, fileIds: number[], channel: unknown) {
         } else {
           const a = analysisFor(s);
           analysed.set(fileId, a);
-          send(channel, { type: 'analysed', jobId, fileId, row: a, plan: planFor(s, a), revision });
+          send(channel, { type: 'analysed', jobId, fileId, row: a, plan: planFor(s, a), revision, exportStale: false });
         }
         done += 1;
         const secs = (Date.now() - started) / 1000;

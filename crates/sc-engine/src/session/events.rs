@@ -40,6 +40,7 @@ impl Session {
                     .map_or(sc_core::plan::Codec::Other, |t| t.entry.info.codec);
                 let row = Box::new(row_of(&record, edit, report.cache == CacheStatus::Hit));
                 let plan = decide(&record, codec, &self.settings, edit.confirmed);
+                let mut export_stale = false;
                 if let Some(t) = self.files.get_mut(&file_id) {
                     t.record = Some(record);
                     t.edit = edit;
@@ -49,6 +50,7 @@ impl Session {
                     }
                     t.identity = identity;
                     t.analysed_range = Some(bpm_range);
+                    export_stale = t.export_stale;
                 }
                 JobEvent::Analysed {
                     job_id,
@@ -56,6 +58,7 @@ impl Session {
                     row,
                     plan,
                     revision: self.revision,
+                    export_stale,
                 }
             }
             EngineEvent::Failed { file_id, error } => {

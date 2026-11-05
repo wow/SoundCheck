@@ -19,9 +19,9 @@ use sc_engine::export::{
     xml_out_refusal, xml_tracks,
 };
 use sc_engine::{
-    Analyzer, BatchFile, BatchRow, BatchSettings, CancelToken, EngineEvent, Place, ProcessSettings,
-    RevertedAnalysis, Task, XmlSelect, apply_saved, check_inputs, run_batch, undo_file,
-    write_artefacts,
+    Analyzer, BatchFile, BatchRow, BatchSettings, CancelToken, EngineEvent, FolderNames, Place,
+    ProcessSettings, RevertedAnalysis, Task, XmlSelect, apply_saved, check_inputs, run_batch,
+    undo_file, write_artefacts,
 };
 use sc_io::rekordbox::is_soundcheck_xml;
 
@@ -72,8 +72,8 @@ impl Shell {
     }
 
     /// The rows `file_ids` name, in that order, each named once however it is spelled on disk, and
-    /// the later of any files one folder would hold under one name: the first in the list is
-    /// written, and those are skipped.
+    /// the later of any files one folder would hold under one name, going by their paths alone (the
+    /// plans, which know a row that writes nothing takes no name, come after this).
     ///
     /// # Errors
     /// `invalidArgument` for no file or a row the session does not hold; `listedTwice` for a
@@ -166,9 +166,14 @@ impl Shell {
         let place = out_dir
             .as_ref()
             .map_or(Place::InPlace, |dir| Place::Folder(dir.clone()));
-        let (files, same_name) = self.distinct_rows(&req.file_ids, &place)?;
+        let (files, by_path) = self.distinct_rows(&req.file_ids, &place)?;
         let process = ProcessSettings {
-            same_name,
+            // The confirm step decided who takes a name, knowing which rows write; what the user
+            // was told it would skip stays skipped, whatever dropped out of the job since.
+            same_name: req.confirmed.as_ref().map_or(by_path, |c| {
+                let skipped = c.files.iter().filter(|f| f.same_name);
+                skipped.map(|f| f.file_id).collect()
+            }),
             ..process
         };
         if let Some(dir) = &out_dir {
@@ -189,17 +194,19 @@ impl Shell {
 
     /// What exporting `req.file_ids` would do with each, planned as the job plans them, with
     /// everything the job would refuse refused here too. Nothing is written. A file that cannot be
-    /// planned (not analysed yet, changed since it was analysed, its start unreadable) gets its
-    /// error on its row, as the job would report it on its row.
+    /// planned (not analysed yet, changed since it was analysed, its start unreadable, an export in
+    /// place refusing it) gets its error on its row, as the job would report it on its row. Of the
+    /// rows that plan a write, the first in the list takes a name and the later ones are skipped.
     ///
     /// # Errors
     /// What [`Self::export`] refuses; `busy` while one of the files is being exported or reverted.
     pub fn plan_export(&self, req: &ExportRequest) -> Result<ExportPreview, IpcError> {
         let (process, files, revision) = self.checked_export(req)?;
         let _hold = self.hold(&files, HoldKind::Reading)?;
+        let mut names = process.out_dir.as_deref().map(FolderNames::new);
         let rows = files
             .iter()
-            .map(|file| self.preview_of(file, &process, req))
+            .map(|file| self.preview_of(file, &process, req, names.as_mut()))
             .collect();
         let shown = |dir: &Path| dir.display().to_string();
         let artefacts_folder = if req.settings.xml {
@@ -234,6 +241,7 @@ impl Shell {
         file: &BatchFile,
         process: &ProcessSettings,
         req: &ExportRequest,
+        names: Option<&mut FolderNames>,
     ) -> ExportPreviewRow {
         let file_id = file.file_id;
         let failed = |error: Error| ExportPreviewRow {
@@ -269,9 +277,9 @@ impl Shell {
             settings: &req.settings,
             out_dir: process.out_dir.as_deref(),
             revertible: planning.revertible,
-            same_name: process.same_name.contains(&file_id),
+            backup_root: &process.backup_root,
         };
-        match preview_row(&input) {
+        match preview_row(&input, names) {
             Ok((mut row, replaces_copy)) => {
                 row.exported_with = Some(ExportedWith::new(
                     process.decide,

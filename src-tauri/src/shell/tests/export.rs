@@ -318,11 +318,11 @@ fn duplicate_paths_are_refused_before_anything_is_written() {
     assert_eq!(
         skipped.action,
         ExportAction::Skip {
-            reason: ExportSkip::CopyOfOtherTrack
+            reason: ExportSkip::SameNameInBatch
         }
     );
     assert!(
-        skipped.notes[0].contains("another track"),
+        skipped.notes[0].contains("earlier in this export"),
         "{:?}",
         skipped.notes
     );
@@ -337,7 +337,7 @@ fn duplicate_paths_are_refused_before_anything_is_written() {
     assert!(matches!(
         preview.rows[1].row.as_ref().unwrap().action,
         ExportAction::Skip {
-            reason: ExportSkip::CopyOfOtherTrack
+            reason: ExportSkip::SameNameInBatch
         }
     ));
     assert!(matches!(
