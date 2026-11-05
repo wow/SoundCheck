@@ -67,6 +67,34 @@ pub struct ArtefactArgs {
     no_xml: bool,
 }
 
+/// Where `process` writes: one of the two is required.
+#[derive(clap::Args)]
+pub struct DestinationArgs {
+    /// Write copies into this folder (created if needed) and leave the files as they are. A copy
+    /// an earlier export wrote there is replaced; any other file of that name is left alone.
+    #[arg(long, value_name = "DIR", conflicts_with = "in_place")]
+    out: Option<PathBuf>,
+    /// Replace the files themselves, after a backup. Either this or --out is required.
+    #[arg(long)]
+    in_place: bool,
+}
+
+impl DestinationArgs {
+    /// Says that `process` was not told where files go, in three lines, and exits: changing the
+    /// originals is never a default.
+    fn require(&self) {
+        if self.out.is_some() || self.in_place {
+            return;
+        }
+        eprintln!(
+            "process: nothing written\n  why: it was not told where the files go, and it changes \
+             the originals only when asked\n  what to do: pass --out <folder> to write copies, or \
+             --in-place to replace the files after a backup"
+        );
+        std::process::exit(crate::EXIT_FAILED);
+    }
+}
+
 /// The flags of `process`.
 #[derive(clap::Args)]
 pub struct ProcessArgs {
@@ -80,13 +108,8 @@ pub struct ProcessArgs {
     /// Change no audio: no gain and no cut; only tags carry the grid.
     #[arg(long)]
     grid_only: bool,
-    /// Write copies into this folder (created if needed) and leave the files as they are. A copy
-    /// an earlier export wrote there is replaced; any other file of that name is left alone.
-    #[arg(long, value_name = "DIR", conflicts_with = "in_place")]
-    out: Option<PathBuf>,
-    /// Replace the files themselves, after a backup. Either this or --out is required.
-    #[arg(long)]
-    in_place: bool,
+    #[command(flatten)]
+    destination: DestinationArgs,
     /// Output bits per sample.
     #[arg(long, value_enum, default_value = "source")]
     depth: DepthArg,
@@ -127,7 +150,7 @@ impl ProcessArgs {
         };
         let defaults = ExportSettings::new(mode);
         let settings = ExportSettings {
-            place: if self.out.is_some() {
+            place: if self.destination.out.is_some() {
                 ExportPlace::Folder
             } else {
                 ExportPlace::InPlace
@@ -176,36 +199,28 @@ struct Counts {
     failed: usize,
 }
 
-/// Says that `process` was not told where files go, in three lines, and exits: changing the
-/// originals is never a default.
-fn refuse_no_destination() -> ! {
-    eprintln!(
-        "process: nothing written\n  why: it was not told where the files go, and it changes the \
-         originals only when asked\n  what to do: pass --out <folder> to write copies, or \
-         --in-place to replace the files after a backup"
-    );
-    std::process::exit(crate::EXIT_FAILED);
-}
-
 /// `sc-cli process`: returns how many files failed.
 ///
 /// # Errors
 /// Invalid flags, an unreachable backup, cache or edits folder, or a failed write to stdout.
 pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
-    if args.out.is_none() && !args.in_place {
-        refuse_no_destination();
-    }
+    args.destination.require();
     let decide = decide_settings(args.mode, args.target, args.ceiling, &args.analysis);
     decide.validate()?;
     let export = args.export_settings()?;
     // Refused before anything is exported: the batch could not write its XML or report.
-    if export.xml && refuse_foreign_artefact(args.out.as_deref()) {
+    if export.xml && refuse_foreign_artefact(args.destination.out.as_deref()) {
         return Ok(1);
     }
     let root = args.backup.resolve()?;
     let cache = Cache::open(Cache::default_dir()?);
     let recovered = recover_first(&root, &cache);
-    let out_dir = args.out.as_ref().map(std::path::absolute).transpose()?;
+    let out_dir = args
+        .destination
+        .out
+        .as_ref()
+        .map(std::path::absolute)
+        .transpose()?;
     let place = out_dir.clone().map_or(Place::InPlace, Place::Folder);
     let action = if out_dir.is_some() {
         Action::Copy
@@ -285,7 +300,7 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
     }
     if export.xml && printer.rows.iter().any(|r| r.action != RowAction::Failed) {
         let now = std::time::SystemTime::now();
-        let dir = artefacts_dir(args.out.as_deref(), now)?;
+        let dir = artefacts_dir(args.destination.out.as_deref(), now)?;
         let playlist = sc_io::rekordbox::playlist_name(now);
         let written = write_artefacts(&dir, &printer.rows, XmlSelect::Batch, &playlist)?;
         print_artefacts(&written, &playlist, export.batch_mode, args.json);

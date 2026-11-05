@@ -332,7 +332,7 @@ fn an_entry_whose_file_is_gone_is_dropped() {
 fn a_track_this_batch_no_longer_lists_takes_its_old_entry_with_it() {
     let dir = tempfile::tempdir().expect("temp dir");
     let a = written_in(dir.path(), "a.wav");
-    write_artefacts(dir.path(), &[a.clone()], XmlSelect::Batch, "p").expect("written");
+    write_artefacts(dir.path(), std::slice::from_ref(&a), XmlSelect::Batch, "p").expect("written");
     let withheld = BatchRow {
         track: a.track.map(|t| RowTrack {
             grid: XmlGrid::NeedsReview,
@@ -342,7 +342,7 @@ fn a_track_this_batch_no_longer_lists_takes_its_old_entry_with_it() {
     };
     let written = write_artefacts(dir.path(), &[withheld], XmlSelect::Batch, "p").expect("written");
     assert_eq!(written.listed, 0);
-    assert!(listed(dir.path()).is_empty());
+    assert_eq!(listed(dir.path()), Vec::<String>::new());
 }
 
 #[test]
