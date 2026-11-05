@@ -153,7 +153,8 @@ pub(crate) fn read_xattr(path: &Path, name: &OsStr) -> std::io::Result<Option<Ve
     use rustix::io::Errno;
     // The size can grow between the two calls; try again a few times.
     for _ in 0..4 {
-        let size = match rustix::fs::lgetxattr(path, name, &mut [0_u8; 0][..]) {
+        // The size query: an empty buffer is not one (since rustix 1.1.6 it reads 0 bytes).
+        let size = match rustix::fs::lgetxattr_query(path, name) {
             Ok(n) => n,
             Err(e) if e == NO_ATTR => return Ok(None),
             Err(e) => return Err(e.into()),

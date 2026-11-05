@@ -51,7 +51,7 @@ fn listed(p: &Path) -> bool {
 
 /// The size `getxattr(2)` gives the resource fork of `p`.
 fn attribute_size(p: &Path) -> usize {
-    rustix::fs::getxattr(p, RESOURCE_FORK, &mut [0_u8; 0][..]).expect("resource fork attribute")
+    rustix::fs::getxattr_query(p, RESOURCE_FORK).expect("resource fork attribute")
 }
 
 /// A 70,000-byte resource fork (reads of it are cut to the buffer unless sized first).
