@@ -144,15 +144,14 @@ pub(crate) fn process_file(
     progress: Option<&Progress>,
     send: &dyn Fn(EngineEvent),
 ) -> Result<EngineEvent> {
-    check_confirmed(file_id, path, settings)?;
     // Hashed before the analysis, so the plan and the hash the write checks describe the same
     // bytes: a file that changes during the analysis is refused, not written from a stale plan.
     let mut source = ExportSource::read(path);
     if source.codec.is_writable() {
         source.blake3 = Some(sc_io::txn::hash_file(path)?.1);
-        // What was hashed is what was confirmed: from here on the hash guards it.
-        check_confirmed(file_id, path, settings)?;
     }
+    // After the hash: what was hashed is what was confirmed, and from here on the hash guards it.
+    check_confirmed(file_id, path, settings)?;
     let mut record = analyzer
         .analyze_with(path, &mut Timings::default(), progress)?
         .record;
