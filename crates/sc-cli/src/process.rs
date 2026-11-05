@@ -20,7 +20,8 @@ use sc_core::export::{
     BatchMode, DEFAULT_LEAD_MS, ExportOutcome, ExportPlan, ExportSettings, GridCheck,
     Place as ExportPlace, XmlOnlyReason, XmlTrackInfo,
 };
-use sc_core::plan::Codec;
+use sc_core::ipc::RecoveryStatus;
+use sc_core::plan::{Codec, DecideSettings};
 use sc_core::{Error, Seconds};
 use sc_engine::export::wording::UNVERIFIED;
 use sc_engine::{
@@ -199,6 +200,27 @@ struct Counts {
     failed: usize,
 }
 
+/// How the batch exports. No confirm step checks anything here: the command line is the
+/// confirmation.
+fn process_settings(
+    decide: DecideSettings,
+    export: ExportSettings,
+    out_dir: Option<PathBuf>,
+    backup_root: PathBuf,
+    recovered: RecoveryStatus,
+) -> anyhow::Result<ProcessSettings> {
+    Ok(ProcessSettings {
+        decide,
+        export,
+        out_dir,
+        backup_root,
+        edits: Some(EditStore::open(EditStore::default_dir()?)),
+        recovery: Arc::new(RecoveryGate::new(recovered)),
+        confirmed: None,
+        same_name: std::collections::BTreeSet::new(),
+    })
+}
+
 /// `sc-cli process`: returns how many files failed.
 ///
 /// # Errors
@@ -227,16 +249,7 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
     } else {
         Action::Change
     };
-    let process = ProcessSettings {
-        decide,
-        export,
-        out_dir,
-        backup_root: root,
-        edits: Some(EditStore::open(EditStore::default_dir()?)),
-        recovery: Arc::new(RecoveryGate::new(recovered)),
-        confirmed: None,
-        same_name: std::collections::BTreeSet::new(),
-    };
+    let process = process_settings(decide, export, out_dir, root, recovered)?;
     let settings = BatchSettings {
         analysis: crate::settings(&args.analysis),
         workers: args.jobs.unwrap_or_else(default_workers),
