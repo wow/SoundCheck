@@ -201,6 +201,9 @@ fn a_confirmed_start_fit_is_labelled_as_one() {
     assert!(row.ends_with(",yes,start"), "{row}");
 }
 
+/// How `process` opens a disagreement on a confirmed grid.
+const ADVISORY: &str = "the analysis reads this differently; your confirmed grid was written: ";
+
 /// A plain click track's bar 1 is close to a tie for the beat model, so whether the written file's
 /// analysis agrees may differ across platforms: only what it may not read as is asserted.
 #[test]
@@ -227,8 +230,6 @@ fn a_confirmed_grid_never_reads_as_a_failure_in_the_text_json_report_or_sidecar(
         }
         (sc_cli(dir.path(), &models, &args), out)
     };
-    const ADVISORY: &str = "the analysis reads this differently; your confirmed grid was written: ";
-
     let (text, out) = run("text", false);
     let line = text
         .lines()
