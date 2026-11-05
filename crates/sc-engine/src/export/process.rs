@@ -177,9 +177,7 @@ pub(crate) fn process_file(
         source: &source,
         grid_confirmed: edit.confirmed,
     };
-    let outcome = plan_export_snapped(path, &input, &settings.export)?;
-    let same_name = settings.same_name.contains(&file_id);
-    let plan = match gate_folder(outcome, path, settings.out_dir.as_deref(), same_name)?.0 {
+    let plan = match planned_outcome(file_id, path, &input, settings)? {
         ExportOutcome::Write { plan } => plan,
         outcome => {
             return Ok(EngineEvent::ExportSkipped {
@@ -255,6 +253,18 @@ pub(crate) fn process_file(
         file_id,
         done: Box::new(ProcessDone { xml, ..done }),
     })
+}
+
+/// What the plan says of the file, given what is at the path its copy would take.
+fn planned_outcome(
+    file_id: u32,
+    path: &Path,
+    input: &ExportInput<'_>,
+    settings: &ProcessSettings,
+) -> Result<ExportOutcome> {
+    let outcome = plan_export_snapped(path, input, &settings.export)?;
+    let same_name = settings.same_name.contains(&file_id);
+    Ok(gate_folder(outcome, path, settings.out_dir.as_deref(), same_name)?.0)
 }
 
 /// Refuses a file that is no longer the one the user confirmed.
