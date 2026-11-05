@@ -1,12 +1,13 @@
 import { Loader2 } from 'lucide-react';
 import { useSelector } from '@xstate/react';
 import { Modal } from '@/components/Modal';
-import { rowErrorCopy, sentence, type DecideSettings, type ExportPreviewRow, type ExportRequest } from '@/lib/ipc';
+import { errorCopy, rowErrorCopy, sentence, type DecideSettings, type ExportPreviewRow, type ExportRequest } from '@/lib/ipc';
 import { displayTitle, level } from '@/lib/format';
 import { pipeline } from '@/features/pipeline/actions';
 import { Toggle } from '@/features/settings/controls';
 import { useLibrary } from '@/state/library';
 import { confirmExport, dismissExportConfirm, setExportAgain, useExportFlow } from './flow';
+import { flacConfirmText, flacWrites } from './notices';
 import { countPreview, isRefusal, shortPath, summaryLine, type ExportCounts } from './summary';
 
 const buttonClass =
@@ -44,6 +45,14 @@ function CutWarning({ counts }: { counts: ExportCounts }) {
   );
 }
 
+/** Said once for the batch: rekordbox analyses a written FLAC again, before a CDJ plays it well. */
+function FlacNotice({ rows: planned }: { rows: ExportPreviewRow[] }) {
+  const count = useLibrary((l) => flacWrites(planned, l.rows));
+  const text = flacConfirmText(count);
+  if (!text) return null;
+  return <p className="text-[12px] leading-[1.45] text-fg-1">{text}</p>;
+}
+
 /** Each file the step has something to say about: why it is skipped, or what to know about it. */
 function Particulars({ rows: planned }: { rows: ExportPreviewRow[] }) {
   const rows = useLibrary((l) => l.rows);
@@ -51,7 +60,7 @@ function Particulars({ rows: planned }: { rows: ExportPreviewRow[] }) {
     const entry = rows[fileId]?.entry;
     const name = entry ? displayTitle(entry.info, entry.path) : `Track ${fileId}`;
     if (error) {
-      const text = entry ? rowErrorCopy(error, entry.path) : sentence(error.message);
+      const text = entry ? rowErrorCopy(error, entry.path, 'confirm') : errorCopy(error, 'confirm');
       return [{ fileId, name, head: isRefusal(error) ? 'Refused' : 'Cannot be planned', text }];
     }
     if (!row) return [];
@@ -116,6 +125,7 @@ export function ExportConfirm() {
             </p>
             <p className="text-[12px] text-fg-2">{settingsLine(request, preview.decide)}</p>
             <CutWarning counts={counts} />
+            <FlacNotice rows={rows} />
             {counts.replacing > 0 && (
               <p className="text-[12px] text-fg-1">
                 {counts.replacing === 1

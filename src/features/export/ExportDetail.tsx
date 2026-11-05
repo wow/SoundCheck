@@ -1,9 +1,11 @@
 import { useLibrary, isLocked, type Row } from '@/state/library';
-import { rowErrorCopy, sentence } from '@/lib/ipc';
+import { refusal, rowErrorCopy, sentence } from '@/lib/ipc';
 import { useRecovery } from '@/state/recovery';
 import { revert, revertBlock } from './actions';
 import { GridCheckBadge } from './ExportCells';
 import { gridCheckChip } from './gridCheck';
+import { isRefusal } from './summary';
+import { AUTOTAGS_TEXT, autotagsStale, FLAC_ROW_TEXT, flacWritten, rowStaleTagsText } from './notices';
 import { exportActionText, startText, verifiedText } from './text';
 import { exportDifference, useExportNow, type ExportNow } from './work';
 
@@ -16,11 +18,15 @@ function Told({ row, now }: { row: Row; now: ExportNow }) {
   const shown = row.export;
   const different = exportDifference(row, now)?.text;
   if (row.state === 'failed' && row.exportError) {
+    // What happened, why (the engine's words), what to do.
+    const { why, todo } = refusal(row.exportError, 'row', row.entry.path);
     return (
       <>
-        <Line tone="font-medium text-err">Failed</Line>
-        <Line tone="text-fg-1">{rowErrorCopy(row.exportError, row.entry.path)}</Line>
-        <Line>{row.changedOnDisk ? 'Press Analyse to read it again.' : 'The file was not changed.'}</Line>
+        <Line tone="font-medium text-err">
+          {`${isRefusal(row.exportError) ? 'Refused' : 'Failed'}${row.changedOnDisk ? '' : ': the file was not changed'}`}
+        </Line>
+        <Line tone="text-fg-1">{`${why}.`}</Line>
+        <Line>{todo}</Line>
       </>
     );
   }
@@ -54,6 +60,19 @@ function Told({ row, now }: { row: Row; now: ExportNow }) {
       {shown.notes.map((note) => (
         <Line key={note}>{note}</Line>
       ))}
+      <Notices row={row} />
+    </>
+  );
+}
+
+/** What to know about the written file in the DJ apps: tags at the old level, Serato, rekordbox. */
+function Notices({ row }: { row: Row }) {
+  const stale = rowStaleTagsText(row);
+  return (
+    <>
+      {stale && <Line tone="text-fg-1">{stale}</Line>}
+      {autotagsStale(row) && <Line tone="text-fg-1">{AUTOTAGS_TEXT}</Line>}
+      {flacWritten(row) && <Line tone="text-fg-1">{FLAC_ROW_TEXT}</Line>}
     </>
   );
 }

@@ -260,11 +260,14 @@ describe('the confirm step', () => {
 
   it('a refusal shows the real copy, not [object Object], with no way to export', async () => {
     add(1);
-    backend({ throws: { kind: 'busy', message: 'raw', fileId: 1 } });
+    const message = '/music/Track 1.flac is being reverted; try again when that has finished';
+    backend({ throws: { kind: 'busy', message, fileId: 1 } });
     render(<ExportConfirm />);
     void openExportConfirm();
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Another job is working on one of these files');
+    expect(alert).toHaveTextContent(
+      '/music/Track 1.flac is being reverted. Wait for it to finish, then press Export again.',
+    );
     expect(alert).not.toHaveTextContent('[object');
     expect(screen.queryByRole('button', { name: /^(Write|Export)/ })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));

@@ -110,7 +110,7 @@ describe('the Action column of an export', () => {
     }
   });
 
-  it('a failed export says why and that the file was not changed, in red', () => {
+  it('a failed export says why, in red, and what to do', () => {
     render(
       <ActionCell
         row={row({ state: 'failed', exportError: { kind: 'noSpace', message: 'no space left', fileId: 1 } })}
@@ -118,7 +118,7 @@ describe('the Action column of an export', () => {
       />,
     );
     expect(screen.getByText('No space left')).toHaveClass('text-err');
-    expect(screen.getByText('The file was not changed')).toBeInTheDocument();
+    expect(screen.getByText('Free some space on that drive, or choose another folder')).toBeInTheDocument();
   });
 
   it('a row an export in place would refuse says why, once the confirm step is closed', () => {
@@ -128,8 +128,8 @@ describe('the Action column of an export', () => {
     ]);
     const refused = useLibrary.getState().rows[1] as Row;
     render(<ActionCell row={{ ...refused, plan: plan(), analysis: analysis() }} bpmRange={[70, 180]} />);
-    expect(screen.getByText(/is a symbolic link/)).toBeInTheDocument();
-    expect(screen.getByText('The file was not changed')).toBeInTheDocument();
+    expect(screen.getByText('/music/Track 1.wav is a symbolic link')).toBeInTheDocument();
+    expect(screen.getByText('Fix that and export it again, or export it To folder')).toBeInTheDocument();
   });
 
   it('before any export it still shows the plan', () => {

@@ -1,5 +1,5 @@
 import { Ear } from 'lucide-react';
-import { rowErrorCopy, type Codec, type Confidence } from '@/lib/ipc';
+import { refusal, type Codec, type Confidence } from '@/lib/ipc';
 import {
   CODEC_LABEL,
   DJ_UNSAFE_TEXT,
@@ -13,7 +13,12 @@ import {
 import { cn } from '@/lib/utils';
 import type { Row, RowState } from '@/state/library';
 import { isShort } from '@/state/library';
-import { ExportActionCell, GridCheckBadge, RevertIcon, RevertSpinner } from '@/features/export/ExportCells';
+import {
+  ExportActionCell,
+  GridCheckBadge,
+  RevertIcon,
+  RevertSpinner,
+} from '@/features/export/ExportCells';
 import type { ExportNow } from '@/features/export/work';
 import { exportedAndRests, statusLabel } from './status';
 
@@ -340,13 +345,20 @@ export function ActionCell({
   now?: ExportNow;
 }) {
   if (row.state === 'failed') {
+    // Why, in the engine's words, then what to do; the details under the table say it whole.
+    const told = row.exportError ? refusal(row.exportError, 'row', row.entry.path) : null;
+    const todo = told
+      ? told.todo.replace(/\.$/, '')
+      : row.changedOnDisk
+        ? PRESS_ANALYSE
+        : 'The file was not changed';
     return (
       <div className="min-w-0">
-        <div className="truncate text-[12.5px] font-medium text-err" title={row.exportError?.message}>
-          {row.exportError ? rowErrorCopy(row.exportError, row.entry.path) : 'Could not export'}
+        <div className="truncate text-[12.5px] font-medium text-err" title={told?.why}>
+          {told?.why ?? 'Could not export'}
         </div>
-        <div className="truncate text-[12px] text-fg-2">
-          {row.changedOnDisk ? PRESS_ANALYSE : 'The file was not changed'}
+        <div className="truncate text-[12px] text-fg-2" title={todo}>
+          {todo}
         </div>
       </div>
     );

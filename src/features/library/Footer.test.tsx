@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { useLibrary } from '@/state/library';
 import { useRecovery } from '@/state/recovery';
-import { analysed, artefacts, doneRow, entry } from '@/test/fixtures';
+import { analysed, artefacts, doneRow, entry, verification } from '@/test/fixtures';
 import { Footer } from './Footer';
 
 const initial = useLibrary.getState();
@@ -62,6 +62,27 @@ describe('the footer', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Show in Finder' }));
     await waitFor(() => expect(shown).toHaveLength(1));
     expect(JSON.stringify(shown[0])).toContain('/exports/2026-11-05');
+  });
+
+  it('adds to the last export how many files kept loudness tags at the old level', () => {
+    lib().add([entry(1), entry(2)]);
+    lib().applyEvent(analysed(1));
+    lib().applyEvent(analysed(2));
+    lib().beginExport([1, 2], []);
+    const stale = doneRow({ verification: verification({ staleLoudnessTags: ['REPLAYGAIN_ALBUM_GAIN'] }) });
+    lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 1, row: stale, inPlace: false, update: null });
+    lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 2, row: doneRow(), inPlace: false, update: null });
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
+    render(<Footer cancelling={false} />);
+    expect(screen.getByText(/Last export: 2 exported .* · 1 keeps loudness tags at the old level/)).toBeInTheDocument();
+  });
+
+  it('says nothing of loudness tags when no file kept any', () => {
+    finished();
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
+    render(<Footer cancelling={false} />);
+    expect(screen.getByText(/Last export: 1 exported/)).toBeInTheDocument();
+    expect(screen.queryByText(/loudness tags/)).toBeNull();
   });
 
   it('says so plainly when the XML lists nothing, even though the file is there', () => {

@@ -163,7 +163,7 @@ async function planRows(mine: number): Promise<void> {
     const refused = rows.flatMap(({ fileId, error }) => (error && isRefusal(error) ? [{ fileId, error }] : []));
     if (refused.length > 0) useLibrary.getState().markRefused(refused);
   } catch (err) {
-    if (mine === attempt) useExportFlow.setState({ phase: 'failed', error: errorCopy(ipcErrorOf(err)) });
+    if (mine === attempt) useExportFlow.setState({ phase: 'failed', error: errorCopy(ipcErrorOf(err), 'confirm') });
   }
 }
 

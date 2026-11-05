@@ -23,7 +23,8 @@ import { startSettingsSync } from '@/features/settings/sync';
 import { ExportConfirm } from '@/features/export/ExportConfirm';
 import { ExportDetail } from '@/features/export/ExportDetail';
 import { useExportFlow } from '@/features/export/flow';
-import { startRecoveryWatch } from '@/state/recovery';
+import { startRecoveryWatch, useRecovery } from '@/state/recovery';
+import { RecoveryBanner } from '@/features/recovery/RecoveryBanner';
 
 
 /** Keys for the review loop: arrows move, N jumps to the next row that needs a look. */
@@ -34,6 +35,8 @@ function useKeys() {
       if (useTrack.getState().fileId !== null) return;
       // The confirm step, while open, has the keys to itself.
       if (useExportFlow.getState().phase !== 'closed') return;
+      // So does the step that asks before forgetting a change.
+      if (useRecovery.getState().asking) return;
       const panels = usePanels.getState();
       if (e.metaKey && e.key === ',') {
         // Settings: the drawer in a narrow window, else the rail's first control.
@@ -154,6 +157,7 @@ function Library() {
       <Toolbar busy={state !== 'idle'} />
       <div className="flex min-h-0 flex-1">
         <main className="flex min-w-0 flex-1 flex-col">
+          <RecoveryBanner />
           {notice && (
             <div role="alert" className="border-b border-[rgba(251,191,36,.45)] bg-[rgba(251,191,36,.10)] px-4 py-2 text-[12.5px] text-warn">
               {notice}
@@ -161,12 +165,12 @@ function Library() {
           )}
           {aborted && (
             <div role="alert" className="border-b border-[rgba(248,113,113,.45)] bg-[rgba(248,113,113,.10)] px-4 py-2 text-[12.5px] text-err">
-              {abortedKind === 'export' ? 'Export' : 'Analysis'} could not start: {errorCopy(aborted)}
+              {abortedKind === 'export' ? 'Export' : 'Analysis'} could not start: {errorCopy(aborted, 'banner')}
             </div>
           )}
           {artefactsFailed && (
             <div role="alert" className="border-b border-[rgba(251,191,36,.45)] bg-[rgba(251,191,36,.10)] px-4 py-2 text-[12.5px] text-warn">
-              The rekordbox XML and the grid report could not be written: {errorCopy(artefactsFailed)}
+              The rekordbox XML and the grid report could not be written: {errorCopy(artefactsFailed, 'banner')}
               {exported && ' The exported files are fine.'}
             </div>
           )}

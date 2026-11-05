@@ -3,10 +3,18 @@ import userEvent from '@testing-library/user-event';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { useLibrary, type Row } from '@/state/library';
 import { useRecovery } from '@/state/recovery';
-import { analysis, doneRow, entry, exportRow, plan } from '@/test/fixtures';
+import type { Codec } from '@/lib/ipc';
+import type { SeratoTag } from '@/lib/ipc/generated/SeratoTag';
+import { analysis, doneRow, entry, exportRow, plan, verification } from '@/test/fixtures';
 import { ExportDetail } from './ExportDetail';
 
 const initial = useLibrary.getState();
+
+/** Track 1 as another format, with Serato data when given. */
+function track(codec: Codec, seratoTags: SeratoTag[] = []) {
+  const e = entry(1);
+  return { ...e, path: `/music/Track 1.${codec}`, info: { ...e.info, codec, serato: seratoTags.length > 0, seratoTags } };
+}
 
 function show(overrides: Partial<Row>) {
   useLibrary.setState({
@@ -60,11 +68,66 @@ describe('the row details', () => {
     expect(screen.getByText(/no loudness to align/)).toBeInTheDocument();
   });
 
-  it('a failure: what, why, and that the file was not changed', () => {
-    show({ state: 'failed', exportError: { kind: 'busy', message: 'raw', fileId: 1 } });
+  it("a failure in three lines: what happened, why in the engine's words, what to do", () => {
+    const message = '/music/Track 1.flac is being reverted; try again when that has finished';
+    show({ state: 'failed', exportError: { kind: 'busy', message, fileId: 1 } });
+    expect(screen.getByText('Failed: the file was not changed')).toBeInTheDocument();
+    expect(screen.getByText('This file is being reverted.')).toBeInTheDocument();
+    expect(screen.getByText('Wait for it to finish, then try again.')).toBeInTheDocument();
+  });
+
+  it("a refusal says so, with the engine's own advice", () => {
+    const message =
+      '/music/Track 1.flac cannot be changed in place: it is locked (Finder: Get Info > Locked). Unlock it, or write a copy to a folder';
+    show({ state: 'failed', exportError: { kind: 'inPlaceRefused', message, fileId: 1 } });
+    expect(screen.getByText('Refused: the file was not changed')).toBeInTheDocument();
+    expect(screen.getByText(/^This file cannot be changed in place: it is locked/)).toBeInTheDocument();
+    expect(screen.getByText('Unlock it, or write a copy to a folder.')).toBeInTheDocument();
+  });
+
+  it('a file that changed on disk: what to do is Analyse', () => {
+    const message = '/music/Track 1.flac changed since you confirmed the export';
+    show({ state: 'failed', changedOnDisk: true, exportError: { kind: 'fileChanged', message, fileId: 1 } });
     expect(screen.getByText('Failed')).toBeInTheDocument();
-    expect(screen.getByText(/Another job is working/)).toBeInTheDocument();
-    expect(screen.getByText('The file was not changed.')).toBeInTheDocument();
+    expect(screen.getByText('Press Analyse to read it again.')).toBeInTheDocument();
+  });
+
+  it('names the loudness tags a gain left at the old level, in plain words', () => {
+    const stale = ['TXXX:REPLAYGAIN_ALBUM_GAIN', 'TXXX:REPLAYGAIN_ALBUM_PEAK', 'RVA2', 'COMM:iTunNORM'];
+    show({ entry: track('aiff'), export: doneRow({ verification: verification({ staleLoudnessTags: stale }) }) });
+    expect(
+      screen.getByText(
+        'Album ReplayGain, RVA2 and iTunNORM were left as they are; players that use them will play this file at the old level.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Serato's Auto Gain/)).toBeNull();
+    expect(screen.queryByText(/Analyse this FLAC/)).toBeNull();
+  });
+
+  it("says Serato's Auto Gain is out of date only when the file has Autotags and its gain changed", () => {
+    const tagged = track('wav', ['markers', 'autotags']);
+    const stale = verification({ staleLoudnessTags: ['GEOB:Serato Autotags'] });
+    const { unmount } = show({ entry: tagged, export: doneRow({ verification: stale }) });
+    expect(screen.getByText(/^Serato's Auto Gain for this file was measured at the old level/)).toBeInTheDocument();
+    // Said on a line of its own, not among the other tags.
+    expect(screen.queryByText(/were left as they are|was left as it is/)).toBeNull();
+    unmount();
+    // No gain change: the engine lists nothing, and nothing is said.
+    const same = doneRow({ action: { type: 'write', gainDb: 0, cut: { type: 'library' } } });
+    const { unmount: gone } = show({ entry: tagged, export: same });
+    expect(screen.queryByText(/Serato's Auto Gain/)).toBeNull();
+    gone();
+    // No Autotags in the file: nothing either.
+    show({ entry: track('wav', ['markers']), export: doneRow() });
+    expect(screen.queryByText(/Serato's Auto Gain/)).toBeNull();
+  });
+
+  it('tells a written FLAC to be analysed in rekordbox, and only once it is written', () => {
+    const { unmount } = show({ export: doneRow() });
+    expect(screen.getByText(/^Analyse this FLAC in rekordbox before playing it from a CDJ/)).toBeInTheDocument();
+    unmount();
+    show({ state: 'exportQueued', export: exportRow() });
+    expect(screen.queryByText(/Analyse this FLAC/)).toBeNull();
   });
 
   it('every note the row carries', () => {
@@ -83,7 +146,7 @@ describe('the row details', () => {
       revertible: true,
       revertError: { kind: 'fileChanged', message: 'it changed since it was written', fileId: 1 },
     });
-    expect(screen.getByText('It changed since it was written')).toHaveClass('text-err');
+    expect(screen.getByText(/^It changed since it was written\. Press Analyse/)).toHaveClass('text-err');
   });
 
   it('Revert is disabled for a file in the running batch, with why', () => {
