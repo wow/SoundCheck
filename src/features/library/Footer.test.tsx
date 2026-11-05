@@ -128,7 +128,7 @@ describe('the footer', () => {
       expect(await screen.findByText(/rekordbox XML lists 1 track/)).toBeInTheDocument();
     });
 
-    it('rests with no row to list, while a job runs and during recovery', () => {
+    it('rests with nothing analysed, while a job runs and during recovery', () => {
       const { rerender } = render(<Footer cancelling={false} />);
       expect(button()).toBeDisabled();
       lib().add([entry(1)]);

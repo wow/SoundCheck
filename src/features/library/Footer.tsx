@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { appVersion } from '@/lib/ipc';
 import { clock } from '@/lib/format';
 import { NARROW, useMediaQuery } from '@/lib/media';
-import { useLibrary, xmlOnlyIds } from '@/state/library';
+import { useLibrary, xmlRowIds } from '@/state/library';
 import { useRecovery } from '@/state/recovery';
 import { cancelRunningJob } from '@/features/pipeline/actions';
 import { reveal, writeXmlOfAnalysed } from '@/features/export/actions';
@@ -69,9 +69,9 @@ function ArtefactLinks({ narrow }: { narrow: boolean }) {
   );
 }
 
-/** Writes a rekordbox XML of the analysed rows that were not exported. */
+/** Writes a rekordbox XML of every analysed row, an exported one where its export is. */
 function XmlButton({ idle }: { idle: boolean }) {
-  const count = useLibrary((s) => xmlOnlyIds(s).length);
+  const count = useLibrary((s) => xmlRowIds(s).length);
   const writing = useLibrary((s) => s.xmlWriting);
   const recovering = useRecovery((r) => r.running);
   const reason = recovering
@@ -79,7 +79,7 @@ function XmlButton({ idle }: { idle: boolean }) {
     : !idle
       ? 'A job is running.'
       : count === 0
-        ? 'Every analysed track has its own export.'
+        ? 'No track is analysed yet.'
         : `Writes an XML of ${count} analysed ${count === 1 ? 'track' : 'tracks'}; the files are not touched.`;
   return (
     <button

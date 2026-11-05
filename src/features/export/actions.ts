@@ -3,7 +3,7 @@ import { displayTitle } from '@/lib/format';
 import { chooseExportFolder, revealInFinder } from '@/lib/platform';
 import { useTrack } from '@/features/grid/store';
 import { pipeline } from '@/features/pipeline/actions';
-import { isLocked, useLibrary, xmlOnlyIds, type Row } from '@/state/library';
+import { isLocked, useLibrary, xmlRowIds, type Row } from '@/state/library';
 import { useRecovery } from '@/state/recovery';
 import { useSettings } from '@/state/settings';
 
@@ -49,10 +49,10 @@ export async function revert(fileId: number): Promise<void> {
   }
 }
 
-/** Writes a rekordbox XML of the analysed rows with no export of their own. */
+/** Writes a rekordbox XML of every analysed row; an exported copy is listed where it is. */
 export async function writeXmlOfAnalysed(): Promise<void> {
   const lib = useLibrary.getState();
-  const fileIds = xmlOnlyIds(lib);
+  const fileIds = xmlRowIds(lib);
   if (fileIds.length === 0 || lib.xmlWriting) return;
   lib.setXmlWriting(true);
   try {

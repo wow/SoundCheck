@@ -2,7 +2,7 @@ import { restoreSession } from '@/lib/ipc';
 import { loadTrackList, saveTrackList } from '@/lib/persist';
 import { useLibrary } from '@/state/library';
 import { useSettings } from '@/state/settings';
-import { addPaths, pipeline } from '@/features/pipeline/actions';
+import { addPaths, analyseWritten, pipeline } from '@/features/pipeline/actions';
 
 /**
  * Brings the track list back when the app starts and keeps it saved afterwards.
@@ -30,6 +30,7 @@ export function startTrackListPersistence(): () => void {
       if (snapshot?.runningJobs?.length) pipeline().send({ type: 'WIND_DOWN' });
       if (snapshot?.rows?.length) {
         useLibrary.getState().restore(snapshot, useSettings.getState().bpmRange);
+        if (!snapshot.runningJobs?.length) analyseWritten();
       } else {
         const paths = await loadTrackList();
         if (stopped) return;

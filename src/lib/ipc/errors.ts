@@ -16,6 +16,11 @@ export function ipcErrorOf(err: unknown): IpcError {
   return { kind: 'internal', message, fileId: null };
 }
 
+/** Text from the engine, which words its reasons to follow a colon, as a sentence of its own. */
+export function sentence(text: string): string {
+  return text.charAt(0).toLocaleUpperCase() + text.slice(1);
+}
+
 /** The refusals that are about timing rather than the file, in words the user can act on. */
 export function errorCopy(error: IpcError): string {
   switch (error.kind) {
@@ -23,7 +28,9 @@ export function errorCopy(error: IpcError): string {
       return 'Another job is working on one of these files. Wait for it to finish, then try again.';
     case 'recoveryRunning':
       return 'SoundCheck is still checking for changes a crash interrupted. Nothing was changed; try again in a moment.';
+    case 'settingsChanged':
+      return 'The loudness settings changed after this summary, so nothing was written. Press Export again to see the new numbers.';
     default:
-      return error.message;
+      return sentence(error.message);
   }
 }

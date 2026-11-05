@@ -20,6 +20,7 @@ describe('rejected commands', () => {
     const recovery = errorCopy({ kind: 'recoveryRunning', message: 'raw', fileId: null });
     expect(recovery).toMatch(/crash interrupted/);
     expect(recovery).not.toContain('raw');
-    expect(errorCopy({ kind: 'corrupt', message: 'truncated', fileId: 1 })).toBe('truncated');
+    expect(errorCopy({ kind: 'corrupt', message: 'truncated', fileId: 1 })).toBe('Truncated');
+    expect(errorCopy({ kind: 'settingsChanged', message: 'raw', fileId: null })).toMatch(/Press Export again/);
   });
 });

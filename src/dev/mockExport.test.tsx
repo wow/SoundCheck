@@ -25,7 +25,6 @@ describe('the browser stand-in', () => {
       },
     );
     useRecovery.setState({ running: false });
-    useSettings.setState({ place: 'inPlace' });
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -40,14 +39,17 @@ describe('the browser stand-in', () => {
     await advance(10_000);
     expect(pipeline().getSnapshot().value).toBe('idle');
     // Its Serato track switched the batch to Library; the scenario wants the cuts.
-    await act(async () => useSettings.getState().setBatchMode('prepare', ['/Users/mock/Music/Crate']));
+    await act(async () => {
+      useSettings.getState().setBatchMode('prepare', ['/Users/mock/Music/Crate']);
+      useSettings.getState().setPlace('inPlace');
+    });
 
     fireEvent.click(screen.getByRole('button', { name: /^Export \d+/ }));
     await advance(500);
     const dialog = screen.getByRole('dialog', { name: 'Confirm export' });
     expect(within(dialog).getByText(/backups in ~\/Music\/SoundCheck Backups/)).toBeInTheDocument();
     expect(within(dialog).getByText(/Positions shift/)).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole('button', { name: /^Export \d+ files$/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Write \d+ files$/ }));
     await advance(0);
     expect(pipeline().getSnapshot().value).toBe('exporting');
     expect(screen.queryByRole('dialog')).toBeNull();

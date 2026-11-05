@@ -11,12 +11,15 @@ import {
   type JobEvent,
 } from '@/lib/ipc';
 import { ask } from '@/lib/platform';
-import { useLibrary, staleIds } from '@/state/library';
+import { staleIds, useLibrary, writtenWithoutAnalysis } from '@/state/library';
 import { analysisSettings, useSettings } from '@/state/settings';
 import { pipelineMachine } from './machine';
 
 /** How often a reloaded window reads the session while the job it cannot hear winds down. */
 export const WIND_DOWN_POLL_MS = 500;
+
+/** How long it waits for that job before saying something is wrong; a cancel takes seconds. */
+export const WIND_DOWN_LIMIT_MS = 60_000;
 
 /** The one pipeline of the app, wired to the engine and the library store. */
 function createPipeline(): Actor<typeof pipelineMachine> {
@@ -37,17 +40,25 @@ function createPipeline(): Actor<typeof pipelineMachine> {
   };
   const watchSession = async () => {
     const range = () => useSettings.getState().bpmRange;
+    const limit = Date.now() + WIND_DOWN_LIMIT_MS;
     try {
       for (;;) {
         await new Promise((go) => setTimeout(go, WIND_DOWN_POLL_MS));
         const snapshot = await restoreSession();
         useLibrary.getState().restore(snapshot, range());
         if (snapshot.runningJobs.length === 0) break;
+        if (Date.now() >= limit) {
+          useLibrary
+            .getState()
+            .setNotice('A job from before the window reloaded has not stopped. Restart SoundCheck to be sure of its files.');
+          break;
+        }
       }
     } catch {
       // The session cannot be read: nothing more can be known about that job.
     }
     useLibrary.getState().windDownEnded();
+    analyseWritten();
     actor.send({ type: 'WOUND_DOWN' });
   };
   const actor: Actor<typeof pipelineMachine> = createActor(
@@ -89,6 +100,13 @@ let singleton: Actor<typeof pipelineMachine> | null = null;
 export function pipeline(): Actor<typeof pipelineMachine> {
   singleton ??= createPipeline();
   return singleton;
+}
+
+/** Analyses rows written in place whose own analysis did not finish, as a live export does. */
+export function analyseWritten(): void {
+  const { rows, order } = useLibrary.getState();
+  const fileIds = writtenWithoutAnalysis(rows, order);
+  if (fileIds.length > 0) pipeline().send({ type: 'ANALYSE', fileIds });
 }
 
 /** Adds dropped or chosen paths and starts analysing the new rows. */

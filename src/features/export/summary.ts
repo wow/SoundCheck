@@ -1,4 +1,4 @@
-import type { Cut, ExportPreview, ExportRow } from '@/lib/ipc';
+import type { Cut, ExportPreview, ExportPreviewRow, ExportRow } from '@/lib/ipc';
 import { NEGLIGIBLE_DB } from './text';
 
 function cutSeconds(cut: Cut): number | null {
@@ -15,18 +15,24 @@ export interface ExportCounts {
   tagsOnly: number;
   xmlOnly: number;
   skipped: number;
-  /** Files that could not be planned; the job would fail them. */
+  /** Files that could not be planned; they are left out of the job. */
   unreadable: number;
   /** The longest cut, seconds. */
   longestCutS: number;
-  /** Files the job would write or the XML would carry. */
-  toDo: number;
+  /** Files that would be written. */
+  written: number;
+  /** Those replacing an earlier copy SoundCheck wrote in the folder. */
+  replacing: number;
+  /** Files skipped because the folder holds another file of that name. */
+  foreign: number;
+  /** Files only the XML carries that are new work: those going along again are not. */
+  xmlOnlyNew: number;
 }
 
 /** What the confirm step's numbers are made of: what the plan says will happen to each file. */
-export function countPreview(preview: ExportPreview): ExportCounts {
+export function countPreview(rows: ExportPreviewRow[], along: number[] = []): ExportCounts {
   const c: ExportCounts = {
-    files: preview.rows.length,
+    files: rows.length,
     gain: 0,
     cut: 0,
     gridOnly: 0,
@@ -35,9 +41,12 @@ export function countPreview(preview: ExportPreview): ExportCounts {
     skipped: 0,
     unreadable: 0,
     longestCutS: 0,
-    toDo: 0,
+    written: 0,
+    replacing: 0,
+    foreign: 0,
+    xmlOnlyNew: 0,
   };
-  for (const { row } of preview.rows) {
+  for (const { row, fileId, replacesCopy } of rows) {
     if (!row) {
       c.unreadable += 1;
       continue;
@@ -56,15 +65,17 @@ export function countPreview(preview: ExportPreview): ExportCounts {
           if (cut.type === 'gridOnly') c.gridOnly += 1;
           else c.tagsOnly += 1;
         }
-        c.toDo += 1;
+        c.written += 1;
+        if (replacesCopy) c.replacing += 1;
         break;
       }
       case 'xmlOnly':
         c.xmlOnly += 1;
-        c.toDo += 1;
+        if (!along.includes(fileId)) c.xmlOnlyNew += 1;
         break;
       case 'skip':
         c.skipped += 1;
+        if (row.action.reason.type === 'otherFileInFolder') c.foreign += 1;
         break;
     }
   }
@@ -77,8 +88,12 @@ export function shortPath(path: string): string {
 }
 
 /** `12 files: 9 gain, 3 cut, 2 skipped; backups in ~/Music/SoundCheck Backups`. */
-export function summaryLine(preview: ExportPreview, outDir: string | null): string {
-  const c = countPreview(preview);
+export function summaryLine(
+  rows: ExportPreviewRow[],
+  preview: Pick<ExportPreview, 'backupFolder'>,
+  outDir: string | null,
+): string {
+  const c = countPreview(rows);
   const parts = [
     c.gain > 0 && `${c.gain} gain`,
     c.cut > 0 && `${c.cut} cut`,

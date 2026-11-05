@@ -6,6 +6,7 @@ import { useRecovery } from '@/state/recovery';
 import { revert, revertBlock } from './actions';
 import { gridCheckChip, type ChipTone } from './gridCheck';
 import { exportActionText, verifiedText } from './text';
+import { exportDifference, type ExportNow } from './work';
 
 /** Tokens per tone. `neutral` must never read as a failure: no warning or error colour in it. */
 const CHIP: Record<ChipTone, string> = {
@@ -50,15 +51,27 @@ export function PositionsShiftBadge() {
  * The Action column of a row with an export. `stacked`: too narrow for gain and cut on one line,
  * so they take the two lines, and what was verified moves to the row's details.
  */
-export function ExportActionCell({ row, exportRow, stacked }: { row: Row; exportRow: ExportRow; stacked: boolean }) {
+export function ExportActionCell({
+  row,
+  exportRow,
+  stacked,
+  now,
+}: {
+  row: Row;
+  exportRow: ExportRow;
+  stacked: boolean;
+  now?: ExportNow;
+}) {
   const text = exportActionText(exportRow, row.entry.info.codec);
   const shift = exportRow.positionsShift;
   const verified = exportRow.verification ? verifiedText(exportRow.verification) : null;
-  const second = verified ?? text.detail;
+  // Said first: the row's other numbers already are those of the settings now.
+  const different = now ? exportDifference(row, now)?.text : undefined;
+  const second = different ?? verified ?? text.detail;
   const main = text.main ?? [text.gain, text.cut].filter(Boolean).join(' · ');
   const twoChanges = text.gain !== null && text.cut !== null;
   const line = 'truncate font-mono text-xs font-medium';
-  if (twoChanges && stacked) {
+  if (twoChanges && stacked && !different) {
     return (
       <div className="min-w-0" title={[main, second].filter(Boolean).join(' · ')}>
         <div className={line}>{text.gain}</div>

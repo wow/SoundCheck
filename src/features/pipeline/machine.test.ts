@@ -38,6 +38,7 @@ function exportEvent(fileIds: number[]): PipelineEvent {
           leadMs: 5,
         },
         outDir: null,
+        confirmed: null,
       },
       planned: [],
     },

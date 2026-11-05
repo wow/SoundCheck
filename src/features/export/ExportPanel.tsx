@@ -4,13 +4,14 @@ import type { BatchMode, Place } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
 import { pipeline } from '@/features/pipeline/actions';
 import { Section, Segmented, Toggle } from '@/features/settings/controls';
-import { exportableIds, useLibrary, type Row } from '@/state/library';
+import { useLibrary, type Row } from '@/state/library';
 import { useRecovery } from '@/state/recovery';
 import { EXPORT_DEPTHS, useSettings } from '@/state/settings';
 import { pickOutDir } from './actions';
 import { exportBlock, openExportConfirm, useExportFlow } from './flow';
 import { batchChoice, type BatchChoice } from './mode';
 import { shortPath } from './summary';
+import { useExportWork, type ExportWork } from './work';
 
 const MODES: { id: BatchMode; label: string }[] = [
   { id: 'prepare', label: 'Prepare' },
@@ -130,48 +131,72 @@ export function ExportSection() {
   );
 }
 
-/** The Export button, kept in view at the bottom of the rail, with what stands in its way. */
-export function ExportAction() {
+/** What stands in Export's way, and how many rows it would write. */
+function useExportGate(): { block: string | null; work: ExportWork; opening: boolean; note: string } {
   const running = useSelector(pipeline(), (p) => p.value !== 'idle');
-  const exportable = useLibrary((l) => exportableIds(l).length);
+  const work = useExportWork();
   const hasRows = useLibrary((l) => l.order.length > 0);
-  const anyExported = useLibrary((l) => l.order.some((id) => l.rows[id]?.export?.stage === 'done'));
-  const reverting = useLibrary((l) => l.order.some((id) => l.rows[id]?.reverting));
   const xmlWriting = useLibrary((l) => l.xmlWriting);
   const recoveryRunning = useRecovery((r) => r.running);
-  const planning = useExportFlow((f) => f.phase !== 'closed');
+  const opening = useExportFlow((f) => f.phase !== 'closed');
   const place = useSettings((s) => s.place);
   const outDir = useSettings((s) => s.outDir);
   const block = exportBlock({
-    exportable,
+    work,
     hasRows,
-    anyExported,
     busy: running,
-    reverting,
     xmlWriting,
     recoveryRunning,
     needsFolder: place === 'folder' && !outDir,
   });
+  const n = work.differing.length;
+  const note =
+    n > 0
+      ? `${n} exported with other settings stay as they are unless you ask.`
+      : place === 'inPlace'
+        ? 'Originals go to the backup folder; Revert puts them back.'
+        : 'Originals untouched; copies go to the folder.';
+  return { block, work, opening, note };
+}
+
+function exportCan(work: ExportWork): boolean {
+  return work.fresh.length > 0 || work.differing.length > 0;
+}
+
+/** The Export button, kept in view at the bottom of the rail, with what stands in its way. */
+export function ExportAction() {
+  const { block, work, opening, note } = useExportGate();
   return (
     <div className="sticky bottom-0 -mx-[18px] -mb-4 flex flex-col gap-1.5 border-t border-line bg-bg-1 px-[18px] py-3">
       <button
         type="button"
         data-export-button
-        disabled={block !== null || exportable === 0 || planning}
+        disabled={block !== null || !exportCan(work) || opening}
         onClick={() => void openExportConfirm()}
         className={cn(
           'inline-flex h-[34px] w-full items-center justify-center rounded-[7px] bg-accent text-[13px] font-semibold text-bg-0',
           'disabled:cursor-default disabled:opacity-45',
         )}
       >
-        Export{exportable > 0 ? ` ${exportable}` : ''}
+        Export{work.fresh.length > 0 ? ` ${work.fresh.length}` : ''}
       </button>
-      <p className="text-[11.5px] leading-[1.4] text-fg-2">
-        {block ??
-          (place === 'inPlace'
-            ? 'Originals go to the backup folder; Revert puts them back.'
-            : 'Originals untouched; copies go to the folder.')}
-      </p>
+      <p className="text-[11.5px] leading-[1.4] text-fg-2">{block ?? note}</p>
     </div>
+  );
+}
+
+/** The same button in the top bar of a narrow window, where the rail is behind a drawer. */
+export function ExportBarButton({ className }: { className: string }) {
+  const { block, work, opening, note } = useExportGate();
+  return (
+    <button
+      type="button"
+      disabled={block !== null || !exportCan(work) || opening}
+      title={block ?? note}
+      onClick={() => void openExportConfirm()}
+      className={className}
+    >
+      Export
+    </button>
   );
 }

@@ -86,13 +86,14 @@ export interface LastBatch {
 }
 
 export interface LastExport {
+  /** The job it was, when the engine said. */
+  jobId?: number;
   written: number;
   xmlOnly: number;
   skipped: number;
   failed: number;
   cancelled: boolean;
-  /** Time it took; unknown for one a reloaded window only found the end of. */
-  seconds: number | null;
+  seconds: number;
   /** The window reloaded during it, which stopped it. */
   stoppedByReload?: boolean;
 }
@@ -123,6 +124,8 @@ export interface LibraryState {
   xmlWriting: boolean;
   /** The files of the running export, or of a job a reloaded window can only wait for. */
   locked: Locked;
+  /** The jobs a reloaded window found running. */
+  windingJobs: number[];
   /** Why the last job could not start, until the next one does. */
   aborted: IpcError | null;
   abortedKind: JobKind;

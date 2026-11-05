@@ -101,4 +101,25 @@ describe('the toolbar in a narrow window', () => {
     expect(screen.queryByRole('menu')).toBeNull();
     expect(screen.getByRole('button', { name: 'Add' })).toHaveFocus();
   });
+
+  it('shows Export in the top bar, since the rail is behind a drawer', () => {
+    render(<App />);
+    expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument();
+    expect(screen.queryByRole('complementary')).toBeNull();
+  });
+
+  it('that button goes by the same rules as the rail\'s', () => {
+    act(() => useLibrary.getState().add([entry(1)]));
+    render(<App />);
+    const button = screen.getByRole('button', { name: 'Export' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', expect.stringMatching(/Choose a folder/));
+  });
+
+  it('shows no second Export beside the rail in a wide window', () => {
+    vi.unstubAllGlobals();
+    useLibrary.getState().add([entry(1)]);
+    render(<Toolbar busy={false} />);
+    expect(screen.queryByRole('button', { name: 'Export' })).toBeNull();
+  });
 });

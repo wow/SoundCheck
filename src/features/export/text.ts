@@ -1,4 +1,5 @@
 import type { Codec, Cut, ExportArtefacts, ExportRow, ExportVerification } from '@/lib/ipc';
+import { sentence } from '@/lib/ipc';
 import { CODEC_LABEL, clock, signed } from '@/lib/format';
 import type { LastExport } from '@/state/library';
 
@@ -53,7 +54,7 @@ export interface ExportActionText {
 
 /** The Action column of a row with an export. */
 export function exportActionText(row: ExportRow, codec: Codec): ExportActionText {
-  const note = row.notes[0] ?? null;
+  const note = row.notes[0] ? sentence(row.notes[0]) : null;
   const none = { gain: null, cut: null };
   switch (row.action.type) {
     case 'xmlOnly':
@@ -84,7 +85,7 @@ export function lastExportText(last: LastExport): string {
     last.skipped > 0 && `${last.skipped} skipped`,
     last.failed > 0 && `${last.failed} failed`,
   ].filter(Boolean);
-  const time = last.seconds !== null ? ` in ${clock(last.seconds * 1000)}` : '';
+  const time = ` in ${clock(last.seconds * 1000)}`;
   const end = last.stoppedByReload
     ? ' (stopped: the window reloaded)'
     : last.cancelled

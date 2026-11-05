@@ -25,7 +25,7 @@ function doneRowOn(id: number) {
 
 const result: RevertResult = {
   entry: entry(1),
-  update: { fileId: 1, row: analysis(), plan: plan(), revision: 0 },
+  update: { fileId: 1, row: analysis(), plan: plan(), revision: 0, exportStale: false },
   backup: '/backups/a',
   earlierChanges: 0,
   notes: [],
@@ -121,7 +121,7 @@ describe('opening a row', () => {
 });
 
 describe('the rekordbox XML button', () => {
-  it('lists the analysed rows with no export, and shows what it wrote', async () => {
+  it('lists every analysed row, exported ones too, and shows what it wrote', async () => {
     doneRowOn(1);
     lib().add([entry(2), entry(3)]);
     lib().applyEvent(analysed(2));
@@ -134,7 +134,7 @@ describe('the rekordbox XML button', () => {
       return undefined;
     });
     await writeXmlOfAnalysed();
-    expect(asked).toEqual({ fileIds: [2], out: null });
+    expect(asked).toEqual({ fileIds: [1, 2], out: null });
     expect(lib()).toMatchObject({ xmlWriting: false, xmlLeftOut: 1 });
     expect(lib().artefacts?.listed).toBe(0);
   });
@@ -162,7 +162,7 @@ describe('showing a file in the Finder', () => {
       return undefined;
     });
     reveal('/exports/a.xml');
-    await vi.waitFor(() => expect(lib().notice).toMatch(/Could not show it in the Finder: gone/));
+    await vi.waitFor(() => expect(lib().notice).toMatch(/Could not show it in the Finder: Gone/));
     expect(shown).toHaveLength(1);
   });
 });

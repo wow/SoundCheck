@@ -152,6 +152,7 @@ export function rowFromSession(r: SessionRow, revision: number, range: [number, 
     state: 'cancelled',
     progress: analysed ? 1 : 0,
     revertible: r.revertible,
+    exportStale: r.exportStale,
     ...(standing ? { export: standing } : {}),
     ...(analysed
       ? { analysis: r.row ?? undefined, plan: r.plan ?? undefined, planRevision: revision, analysedRange: range }
@@ -160,8 +161,17 @@ export function rowFromSession(r: SessionRow, revision: number, range: [number, 
   const inFlight = standing?.stage === 'processing' || standing?.stage === 'writing';
   if (inFlight && live) return { ...row, state: standing.stage === 'writing' ? 'checking' : 'writing' };
   if (inFlight) return { ...row, state: restingState(row.plan, undefined), export: undefined };
-  // A file with no analysis is analysed again whatever its export says.
-  return analysed ? { ...row, state: restingState(row.plan, standing) } : row;
+  if (analysed) return { ...row, state: restingState(row.plan, standing) };
+  // Written in place and its analysis gone with what it described: it waits for a new one.
+  return standing?.stage === 'done' ? { ...row, state: 'queued' } : row;
+}
+
+/** Rows written in place whose own analysis did not finish: they wait for a new one. */
+export function writtenWithoutAnalysis(rows: Record<number, Row>, order: number[]): number[] {
+  return order.filter((id) => {
+    const row = rows[id];
+    return row?.state === 'queued' && row.export?.stage === 'done' && !row.analysis;
+  });
 }
 
 /** A row whose original is back. Without an update it could not be analysed: what it shows is gone. */
@@ -214,10 +224,10 @@ export function newJob(kind: JobKind, fileIds: number[]): JobProgress {
 }
 
 /** What became of the rows of an export. */
-export function summarise(rows: Row[], cancelled: boolean, seconds: number | null): LastExport {
+export function summarise(rows: Row[], cancelled: boolean, seconds: number): LastExport {
   const stage = (r: Row) => r.export?.stage;
   return {
-    written: rows.filter((r) => stage(r) === 'done' || r.state === 'done').length,
+    written: rows.filter((r) => stage(r) === 'done').length,
     xmlOnly: rows.filter((r) => r.export?.action.type === 'xmlOnly').length,
     skipped: rows.filter((r) => stage(r) === 'skipped' && r.export?.action.type !== 'xmlOnly').length,
     failed: rows.filter((r) => r.state === 'failed').length,

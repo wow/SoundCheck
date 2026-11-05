@@ -22,7 +22,7 @@ describe('export commands', () => {
       calls.push([cmd, args as Record<string, unknown>]);
       return cmd === 'export' ? 7 : {};
     });
-    const req = { fileIds: [1, 2], settings, outDir: null };
+    const req = { fileIds: [1, 2], settings, outDir: null, confirmed: null };
     await expect(exportFiles(req, () => undefined)).resolves.toBe(7);
     await revertFile(3);
     await writeRekordboxXml({ fileIds: [1], out: null });
@@ -41,6 +41,6 @@ describe('export commands', () => {
     mockIPC(() => {
       throw refusal;
     });
-    await expect(exportFiles({ fileIds: [1], settings, outDir: null }, () => undefined)).rejects.toEqual(refusal);
+    await expect(exportFiles({ fileIds: [1], settings, outDir: null, confirmed: null }, () => undefined)).rejects.toEqual(refusal);
   });
 });

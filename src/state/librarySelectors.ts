@@ -22,7 +22,7 @@ function matchesFilter(row: Row, filter: Filter): boolean {
     case 'skipped':
       return row.state === 'skipped';
     case 'done':
-      return row.state === 'done' || row.export?.stage === 'done';
+      return row.state === 'done';
   }
 }
 
@@ -52,7 +52,7 @@ export function counts(s: Pick<LibraryState, 'rows' | 'order'>): Record<Filter, 
     c.all += 1;
     if (row.state === 'needsReview') c.review += 1;
     if (row.state === 'skipped') c.skipped += 1;
-    if (row.state === 'done' || row.export?.stage === 'done') c.done += 1;
+    if (row.state === 'done') c.done += 1;
     if (isShort(row)) c.short += 1;
   }
   return c;
@@ -69,21 +69,7 @@ export function staleIds(s: Pick<LibraryState, 'rows' | 'order'>, range: [number
   });
 }
 
-/**
- * Rows the Export button exports: analysed, and with no finished export the file still matches.
- * Exporting a file again writes a second change, so that takes a saved grid edit or a revert.
- */
-export function exportableIds(s: Pick<LibraryState, 'rows' | 'order'>): number[] {
-  return s.order.filter((id) => {
-    const row = s.rows[id];
-    return row?.analysis !== undefined && (row.export?.stage !== 'done' || row.exportStale === true);
-  });
-}
-
-/** Rows the rekordbox XML button lists: analysed, with no export of their own. */
-export function xmlOnlyIds(s: Pick<LibraryState, 'rows' | 'order'>): number[] {
-  return s.order.filter((id) => {
-    const row = s.rows[id];
-    return row?.analysis !== undefined && row.export?.stage !== 'done';
-  });
+/** Rows the rekordbox XML button lists: every analysed row, an exported one where its export is. */
+export function xmlRowIds(s: Pick<LibraryState, 'rows' | 'order'>): number[] {
+  return s.order.filter((id) => s.rows[id]?.analysis !== undefined);
 }

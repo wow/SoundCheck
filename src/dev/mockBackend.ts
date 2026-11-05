@@ -206,6 +206,7 @@ const MONITOR_KEY = 'soundcheck-mock-monitor';
 
 export function installMockBackend(): void {
   const session = {
+    decide: () => settings,
     analysed,
     entries,
     revision: () => revision,
@@ -244,7 +245,7 @@ export function installMockBackend(): void {
       case 'calibration_target':
         return -9.2;
       case 'restore_session':
-        return { revision, rows: [], runningJobs: [], artefacts: null, artefactsFailed: null };
+        return { revision, rows: [], runningJobs: [], artefacts: null, artefactsFailed: null, lastExport: null };
       case 'recovery_status':
         return { state: 'finished', recovered: [], pending: [] };
       case 'clear_session':

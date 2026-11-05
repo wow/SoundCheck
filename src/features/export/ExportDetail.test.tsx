@@ -69,8 +69,8 @@ describe('the row details', () => {
 
   it('every note the row carries', () => {
     show({ export: doneRow({ notes: ['tags not added: the file has no ID3 tag', 'a second note'] }) });
-    expect(screen.getByText('tags not added: the file has no ID3 tag')).toBeInTheDocument();
-    expect(screen.getByText('a second note')).toBeInTheDocument();
+    expect(screen.getByText('Tags not added: the file has no ID3 tag')).toBeInTheDocument();
+    expect(screen.getByText('A second note')).toBeInTheDocument();
   });
 
   it('a revert under way, then a refused one', () => {
@@ -83,7 +83,7 @@ describe('the row details', () => {
       revertible: true,
       revertError: { kind: 'fileChanged', message: 'it changed since it was written', fileId: 1 },
     });
-    expect(screen.getByText('it changed since it was written')).toHaveClass('text-err');
+    expect(screen.getByText('It changed since it was written')).toHaveClass('text-err');
   });
 
   it('Revert is disabled for a file in the running batch, with why', () => {

@@ -1,8 +1,14 @@
 import type { Row } from '@/state/library';
 
+/** Its export finished, whatever its grid still asks: the reason shows under the pill. */
+export function exportedAndRests(row: Row): boolean {
+  return row.state === 'needsReview' && row.export?.stage === 'done';
+}
+
 /** The Status column's text. */
 export function statusLabel(row: Row): string {
   if (row.reverting) return 'Reverting';
+  if (exportedAndRests(row)) return row.export?.verification ? 'Done, verified' : 'Done';
   switch (row.state) {
     case 'queued':
       return 'Queued';

@@ -1,6 +1,6 @@
-import type { IpcError, RevertResult, RowUpdate } from '@/lib/ipc';
-import { analysed, analysis, artefacts, doneRow, entry, exportRow, plan, verification } from '@/test/fixtures';
-import { counts, exportableIds, isLocked, staleIds, useLibrary, visibleIds, xmlOnlyIds } from './library';
+import type { ExportRow, IpcError, RevertResult, RowUpdate, SessionRow, SessionSnapshot } from '@/lib/ipc';
+import { analysed, analysis, artefacts, doneRow, entry, exportRow, plan, previewRow, verification } from '@/test/fixtures';
+import { counts, isLocked, staleIds, useLibrary, visibleIds, xmlRowIds } from './library';
 
 const initial = useLibrary.getState();
 const lib = () => useLibrary.getState();
@@ -15,6 +15,7 @@ const update = (fileId: number): RowUpdate => ({
   row: analysis({ shortTermP95: -11 }),
   plan: plan({ measured: -11, gain: { type: 'atTarget' } }),
   revision: 0,
+  exportStale: false,
 });
 
 /** Row 1 (and any others) analysed, and an export of them running. */
@@ -56,7 +57,7 @@ describe('rows during an export', () => {
     lib().add([entry(1)]);
     lib().applyEvent(analysed(1));
     const planned = exportRow({ action: { type: 'write', gainDb: -1, cut: { type: 'library' } } });
-    lib().beginExport([1], [{ fileId: 1, row: planned, error: null }]);
+    lib().beginExport([1], [previewRow(1, planned)]);
     expect(row(1).export).toEqual(planned);
   });
 
@@ -92,7 +93,7 @@ describe('rows during an export', () => {
     lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 1, row: standing, inPlace: false, update: null });
     lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
 
-    lib().beginExport([1], [{ fileId: 1, row: exportRow(), error: null }]);
+    lib().beginExport([1], [previewRow(1, exportRow())]);
     const error: IpcError = { kind: 'verifyFailed', message: 'no match', fileId: 1 };
     lib().applyEvent({ type: 'processing', jobId: 4, fileId: 1, row: exportRow() });
     lib().applyEvent({ type: 'failed', jobId: 4, fileId: 1, error });
@@ -129,6 +130,30 @@ describe('rows during an export', () => {
     expect(lib().lastRun).toBe('export');
     expect(counts(lib()).done).toBe(1);
     lib().setFilter('done');
+    expect(visibleIds(lib())).toEqual([1]);
+  });
+
+  it('counts a row in one tab only, so the tabs add up', () => {
+    exporting(1, 2, 3, 4);
+    const review = plan({ status: 'needsReview', review: [{ type: 'drifts' }] });
+    const ask = { ...update(1), plan: review };
+    lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 1, row: doneRow(), inPlace: true, update: ask });
+    lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 2, row: doneRow(), inPlace: true, update: update(2) });
+    lib().applyEvent({
+      type: 'exportSkipped',
+      jobId: 3,
+      fileId: 3,
+      row: exportRow({ stage: 'skipped', action: { type: 'skip', reason: { type: 'silent' } } }),
+    });
+    lib().applyEvent({ type: 'cancelled', jobId: 3, fileId: 4 });
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: true });
+    const c = counts(lib());
+    // The row exported fine that still asks for a look is in Needs review, not also in Done.
+    expect(c).toMatchObject({ all: 4, review: 1, done: 1, skipped: 1 });
+    expect(row(1).state).toBe('needsReview');
+    lib().setFilter('done');
+    expect(visibleIds(lib())).toEqual([2]);
+    lib().setFilter('review');
     expect(visibleIds(lib())).toEqual([1]);
   });
 
@@ -257,35 +282,43 @@ describe('artefacts', () => {
   });
 });
 
-describe('which rows the buttons act on', () => {
-  it('Export takes analysed rows with no finished export; a saved grid brings one back', () => {
+describe('the rekordbox XML button', () => {
+  it('takes every analysed row, exported or not', () => {
     lib().add([entry(1), entry(2), entry(3)]);
     lib().applyEvent(analysed(1));
     lib().applyEvent(analysed(2));
-    expect(exportableIds(lib())).toEqual([1, 2]);
-    expect(xmlOnlyIds(lib())).toEqual([1, 2]);
     lib().beginExport([1], []);
     lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 1, row: doneRow(), inPlace: true, update: update(1) });
     lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
-    expect(exportableIds(lib())).toEqual([2]);
-    expect(xmlOnlyIds(lib())).toEqual([2]);
+    expect(xmlRowIds(lib())).toEqual([1, 2]);
+  });
+});
+
+describe('a saved grid', () => {
+  it('marks the row as the engine says, and only then', () => {
+    exporting(1);
+    lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 1, row: doneRow(), inPlace: true, update: update(1) });
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
     lib().applyRowUpdate(update(1));
+    expect(row(1).exportStale).toBe(false);
+    lib().applyRowUpdate({ ...update(1), exportStale: true });
     expect(row(1).exportStale).toBe(true);
-    expect(exportableIds(lib())).toEqual([1, 2]);
     expect(row(1).state).toBe('done');
   });
 
-  it('a skipped or failed row can be exported again', () => {
-    exporting(1, 2);
-    lib().applyEvent({
-      type: 'exportSkipped',
-      jobId: 3,
-      fileId: 1,
-      row: exportRow({ stage: 'skipped', action: { type: 'skip', reason: { type: 'silent' } } }),
-    });
-    lib().applyEvent({ type: 'failed', jobId: 3, fileId: 2, error: { kind: 'io', message: 'x', fileId: 2 } });
-    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
-    expect(exportableIds(lib())).toEqual([1, 2]);
+  it('a reload keeps it', () => {
+    lib().restore(
+      {
+        revision: 1,
+        rows: [{ entry: entry(1), row: analysis(), plan: plan(), export: doneRow(), revertible: true, exportStale: true }],
+        runningJobs: [],
+        artefacts: null,
+        artefactsFailed: null,
+        lastExport: null,
+      },
+      [70, 180],
+    );
+    expect(row(1).exportStale).toBe(true);
   });
 });
 
@@ -350,17 +383,26 @@ describe('revert', () => {
 });
 
 describe('a reload during an export', () => {
-  const session = (overrides = {}) => ({
+  const sessionRow = (id: number, exp: ExportRow | null, revertible = false): SessionRow => ({
+    entry: entry(id),
+    row: analysis(),
+    plan: plan(),
+    export: exp,
+    revertible,
+    exportStale: false,
+  });
+  const session = (overrides: Partial<SessionSnapshot> = {}): SessionSnapshot => ({
     revision: 4,
     rows: [
-      { entry: entry(1), row: analysis(), plan: plan(), export: exportRow({ stage: 'writing', verification: verification() }), revertible: true },
-      { entry: entry(2), row: analysis(), plan: plan(), export: exportRow(), revertible: false },
-      { entry: entry(3), row: analysis(), plan: plan(), export: doneRow(), revertible: true },
-      { entry: entry(4), row: analysis(), plan: plan(), export: null, revertible: false },
+      sessionRow(1, exportRow({ stage: 'writing', verification: verification() }), true),
+      sessionRow(2, exportRow()),
+      sessionRow(3, doneRow(), true),
+      sessionRow(4, null),
     ],
     runningJobs: [9],
     artefacts: null,
     artefactsFailed: null,
+    lastExport: null,
     ...overrides,
   });
 
@@ -388,12 +430,8 @@ describe('a reload during an export', () => {
       session({
         runningJobs: [],
         artefacts: a,
-        rows: [
-          { entry: entry(1), row: analysis(), plan: plan(), export: doneRow(), revertible: true },
-          { entry: entry(2), row: analysis(), plan: plan(), export: null, revertible: false },
-          { entry: entry(3), row: analysis(), plan: plan(), export: doneRow(), revertible: true },
-          { entry: entry(4), row: analysis(), plan: plan(), export: null, revertible: false },
-        ],
+        lastExport: { jobId: 9, written: 2, xmlOnly: 0, skipped: 0, failed: 0, cancelled: true, seconds: 3 },
+        rows: [sessionRow(1, doneRow(), true), sessionRow(2, null), sessionRow(3, doneRow(), true), sessionRow(4, null)],
       }),
       [70, 180],
     );
@@ -403,7 +441,7 @@ describe('a reload during an export', () => {
     expect(lib().selected).toBe(3);
     expect(lib().artefacts).toEqual(a);
     expect(lib().locked).toBeNull();
-    expect(lib().lastExport).toMatchObject({ written: 2, stoppedByReload: true, seconds: null });
+    expect(lib().lastExport).toMatchObject({ written: 2, stoppedByReload: true, seconds: 3 });
   });
 
   it('a row left in flight with no job running shows no stage it is not in', () => {
@@ -412,15 +450,25 @@ describe('a reload during an export', () => {
     expect(row(1).export).toBeUndefined();
   });
 
-  it('a done row the session holds no analysis for is analysed again, keeping its export', () => {
+  it('reads the last batch from the session, not from every row with an export', () => {
+    // Rows 1 and 3 were exported by earlier batches; the last batch wrote one file.
+    const summary = { jobId: 12, written: 1, xmlOnly: 0, skipped: 2, failed: 0, cancelled: false, seconds: 7 };
+    lib().restore(session({ runningJobs: [], lastExport: summary }), [70, 180]);
+    expect(lib().lastExport).toEqual(summary);
+    lib().restore(session({ runningJobs: [], lastExport: null }), [70, 180]);
+    expect(lib().lastExport).toBeNull();
+    expect(lib().lastRun).toBeNull();
+  });
+
+  it('a done row the session holds no analysis for waits for a new one, keeping its export', () => {
     lib().restore(
       session({
         runningJobs: [],
-        rows: [{ entry: entry(1), row: null, plan: null, export: doneRow(), revertible: true }],
+        rows: [{ ...sessionRow(1, doneRow(), true), row: null, plan: null }],
       }),
       [70, 180],
     );
-    expect(row(1)).toMatchObject({ state: 'cancelled', revertible: true });
+    expect(row(1)).toMatchObject({ state: 'queued', revertible: true });
     expect(row(1).export?.stage).toBe('done');
     expect(staleIds(lib(), [70, 180])).toEqual([1]);
   });
@@ -434,7 +482,7 @@ describe('a reload during an export', () => {
   it('a track added while the job winds down stays queued through the next read', () => {
     lib().restore(session(), [70, 180]);
     lib().add([entry(5)]);
-    const rows = [...session().rows, { entry: entry(5), row: null, plan: null, export: null, revertible: false }];
+    const rows = [...session().rows, { ...sessionRow(5, null), row: null, plan: null }];
     lib().restore(session({ rows }), [70, 180]);
     expect(row(5).state).toBe('queued');
   });

@@ -7,6 +7,7 @@ import { useRecovery } from '@/state/recovery';
 import { DEFAULT_SETTINGS, sanitize, savedPart, useSettings } from '@/state/settings';
 import { analysed, entry } from '@/test/fixtures';
 import { Rail } from './Rail';
+import { pipeline } from '@/features/pipeline/actions';
 import { startSettingsSync } from './sync';
 
 const initial = useSettings.getState();
@@ -206,8 +207,8 @@ describe('Rail', () => {
       mockIPC(() => []);
       addRow(1, '/a');
       addRow(2, '/a');
-      render(<Rail />);
       useSettings.setState({ outDir: '/Out' });
+      render(<Rail />);
       expect(exportButton()).toHaveTextContent('Export 2');
       expect(exportButton()).toBeEnabled();
     });
@@ -228,6 +229,29 @@ describe('Rail', () => {
       render(<Rail />);
       expect(exportButton()).toBeDisabled();
       expect(screen.getByText('Choose a folder')).toBeInTheDocument();
+    });
+
+    it('is disabled with the reason while a job runs', () => {
+      mockIPC((cmd) => (cmd === 'analyze' ? 3 : []));
+      addRow(1, '/a');
+      useSettings.setState({ outDir: '/Out' });
+      pipeline().send({ type: 'ANALYSE', fileIds: [1] });
+      render(<Rail />);
+      expect(exportButton()).toBeDisabled();
+      expect(screen.getByText('A job is running.')).toBeInTheDocument();
+      pipeline().send({ type: 'FINISHED' });
+    });
+
+    it('tells a row analysed under another BPM range to be analysed again', () => {
+      mockIPC(() => []);
+      addRow(1, '/a');
+      useLibrary.getState().queue([1], [60, 120]);
+      useLibrary.getState().applyEvent(analysed(1));
+      useLibrary.getState().applyEvent({ type: 'finished', jobId: 1, cancelled: false });
+      useSettings.setState({ outDir: '/Out' });
+      render(<Rail />);
+      expect(exportButton()).toBeDisabled();
+      expect(screen.getByText('1 track needs Analyse for this BPM range.')).toBeInTheDocument();
     });
 
     it('with nothing analysed there is nothing to press', () => {

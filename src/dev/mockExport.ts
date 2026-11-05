@@ -5,6 +5,7 @@
 import type { Channel } from '@tauri-apps/api/core';
 import type {
   Cut,
+  DecideSettings,
   ExportAction,
   ExportPreview,
   ExportRequest,
@@ -21,6 +22,7 @@ import type {
 import { analysisFor, planFor, type Synthetic } from './mockBackend';
 
 export interface MockSession {
+  decide: () => DecideSettings;
   analysed: Map<number, RowAnalysis>;
   entries: Map<number, Synthetic>;
   revision: () => number;
@@ -104,7 +106,8 @@ function plannedFor(s: Synthetic, req: ExportRequest): Planned {
   return write(gainDb, { type: 'cut', frames: Math.round(seconds * s.rate), seconds });
 }
 
-function row(planned: Planned, stage: ExportRow['stage'], place: ExportRequest['settings']['place']): ExportRow {
+function row(planned: Planned, stage: ExportRow['stage'], req: ExportRequest, decide: DecideSettings): ExportRow {
+  const place = req.settings.place;
   const cut = planned.action.type === 'write' && planned.action.cut.type === 'cut';
   return {
     stage,
@@ -116,6 +119,7 @@ function row(planned: Planned, stage: ExportRow['stage'], place: ExportRequest['
     gridCheck: null,
     editCarried: false,
     revertible: stage !== 'processing' && stage !== 'skipped' && place === 'inPlace',
+    exportedWith: { decide, settings: req.settings, outDir: req.outDir },
     notes: planned.notes,
   };
 }
@@ -139,19 +143,29 @@ function verification(s: Synthetic): ExportVerification {
 }
 
 function preview(session: MockSession, req: ExportRequest): ExportPreview {
+  const decide = session.decide();
   return {
     rows: req.fileIds.map((fileId) => {
       const s = session.entries.get(fileId);
-      if (!s) return { fileId, row: null, error: { kind: 'invalidArgument', message: 'not in the list', fileId } };
+      if (!s) {
+        const error = { kind: 'invalidArgument' as const, message: 'not in the list', fileId };
+        return { fileId, row: null, error, identity: null, replacesCopy: false };
+      }
       const planned = plannedFor(s, req);
       const stage = planned.action.type === 'write' ? 'processing' : 'skipped';
-      return { fileId, row: row(planned, stage, req.settings.place), error: null };
+      const replacesCopy = stage === 'processing' && req.outDir !== null && written.has(`${req.outDir}/${fileId}`);
+      return { fileId, row: row(planned, stage, req, decide), error: null, identity: `mock:${fileId}`, replacesCopy };
     }),
+    revision: session.revision(),
+    decide,
+    xmlListed: req.outDir === null ? 0 : [...written].filter((k) => k.startsWith(`${req.outDir}/`)).length,
     backupFolder: req.settings.place === 'inPlace' ? BACKUPS : null,
     artefactsFolder: req.settings.xml ? (req.outDir ?? EXPORTS) : null,
   };
 }
 
+/** Copies this run wrote, `<folder>/<file id>`. */
+const written = new Set<string>();
 const cancelled = new Set<number>();
 let nextJob = 1000;
 
@@ -162,6 +176,7 @@ async function exportOne(session: MockSession, jobId: number, fileId: number, re
   const s = session.entries.get(fileId);
   if (!s) return;
   const place = req.settings.place;
+  const decide = session.decide();
   const stopped = () => {
     const stop = cancelled.has(jobId);
     if (stop) send({ type: 'cancelled', jobId, fileId });
@@ -173,10 +188,10 @@ async function exportOne(session: MockSession, jobId: number, fileId: number, re
   if (stopped()) return;
   const planned = plannedFor(s, req);
   if (planned.action.type !== 'write') {
-    send({ type: 'exportSkipped', jobId, fileId, row: row(planned, 'skipped', place) });
+    send({ type: 'exportSkipped', jobId, fileId, row: row(planned, 'skipped', req, decide) });
     return;
   }
-  send({ type: 'processing', jobId, fileId, row: row(planned, 'processing', place) });
+  send({ type: 'processing', jobId, fileId, row: row(planned, 'processing', req, decide) });
   await wait(STEP_MS);
   if (stopped()) return;
   if (s.title === 'Breakbeat Tool') {
@@ -184,8 +199,9 @@ async function exportOne(session: MockSession, jobId: number, fileId: number, re
     send({ type: 'failed', jobId, fileId, error: { kind: 'verifyFailed', message, fileId } });
     return;
   }
-  const written = { ...row(planned, 'writing', place), verification: verification(s) };
-  send({ type: 'written', jobId, fileId, row: written });
+  const wrote = { ...row(planned, 'writing', req, decide), verification: verification(s) };
+  send({ type: 'written', jobId, fileId, row: wrote });
+  if (req.outDir !== null) written.add(`${req.outDir}/${fileId}`);
   await wait(STEP_MS);
   const gridCheck: GridCheck =
     CHECKS[s.title] ??
@@ -197,7 +213,7 @@ async function exportOne(session: MockSession, jobId: number, fileId: number, re
     type: 'exportDone',
     jobId,
     fileId,
-    row: { ...written, stage: 'done', gridCheck },
+    row: { ...wrote, stage: 'done', gridCheck },
     inPlace,
     update: inPlace ? updateAfter(session, s, fileId) : null,
   });
@@ -238,7 +254,7 @@ function updateAfter(session: MockSession, s: Synthetic, fileId: number) {
   const a = analysisFor(moved);
   session.analysed.set(fileId, a);
   session.entries.set(fileId, moved);
-  return { fileId, row: a, plan: planFor(moved, a), revision: session.revision() };
+  return { fileId, row: a, plan: planFor(moved, a), revision: session.revision(), exportStale: false };
 }
 
 const originals = new Map<number, Synthetic>();
@@ -257,7 +273,7 @@ function revert(session: MockSession, fileId: number): Promise<RevertResult> {
       session.entries.set(fileId, s);
       resolve({
         entry: session.entryFor(s, fileId),
-        update: { fileId, row: a, plan: planFor(s, a), revision: session.revision() },
+        update: { fileId, row: a, plan: planFor(s, a), revision: session.revision(), exportStale: false },
         backup: `${BACKUPS}/${s.title}`,
         earlierChanges: 0,
         notes: [],

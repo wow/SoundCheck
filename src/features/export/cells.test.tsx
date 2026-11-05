@@ -117,7 +117,7 @@ describe('the Action column of an export', () => {
         bpmRange={[70, 180]}
       />,
     );
-    expect(screen.getByText('no space left')).toHaveClass('text-err');
+    expect(screen.getByText('No space left')).toHaveClass('text-err');
     expect(screen.getByText('The file was not changed')).toBeInTheDocument();
   });
 
@@ -164,7 +164,7 @@ describe('the Status column', () => {
   });
 
   it('shows the chip of a finished row', () => {
-    render(<StatusCell id={1} row={row({ export: doneRow() })} selected />);
+    render(<StatusCell bpmRange={[70, 180]} id={1} row={row({ export: doneRow() })} selected />);
     expect(screen.getByText('Done, verified')).toBeInTheDocument();
     expect(screen.getByText('Grid checks out')).toBeInTheDocument();
   });
@@ -174,9 +174,9 @@ describe('Revert on a row', () => {
   const revertButton = () => screen.queryByRole('button', { name: 'Revert to the original' });
 
   it('only on a row with a change to put back', () => {
-    const { rerender } = render(<StatusCell id={1} row={row({ export: doneRow(), revertible: false })} selected />);
+    const { rerender } = render(<StatusCell bpmRange={[70, 180]} id={1} row={row({ export: doneRow(), revertible: false })} selected />);
     expect(revertButton()).toBeNull();
-    rerender(<StatusCell id={1} row={row({ export: doneRow(), revertible: true })} selected />);
+    rerender(<StatusCell bpmRange={[70, 180]} id={1} row={row({ export: doneRow(), revertible: true })} selected />);
     expect(revertButton()).toBeEnabled();
   });
 
@@ -184,7 +184,7 @@ describe('Revert on a row', () => {
     const calls: string[] = [];
     mockIPC((cmd) => void calls.push(cmd));
     useLibrary.setState({ locked: new Set([1]) });
-    render(<StatusCell id={1} row={row({ revertible: true })} selected />);
+    render(<StatusCell bpmRange={[70, 180]} id={1} row={row({ revertible: true })} selected />);
     expect(revertButton()).toBeDisabled();
     expect(revertButton()).toHaveAttribute('title', expect.stringContaining('running export'));
     await userEvent.click(revertButton() as HTMLElement);
@@ -193,14 +193,104 @@ describe('Revert on a row', () => {
 
   it('is disabled during recovery', () => {
     useRecovery.setState({ running: true });
-    render(<StatusCell id={1} row={row({ revertible: true })} selected />);
+    render(<StatusCell bpmRange={[70, 180]} id={1} row={row({ revertible: true })} selected />);
     expect(revertButton()).toBeDisabled();
   });
 
   it('takes a Tab stop only on the selected row', () => {
-    const { rerender } = render(<StatusCell id={1} row={row({ revertible: true })} selected={false} />);
+    const { rerender } = render(<StatusCell bpmRange={[70, 180]} id={1} row={row({ revertible: true })} selected={false} />);
     expect(revertButton()).toHaveAttribute('tabindex', '-1');
-    rerender(<StatusCell id={1} row={row({ revertible: true })} selected />);
+    rerender(<StatusCell bpmRange={[70, 180]} id={1} row={row({ revertible: true })} selected />);
     expect(revertButton()).toHaveAttribute('tabindex', '0');
+  });
+});
+
+describe('a row exported fine whose grid still asks for a look', () => {
+  const review = () =>
+    row({
+      state: 'needsReview',
+      export: doneRow({ gridCheck: { result: 'notChecked', reason: { type: 'gridWithheld' } } }),
+      plan: plan({ status: 'needsReview', review: [{ type: 'drifts' }] }),
+    });
+
+  it('says Done, verified, with what it asks under it', () => {
+    render(<StatusCell bpmRange={[70, 180]} id={1} row={review()} selected />);
+    const pill = screen.getByText('Done, verified');
+    expect(pill.closest('.text-ok')).not.toBeNull();
+    expect(screen.queryByText('Needs review')).toBeNull();
+    expect(screen.getByText(/^Drifts/)).toBeInTheDocument();
+  });
+
+  it('a row that needs review and has no export still says so', () => {
+    render(
+      <StatusCell
+        bpmRange={[70, 180]}
+        id={1}
+        row={row({ state: 'needsReview', plan: plan({ status: 'needsReview', review: [{ type: 'drifts' }] }) })}
+        selected
+      />,
+    );
+    expect(screen.getByText('Needs review')).toBeInTheDocument();
+  });
+});
+
+describe('a row exported with other settings', () => {
+  const now = {
+    decide: { mode: 'dj' as const, target: -8, ceiling: -0.5, bpmRange: [70, 180] as [number, number] },
+    settings: {
+      batchMode: 'prepare' as const,
+      place: 'folder' as const,
+      depth: null,
+      gridOnly: false,
+      tbpm: true,
+      xml: true,
+      leadMs: 5,
+    },
+    outDir: '/Out',
+  };
+  const with11 = { ...now, decide: { ...now.decide, target: -11 } };
+
+  it('says how, in place of what was verified', () => {
+    render(
+      <ActionCell
+        row={row({ export: doneRow({ exportedWith: with11 }) })}
+        bpmRange={[70, 180]}
+        now={now}
+      />,
+    );
+    expect(screen.getByText('Exported at -11.0')).toBeInTheDocument();
+    expect(screen.queryByText(/^Verified/)).toBeNull();
+  });
+
+  it('says nothing when it matches, and shows what was verified', () => {
+    render(
+      <ActionCell row={row({ export: doneRow({ exportedWith: now }) })} bpmRange={[70, 180]} now={now} />,
+    );
+    expect(screen.queryByText(/^Exported/)).toBeNull();
+    expect(screen.getByText(/^Verified/)).toBeInTheDocument();
+  });
+});
+
+describe('text from the engine', () => {
+  it('reads as a sentence where the row shows it', () => {
+    render(
+      <ActionCell
+        row={row({ state: 'failed', exportError: { kind: 'verifyFailed', message: 'the written file differs', fileId: 1 } })}
+        bpmRange={[70, 180]}
+      />,
+    );
+    expect(screen.getByText('The written file differs')).toBeInTheDocument();
+  });
+
+  it('a skip too', () => {
+    action(
+      exportRow({
+        stage: 'skipped',
+        action: { type: 'skip', reason: { type: 'silent' } },
+        positionsShift: false,
+        notes: ['it has no audio'],
+      }),
+    );
+    expect(screen.getByText('It has no audio')).toBeInTheDocument();
   });
 });

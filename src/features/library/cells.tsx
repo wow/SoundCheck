@@ -14,7 +14,8 @@ import { cn } from '@/lib/utils';
 import type { Row, RowState } from '@/state/library';
 import { isShort } from '@/state/library';
 import { ExportActionCell, GridCheckBadge, RevertIcon, RevertSpinner } from '@/features/export/ExportCells';
-import { statusLabel } from './status';
+import type { ExportNow } from '@/features/export/work';
+import { exportedAndRests, statusLabel } from './status';
 
 export function CodecBadge({ codec }: { codec: Codec }) {
   return (
@@ -81,7 +82,7 @@ export function StatusPill({ row }: { row: Row }) {
     <span
       className={cn(
         'inline-flex h-[22px] min-w-0 items-center gap-1 whitespace-nowrap rounded-md border px-2 text-xs font-medium',
-        row.reverting ? REVERTING : PILL[row.state],
+        row.reverting ? REVERTING : PILL[exportedAndRests(row) ? 'done' : row.state],
       )}
     >
       {row.reverting && <RevertSpinner />}
@@ -91,15 +92,34 @@ export function StatusPill({ row }: { row: Row }) {
 }
 
 /** The Status column: where the row is, and after an export its grid check and Revert. */
-export function StatusCell({ id, row, selected }: { id: number; row: Row; selected: boolean }) {
+export function StatusCell({
+  id,
+  row,
+  selected,
+  bpmRange,
+}: {
+  id: number;
+  row: Row;
+  selected: boolean;
+  bpmRange: [number, number];
+}) {
   const check = row.export?.gridCheck;
+  // What still asks for a look comes first: it is why the row is in Needs review.
+  const review =
+    exportedAndRests(row) && row.plan ? reviewText(row.plan.review, row.analysis, bpmRange) : '';
   return (
     <div className="flex min-w-0 flex-col gap-px">
       <div className="flex items-center gap-1">
         <StatusPill row={row} />
         <RevertIcon id={id} row={row} selected={selected} />
       </div>
-      {check && <GridCheckBadge check={check} />}
+      {review ? (
+        <span className="block truncate text-[12px] leading-4 text-warn/80" title={review}>
+          {review}
+        </span>
+      ) : (
+        check && <GridCheckBadge check={check} />
+      )}
     </div>
   );
 }
@@ -307,11 +327,14 @@ export function ActionCell({
   row,
   bpmRange,
   stacked = false,
+  now,
 }: {
   row: Row;
   bpmRange: [number, number];
   /** No room for a gain and a cut on one line. */
   stacked?: boolean;
+  /** What an export would be made with now, to tell a row exported otherwise. */
+  now?: ExportNow;
 }) {
   if (row.state === 'failed') {
     return (
@@ -336,7 +359,9 @@ export function ActionCell({
       </div>
     );
   }
-  if (row.export) return <ExportActionCell row={row} exportRow={row.export} stacked={stacked} />;
+  if (row.export) {
+    return <ExportActionCell row={row} exportRow={row.export} stacked={stacked} now={now} />;
+  }
   if (!row.plan) return <Dash />;
   const action = actionText(row.plan);
   const review = reviewText(row.plan.review, row.analysis, bpmRange);

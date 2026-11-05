@@ -186,7 +186,7 @@ function Library() {
               <div className="flex-1" />
               {review > 0 && (
                 <span className="text-warn">
-                  {review === 1 ? '1 track needs' : `${review} tracks need`} a look before processing
+                  {review === 1 ? '1 track needs' : `${review} tracks need`} a look
                 </span>
               )}
               <button

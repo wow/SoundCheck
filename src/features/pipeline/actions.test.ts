@@ -1,6 +1,6 @@
 import { act } from '@testing-library/react';
 import { mockIPC } from '@tauri-apps/api/mocks';
-import { analysed, entry, doneRow } from '@/test/fixtures';
+import { analysed, analysis, doneRow, entry, plan } from '@/test/fixtures';
 import type { JobEvent, SessionSnapshot } from '@/lib/ipc';
 import { useLibrary } from '@/state/library';
 import { useSettings } from '@/state/settings';
@@ -29,6 +29,7 @@ const request = {
     leadMs: 5,
   },
   outDir: null,
+  confirmed: null,
 };
 
 const snapshot = (overrides: Partial<SessionSnapshot> = {}): SessionSnapshot => ({
@@ -37,6 +38,7 @@ const snapshot = (overrides: Partial<SessionSnapshot> = {}): SessionSnapshot => 
   runningJobs: [],
   artefacts: null,
   artefactsFailed: null,
+  lastExport: null,
   ...overrides,
 });
 
@@ -132,12 +134,12 @@ describe('a reload during an export', () => {
     const answers = [
       snapshot({
         runningJobs: [9],
-        rows: [{ entry: entry(1), row: null, plan: null, export: null, revertible: false }],
+        rows: [{ entry: entry(1), row: null, plan: null, export: null, revertible: false, exportStale: false }],
       }),
       snapshot({
         runningJobs: [],
         artefacts: { folder: '/x', xml: '/x/a.xml', report: '/x/a.csv', listed: 1 },
-        rows: [{ entry: entry(1), row: null, plan: null, export: doneRow(), revertible: true }],
+        rows: [{ entry: entry(1), row: analysis(), plan: plan(), export: doneRow(), revertible: true, exportStale: false }],
       }),
     ];
     const reads: number[] = [];
@@ -162,6 +164,67 @@ describe('a reload during an export', () => {
     expect(lib.getState().locked).toBeNull();
     expect(lib.getState().artefacts?.xml).toBe('/x/a.xml');
     expect(lib.getState().rows[1]?.revertible).toBe(true);
+  });
+
+  it('analyses a file written in place during the reload, once the job has ended', async () => {
+    const { pipeline, useLibrary: lib, WIND_DOWN_POLL_MS } = await fresh();
+    const calls: string[] = [];
+    const answers = [
+      snapshot({
+        rows: [{ entry: entry(1), row: null, plan: null, export: doneRow(), revertible: true, exportStale: false }],
+      }),
+    ];
+    mockIPC((cmd) => {
+      calls.push(cmd);
+      if (cmd === 'restore_session') return answers.shift();
+      return cmd === 'analyze' ? 3 : undefined;
+    });
+    pipeline().send({ type: 'WIND_DOWN' });
+    await act(async () => vi.advanceTimersByTimeAsync(WIND_DOWN_POLL_MS));
+    expect(calls).toContain('analyze');
+    expect(pipeline().getSnapshot().value).toBe('analysing');
+    expect(lib.getState().rows[1]).toMatchObject({ state: 'queued', revertible: true });
+    expect(lib.getState().rows[1]?.export?.stage).toBe('done');
+  });
+
+  it('says stopped by the reload only of the export the reload stopped', async () => {
+    const summary = { jobId: 9, written: 1, xmlOnly: 0, skipped: 0, failed: 0, cancelled: true, seconds: 3 };
+    const { pipeline, useLibrary: lib, WIND_DOWN_POLL_MS } = await fresh();
+    // A reload during an analysis (job 5), with an older export (job 9) on record.
+    const answers = [snapshot({ runningJobs: [], lastExport: summary })];
+    mockIPC((cmd) => (cmd === 'restore_session' ? answers.shift() : undefined));
+    lib.getState().restore(snapshot({ runningJobs: [5], lastExport: summary }), [70, 180]);
+    pipeline().send({ type: 'WIND_DOWN' });
+    await act(async () => vi.advanceTimersByTimeAsync(WIND_DOWN_POLL_MS));
+    expect(lib.getState().lastExport?.stoppedByReload).toBeFalsy();
+
+    // The export itself.
+    const again = [snapshot({ runningJobs: [], lastExport: summary })];
+    mockIPC((cmd) => (cmd === 'restore_session' ? again.shift() : undefined));
+    lib.getState().restore(snapshot({ runningJobs: [9] }), [70, 180]);
+    pipeline().send({ type: 'WIND_DOWN' });
+    await act(async () => vi.advanceTimersByTimeAsync(WIND_DOWN_POLL_MS));
+    expect(lib.getState().lastExport?.stoppedByReload).toBe(true);
+  });
+
+  it('gives up after a minute and says to restart', async () => {
+    const { pipeline, useLibrary: lib, WIND_DOWN_LIMIT_MS } = await fresh();
+    let reads = 0;
+    mockIPC((cmd) => {
+      if (cmd !== 'restore_session') return undefined;
+      reads += 1;
+      return snapshot({ runningJobs: [9] });
+    });
+    pipeline().send({ type: 'WIND_DOWN' });
+    await act(async () => vi.advanceTimersByTimeAsync(WIND_DOWN_LIMIT_MS - 1000));
+    expect(pipeline().getSnapshot().value).toBe('windingDown');
+    expect(lib.getState().notice).toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(pipeline().getSnapshot().value).toBe('idle');
+    expect(lib.getState().notice).toMatch(/Restart SoundCheck/);
+    const at = reads;
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    expect(reads).toBe(at);
   });
 
   it('does not wait for ever when the session cannot be read', async () => {

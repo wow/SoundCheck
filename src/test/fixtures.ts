@@ -1,5 +1,7 @@
 import type {
   ExportArtefacts,
+  ExportPreview,
+  ExportPreviewRow,
   ExportRow,
   ExportVerification,
   FileEntry,
@@ -113,6 +115,7 @@ export function exportRow(overrides: Partial<ExportRow> = {}): ExportRow {
     gridCheck: null,
     editCarried: false,
     revertible: false,
+    exportedWith: null,
     notes: [],
     ...overrides,
   };
@@ -127,6 +130,34 @@ export function doneRow(overrides: Partial<ExportRow> = {}): ExportRow {
     revertible: true,
     ...overrides,
   });
+}
+
+/** A row of the confirm step's plan. */
+export function previewRow(
+  fileId: number,
+  row: ExportRow | null,
+  overrides: Partial<ExportPreviewRow> = {},
+): ExportPreviewRow {
+  return {
+    fileId,
+    row,
+    error: row ? null : { kind: 'corrupt', message: 'unreadable', fileId },
+    identity: row ? `id-${fileId}` : null,
+    replacesCopy: false,
+    ...overrides,
+  };
+}
+
+export function exportPreview(rows: ExportPreviewRow[], overrides: Partial<ExportPreview> = {}): ExportPreview {
+  return {
+    rows,
+    revision: 4,
+    decide: { mode: 'dj', target: -11, ceiling: -0.5, bpmRange: [70, 180] },
+    xmlListed: 0,
+    backupFolder: '/Users/dj/Music/SoundCheck Backups',
+    artefactsFolder: '/Users/dj/Music/SoundCheck/exports',
+    ...overrides,
+  };
 }
 
 export function artefacts(overrides: Partial<ExportArtefacts> = {}): ExportArtefacts {

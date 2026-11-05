@@ -9,10 +9,12 @@ import {
   revertedPatch,
   rowFromSession,
   summarise,
+  writtenWithoutAnalysis,
 } from './exportRows';
 import { visibleIds } from './librarySelectors';
 import type { LibraryState, Row } from './libraryTypes';
 
+export { writtenWithoutAnalysis };
 export * from './librarySelectors';
 export type * from './libraryTypes';
 
@@ -52,6 +54,7 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
   xmlLeftOut: 0,
   xmlWriting: false,
   locked: null,
+  windingJobs: [],
   aborted: null,
   abortedKind: 'analysis',
   notice: null,
@@ -140,8 +143,14 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
     set({ xmlWriting: false, artefacts: null, artefactsFailed: error, xmlLeftOut: 0 });
   },
   windDownEnded() {
-    const { lastExport } = get();
-    set({ locked: null, lastExport: lastExport && { ...lastExport, stoppedByReload: true } });
+    const { lastExport, windingJobs } = get();
+    // Only the job the reload stopped: an analysis it stopped says nothing about an older export.
+    const stopped = lastExport?.jobId !== undefined && windingJobs.includes(lastExport.jobId);
+    set({
+      locked: null,
+      windingJobs: [],
+      lastExport: lastExport && stopped ? { ...lastExport, stoppedByReload: true } : lastExport,
+    });
   },
   applyRowUpdate(update) {
     get().applyEvent({
@@ -152,12 +161,8 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
       plan: update.plan,
       revision: update.revision,
     });
-    // A saved grid after an export: the file no longer holds what the row now says.
-    set({
-      rows: one(get().rows, update.fileId, (row) =>
-        row.export?.stage === 'done' ? { exportStale: true } : null,
-      ),
-    });
+    // The engine says whether the saved grid differs from what the export wrote.
+    set({ rows: one(get().rows, update.fileId, () => ({ exportStale: update.exportStale })) });
   },
   applyEvent(event) {
     const { rows, job } = get();
@@ -303,18 +308,17 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
       // Added while the job winds down, and waiting for it: still waiting.
       rows[id] = before[id]?.state === 'queued' && !row.analysis ? before[id] : row;
     }
-    const failed = snapshot.artefactsFailed;
-    const ran = order.flatMap((id) => (rows[id]?.export ? [rows[id]] : []));
     set({
       rows,
       order,
       selected: selected !== null && rows[selected] ? selected : (order[0] ?? null),
       job: null,
       locked: live ? 'all' : null,
+      windingJobs: [...new Set([...get().windingJobs, ...snapshot.runningJobs])],
       artefacts: snapshot.artefacts,
-      artefactsFailed: failed,
-      lastExport: ran.length > 0 ? summarise(ran, false, null) : null,
-      lastRun: ran.length > 0 ? 'export' : null,
+      artefactsFailed: snapshot.artefactsFailed,
+      lastExport: snapshot.lastExport,
+      lastRun: snapshot.lastExport ? 'export' : null,
     });
   },
   setNotice(notice) {
@@ -336,6 +340,7 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
       artefactsFailed: null,
       xmlLeftOut: 0,
       locked: null,
+      windingJobs: [],
       aborted: null,
       info: null,
       filter: 'all',

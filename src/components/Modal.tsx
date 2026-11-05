@@ -1,5 +1,8 @@
-import { useRef, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { useDialogFocus } from './useDialogFocus';
+
+/** A press outside this soon after opening is the end of a double click on what opened it. */
+export const BACKDROP_GRACE_MS = 300;
 
 /**
  * A panel over the window that asks for one decision: keeps focus inside while open and gives it
@@ -16,13 +19,16 @@ export function Modal({
   children: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  const [opened] = useState(() => performance.now());
   const onKeyDown = useDialogFocus(panel, { onClose, focus: 'panel' });
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         aria-hidden="true"
         className="absolute inset-0 bg-[rgba(8,10,13,.55)]"
-        onMouseDown={onClose}
+        onMouseDown={() => {
+          if (performance.now() - opened >= BACKDROP_GRACE_MS) onClose();
+        }}
       />
       <div
         ref={panel}
