@@ -528,7 +528,9 @@ pub fn run_job(
         if let (EngineEvent::Analysed { report, edit, .. }, Some(store)) = (&mut event, &edits) {
             *edit = apply_saved(&mut report.record, store);
         }
-        if let Some(ipc) = lock().on_engine_event(job_id, event) {
+        // Not sent under the lock: a slow receiver would hold up every command that needs it.
+        let ipc = lock().on_engine_event(job_id, event);
+        if let Some(ipc) = ipc {
             send(ipc);
         }
     });

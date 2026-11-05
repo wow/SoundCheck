@@ -76,14 +76,9 @@ fn revert_during_an_uncached_export_analysis_is_refused() {
         !events.iter().any(|e| matches!(e, JobEvent::Failed { .. })),
         "{events:?}"
     );
-    // Nothing was written over the original: it is one revert (or two, for a second change) away.
-    let mut hash = sha256(&wav);
-    if hash != exported {
-        shell.revert(ids[0]).unwrap();
-        hash = sha256(&wav);
-    }
-    assert_eq!(hash, exported);
-    shell.revert(ids[0]).unwrap();
+    // The refusal changed nothing, and each change can be put back, down to the original.
+    assert_eq!(sha256(&wav), exported, "written at the target, 0 dB");
+    while shell.revert(ids[0]).is_ok() {}
     assert_eq!(sha256(&wav), original);
 }
 
@@ -153,14 +148,14 @@ fn a_file_being_exported_cannot_be_analysed_listed_or_opened() {
     let shell = lib.shell(1);
     let ids = analysed(&shell, &[&wav]);
     let held = held_at(&shell, request(&ids, prepare(), None), at_started);
-    let (analysis, _) = {
-        let req = sc_core::ipc::AnalyzeRequest {
-            file_ids: ids.clone(),
-            analysis: super::support::loudness_only(),
-        };
-        (shell.start(req, |_| {}).unwrap_err().kind, ())
+    let req = sc_core::ipc::AnalyzeRequest {
+        file_ids: ids.clone(),
+        analysis: super::support::loudness_only(),
     };
-    assert_eq!(analysis, IpcErrorKind::Busy);
+    assert_eq!(
+        shell.start(req, |_| {}).unwrap_err().kind,
+        IpcErrorKind::Busy
+    );
     let xml = WriteXmlRequest {
         file_ids: ids.clone(),
         out: None,
@@ -243,7 +238,7 @@ fn the_hold_is_released_after_a_failed_or_cancelled_job_before_finished_goes_out
             let _ = tx.send(e);
         })
         .unwrap();
-    shell.cancel(job);
+    assert!(shell.cancel(job), "it is running");
     let events = events_until_finished(&rx);
     assert!(matches!(
         events.last(),

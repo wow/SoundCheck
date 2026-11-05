@@ -222,6 +222,10 @@ impl Shell {
             ));
         };
         let path = PathBuf::from(&entry.path);
+        let _hold = self
+            .inner
+            .holds
+            .acquire(&[(file_id, path.as_path())], HoldKind::Revert)?;
         let undone =
             undo_file(&path, &root, self.inner.cache.as_ref()).map_err(|e| about(file_id, e))?;
         self.close_track_of(&[file_id]);
