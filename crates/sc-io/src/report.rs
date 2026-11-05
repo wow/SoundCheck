@@ -1,5 +1,5 @@
-//! The batch's grid report, `grid-report.csv`: one row per file, in the order the files were
-//! given, with what the export did and the grid it carried.
+//! The grid report, `grid-report.csv`: one row per file, in the order given, with what the export
+//! did and the grid it carried.
 //!
 //! The format is RFC 4180: comma-separated, CRLF line ends, a header row, a field quoted when it
 //! holds a comma, a quote, a line break or a leading or trailing space, quotes doubled inside.
@@ -22,6 +22,10 @@ use std::io::Write;
 use sc_core::export::positive_zero;
 use sc_core::{Bpm, Seconds};
 
+mod read;
+
+pub use read::read_rows;
+
 /// File name of a batch's grid report.
 pub const REPORT_FILE_NAME: &str = "grid-report.csv";
 
@@ -41,7 +45,7 @@ pub const COLUMNS: [&str; 10] = [
 
 /// Leading characters a spreadsheet reads as the start of a formula (OWASP, "CSV Injection"):
 /// a text field starting with one gets a leading `'`.
-const FORMULA_STARTS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
+pub(crate) const FORMULA_STARTS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
 
 /// The UTF-8 byte-order mark the report starts with.
 pub const BOM: &[u8] = b"\xEF\xBB\xBF";

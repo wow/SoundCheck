@@ -364,3 +364,29 @@ fn parse_back() {
         assert_eq!(battito.parse::<u8>().expect("number"), t.battito);
     }
 }
+
+#[test]
+fn what_it_writes_reads_back_as_the_same_bytes() {
+    let tracks = [
+        track("/Music/Şarkı & Co/a.wav", 245.0, tempo(221, 128.0)),
+        track("/Music/c%20d#e.flac", 10.0, tempo(5_000, 174.0)),
+    ];
+    let bytes = xml_bytes(&tracks, "9.9.9-test", "SoundCheck & <co>");
+    let read = read_tracks(&bytes).expect("ours");
+    assert_eq!(read.len(), 2);
+    assert_eq!(read[0].path, tracks[0].path);
+    assert_eq!(xml_bytes(&read, "9.9.9-test", "SoundCheck & <co>"), bytes);
+}
+
+#[test]
+fn what_it_cannot_read_as_ours_it_says_so() {
+    assert_eq!(
+        read_tracks(b"<DJ_PLAYLISTS><COLLECTION><TRACK Name=\"x\"></TRACK>"),
+        None
+    );
+    assert_eq!(
+        read_tracks(b"<COLLECTION><TRACK Location=\"file://localhost/a.wav\" TotalTime=\"1\"></TRACK></COLLECTION>"),
+        None,
+        "a track with no tempo"
+    );
+}

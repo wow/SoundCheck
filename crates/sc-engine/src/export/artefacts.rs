@@ -33,6 +33,10 @@ use super::plan::grid_trusted;
 use super::process::{xml_grid, xml_info};
 use crate::edits::EditState;
 
+mod merge;
+
+pub use merge::tracks_listed_in;
+
 /// What happened to a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowAction {
@@ -377,8 +381,8 @@ pub struct Artefacts {
 
 /// Writes the grid report of `rows` and, unless `select` is [`XmlSelect::Off`], the rekordbox
 /// XML (its playlist named `playlist`, [`sc_io::rekordbox::playlist_name`]) into `dir`, each
-/// replacing an older one SoundCheck wrote atomically; anything else of that name is left as
-/// it is.
+/// replacing an older one SoundCheck wrote atomically, with what that one says about other files
+/// still there (see `merge`); anything else of that name is left as it is.
 ///
 /// # Errors
 /// [`sc_core::Error::AlreadyExists`] naming a file there that SoundCheck did not write;
@@ -389,23 +393,26 @@ pub fn write_artefacts(
     select: XmlSelect,
     playlist: &str,
 ) -> Result<Artefacts> {
-    use sc_io::artefacts::write_artefact;
-    let tracks = xml_tracks(rows, select);
-    let xml = if select == XmlSelect::Off {
-        None
-    } else {
-        let path = dir.join(sc_io::rekordbox::XML_FILE_NAME);
-        let bytes = sc_io::rekordbox::xml_bytes(&tracks, sc_core::VERSION, playlist);
-        write_artefact(&path, &bytes, sc_io::rekordbox::is_soundcheck_xml)?;
-        Some(path)
-    };
+    use sc_io::artefacts::{check_replaceable, write_artefact};
+    let xml_path = dir.join(sc_io::rekordbox::XML_FILE_NAME);
     let report = dir.join(sc_io::report::REPORT_FILE_NAME);
-    let csv = sc_io::report::csv_bytes(&report_rows(rows, select));
+    // Before anything of a file there is read as ours.
+    check_replaceable(&report, sc_io::report::is_soundcheck_report)?;
+    let (xml, listed) = if select == XmlSelect::Off {
+        (None, 0)
+    } else {
+        check_replaceable(&xml_path, sc_io::rekordbox::is_soundcheck_xml)?;
+        let tracks = merge::merged_tracks(dir, rows, xml_tracks(rows, select));
+        let bytes = sc_io::rekordbox::xml_bytes(&tracks, sc_core::VERSION, playlist);
+        write_artefact(&xml_path, &bytes, sc_io::rekordbox::is_soundcheck_xml)?;
+        (Some(xml_path), tracks.len())
+    };
+    let csv = sc_io::report::csv_bytes(&merge::merged_report(dir, report_rows(rows, select)));
     write_artefact(&report, &csv, sc_io::report::is_soundcheck_report)?;
     Ok(Artefacts {
         xml,
         report,
-        listed: tracks.len(),
+        listed,
     })
 }
 

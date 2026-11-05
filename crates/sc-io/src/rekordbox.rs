@@ -41,8 +41,10 @@ use sc_core::export::XmlGrid;
 use sc_core::{Bpm, SampleIndex, Seconds};
 
 mod location;
+mod read;
 
 pub use location::{Speller, decode_location, location};
+pub use read::read_tracks;
 
 /// File name of a batch's rekordbox XML.
 pub const XML_FILE_NAME: &str = "soundcheck-rekordbox.xml";
