@@ -272,13 +272,27 @@ pub fn read(path: &Path) -> Result<SidecarDoc> {
         )));
     }
     let mut value = value;
-    drop_unreadable_grid_check(&mut value);
-    serde_json::from_value(value).map_err(|e| corrupt(format!("not a sidecar: {e}")))
+    drop_unreadable_grid_check::<GridCheck>(&mut value);
+    let mut doc: SidecarDoc =
+        serde_json::from_value(value).map_err(|e| corrupt(format!("not a sidecar: {e}")))?;
+    read_as_advisory_when_confirmed(&mut doc);
+    Ok(doc)
 }
 
-/// Removes `export.gridCheck` from a sidecar's JSON when this version cannot read it (a later
-/// version's result), so the sidecar still reads, without it.
-fn drop_unreadable_grid_check(value: &mut serde_json::Value) {
+/// A disagreement an earlier version recorded on a confirmed grid, as this version words it:
+/// nothing reads such a file as failed.
+fn read_as_advisory_when_confirmed(doc: &mut SidecarDoc) {
+    let Some(export) = doc.export.as_mut() else {
+        return;
+    };
+    if export.grid.as_ref().is_some_and(|g| g.confirmed) {
+        export.grid_check = export.grid_check.take().map(GridCheck::on_confirmed_grid);
+    }
+}
+
+/// Removes `export.gridCheck` from a sidecar's JSON when this version cannot read it as a `C`,
+/// the result type (a later version's result), so the sidecar still reads, without it.
+fn drop_unreadable_grid_check<C: serde::de::DeserializeOwned>(value: &mut serde_json::Value) {
     let Some(export) = value
         .get_mut("export")
         .and_then(serde_json::Value::as_object_mut)
@@ -287,7 +301,7 @@ fn drop_unreadable_grid_check(value: &mut serde_json::Value) {
     };
     let unreadable = export
         .get("gridCheck")
-        .is_some_and(|c| serde_json::from_value::<GridCheck>(c.clone()).is_err());
+        .is_some_and(|c| serde_json::from_value::<C>(c.clone()).is_err());
     if unreadable {
         export.remove("gridCheck");
     }

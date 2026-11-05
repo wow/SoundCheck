@@ -22,7 +22,9 @@ mod record;
 mod sidecar;
 mod xml_grid;
 
-pub use grid_check::{GRID_CHECK_BPM_TOLERANCE, GRID_CHECK_OFFSET_MS, GridCheck, GridCheckSkip};
+pub use grid_check::{
+    GRID_CHECK_BPM_TOLERANCE, GRID_CHECK_OFFSET_MS, GridCheck, GridCheckSkip, GridDisagreement,
+};
 pub use record::{
     MAX_RECORD_BYTES, RecordError, RecordGain, SOUNDCHECK_RECORD_VERSION, SoundcheckRecord,
 };

@@ -92,10 +92,15 @@ PROCESS (`run_batch` with `Task::Process(ProcessSettings{decide, export, out_dir
   size and mtime match the old one) -> GRID-CHECK (`sc_engine::export::grid_check`, relative to the source's own analysis: at plan time the source's detector grid
   (the analysed grid; for a grid the user edited, its evidence refitted with only the user's meter, a tempo tap at the exported BPM and
   the fitted part, never a placed bar line, chosen beat 1 or typed BPM) gives ExportedGrid.detector_offset_ms (its bar line nearest bar 1,
-  minus bar 1) and detector_bpm, recorded in the sidecar; after the write the output's fresh analysis, solved with the same choices, must
-  give a bar line within 5 ms of bar1 + detector_offset_ms modulo the bar and a tempo within 0.005 BPM of detector_bpm (for an unedited
-  grid: the exported bar 1 and bpm_exact themselves); odd meters, no grid, a withheld grid, an unfinished analysis -> NotChecked{reason};
-  two refits under 5 ms each on top of the analysis)
+  minus bar 1) and detector_bpm, recorded in the sidecar; after the write the output's fresh analysis, solved with the same choices, is
+  expected to give a bar line within 5 ms of bar1 + detector_offset_ms modulo the bar and a tempo within 0.005 BPM of detector_bpm (for an
+  unedited grid: the exported bar 1 and bpm_exact themselves); it reports, it gates nothing, because the detector is not stable under gain:
+  agreement -> Pass; ExportedGrid.confirmed + any disagreement -> Advisory{disagreement: OffBy|BpmDiffers|MeterDiffers|NoGridFound}; not
+  confirmed + bar lines a whole number of beats away within 5 ms -> CheckBar1{offset_ms, bpm_diff, beats}; not confirmed + anything else ->
+  OffBy | BpmDiffers | MeterDiffers | NoGridFound (`GridCheck::failed`); odd meters, no grid, a withheld grid, an unfinished analysis ->
+  NotChecked{reason}. The `result` tag alone tells them apart: the UI matches on it and never parses the text, and a reader that does not know
+  a value reads the check as absent (the sidecar and journal readers drop it), so adding an outcome needs no schema bump; `sidecar::read` reads
+  a disagreement recorded on a confirmed grid by an earlier version as Advisory. Two refits under 5 ms each on top of the analysis)
   -> `sc_io::txn::record_grid_check` (a journal line for the transaction, so a sidecar re-rendered from the journal keeps it, then the
   sidecar's `export.gridCheck` patched when the sidecar is still that transaction's) -> Done{ProcessDone{output, analysis, edit,
   edit_carried, grid_check, notes}} (a panic there is a note too: once the file is replaced, the file is Done). Edits are stored per path and audio

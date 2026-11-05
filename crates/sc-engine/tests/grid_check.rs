@@ -2,9 +2,10 @@
 //! tracks with an accented bar (the grid tests need the model files and are skipped without): a
 //! Prepare export checks itself and records the result in the event, the sidecar, the journal
 //! and the grid report; the user's own choices (a nudged bar 1, a typed tempo, another beat 1)
-//! pass; audio that lost 20 ms or a beat more than the export recorded fails, also when the user
-//! chose beat 1; a bar-1 kick 5 ms into a file is found there. Files without a grid are reported
-//! as not checked.
+//! pass; audio that lost 20 ms more than the export recorded is reported on a grid not confirmed,
+//! a whole beat more asks to check bar 1, and either is advisory on a confirmed grid; a bar-1
+//! kick 5 ms into a file is found there. Files without a grid are reported as not checked, and
+//! each outcome reaches the sidecar and the grid report with its numbers.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -20,7 +21,8 @@ use common::export::*;
 use sc_core::Seconds;
 use sc_core::analysis::{AnalysisRecord, Grid, GridEdit};
 use sc_core::export::{
-    BatchMode, ExportOutcome, GridCheck, GridCheckSkip, XmlGrid, XmlOnlyReason, XmlTrackInfo,
+    BatchMode, ExportOutcome, GridCheck, GridCheckSkip, GridDisagreement, XmlGrid, XmlOnlyReason,
+    XmlTrackInfo,
 };
 use sc_core::export::{ExportRecord, ExportedGrid};
 use sc_core::plan::Codec;
@@ -158,8 +160,21 @@ fn recheck(worse: &Path, exported: &ExportedGrid, edited: bool) -> GridCheck {
 
 fn offset(check: &GridCheck) -> f64 {
     match check {
-        GridCheck::Pass { offset_ms, .. } | GridCheck::OffBy { offset_ms, .. } => *offset_ms,
+        GridCheck::Pass { offset_ms, .. }
+        | GridCheck::OffBy { offset_ms, .. }
+        | GridCheck::CheckBar1 { offset_ms, .. }
+        | GridCheck::Advisory {
+            disagreement: GridDisagreement::OffBy { offset_ms, .. },
+        } => *offset_ms,
         other => panic!("no offset: {other:?}"),
+    }
+}
+
+/// `grid` as it would be had the user not confirmed it.
+fn unconfirmed(grid: &ExportedGrid) -> ExportedGrid {
+    ExportedGrid {
+        confirmed: false,
+        ..grid.clone()
     }
 }
 
@@ -235,7 +250,7 @@ fn done_report(path: &Path, done: &sc_engine::ProcessDone, export: &ExportRecord
 }
 
 #[test]
-fn extra_20_ms_trim_fails() {
+fn an_extra_20_ms_cut_is_reported_and_an_extra_beat_asks_to_check_bar_1() {
     if !common::have_models() {
         return;
     }
@@ -244,19 +259,42 @@ fn extra_20_ms_trim_fails() {
     let (done, export, _) = export_with(&lib, &path, |_| GridEdit::default());
     assert!(done.grid_check.passed(), "{:?}", done.grid_check);
     let grid = export.grid.expect("grid exported");
+    assert!(grid.confirmed, "{grid:?}");
     // The same audio with 20 ms (882 frames) more cut than the export recorded: bar 1 now sits
     // 20 ms before where the record puts it.
     let worse = lib.dir.path().join("worse.wav");
     cut_more(&path, 882, &worse);
-    let check = recheck(&worse, &grid, false);
-    assert!(matches!(check, GridCheck::OffBy { .. }), "{check:?}");
+    let check = recheck(&worse, &unconfirmed(&grid), false);
+    assert!(
+        matches!(check, GridCheck::OffBy { .. }) && check.failed(),
+        "{check:?}"
+    );
     assert!((offset(&check) + 20.0).abs() <= 2.0, "{check:?}");
     assert!(check.to_string().starts_with("off by -"), "{check}");
-    // A whole beat more: a beat off, modulo the bar.
+    // The user confirmed this grid by ear: the same reading is advisory, with the same number.
+    let check = recheck(&worse, &grid, false);
+    assert!(
+        matches!(check, GridCheck::Advisory { .. }) && !check.failed(),
+        "{check:?}"
+    );
+    assert!((offset(&check) + 20.0).abs() <= 2.0, "{check:?}");
+    // A whole beat more: a beat off, modulo the bar. The frame count a real write is held to
+    // pins the cut, so the check only asks which beat bar 1 is.
     let beat = lib.dir.path().join("beat.wav");
     cut_more(&path, BEAT_FRAMES, &beat);
-    let check = recheck(&beat, &grid, false);
     let beat_ms = 60_000.0 / BPM;
+    let check = recheck(&beat, &unconfirmed(&grid), false);
+    assert!(
+        matches!(check, GridCheck::CheckBar1 { beats, .. } if beats.abs() == 1),
+        "{check:?}"
+    );
+    assert!((offset(&check).abs() - beat_ms).abs() <= 2.0, "{check:?}");
+    assert!(!check.failed(), "{check:?}");
+    let check = recheck(&beat, &grid, false);
+    assert!(
+        matches!(check, GridCheck::Advisory { .. }) && !check.failed(),
+        "{check:?}"
+    );
     assert!((offset(&check).abs() - beat_ms).abs() <= 2.0, "{check:?}");
 }
 
@@ -303,7 +341,7 @@ fn a_typed_tempo_passes() {
 }
 
 #[test]
-fn a_chosen_beat_1_passes_and_an_extra_beat_cut_still_fails() {
+fn a_chosen_beat_1_passes_and_an_extra_beat_cut_is_not_a_failure() {
     if !common::have_models() {
         return;
     }
@@ -323,8 +361,32 @@ fn a_chosen_beat_1_passes_and_an_extra_beat_cut_still_fails() {
     let beat = lib.dir.path().join("beat.wav");
     cut_more(&path, BEAT_FRAMES, &beat);
     let check = recheck(&beat, &grid, true);
-    assert!(matches!(check, GridCheck::OffBy { .. }), "{check:?}");
+    assert!(
+        matches!(check, GridCheck::Advisory { .. }) && !check.failed(),
+        "{check:?}"
+    );
     assert!((offset(&check).abs() - beat_ms).abs() <= 2.0, "{check:?}");
+    let check = recheck(&beat, &unconfirmed(&grid), true);
+    assert!(
+        matches!(check, GridCheck::CheckBar1 { .. }) && !check.failed(),
+        "{check:?}"
+    );
+    assert!((offset(&check).abs() - beat_ms).abs() <= 2.0, "{check:?}");
+}
+
+#[test]
+fn a_plain_click_track_confirmed_never_reads_as_failed() {
+    if !common::have_models() {
+        return;
+    }
+    // Clicks with little to tell its beats apart: which beat the detector calls bar 1 is close
+    // to a tie, and may differ across platforms, so this asserts only that nothing reads as
+    // failed on a grid the user confirmed.
+    let lib = Lib::new();
+    let path = click(&lib);
+    let (done, export, _) = export_with(&lib, &path, |_| GridEdit::default());
+    assert!(!done.grid_check.failed(), "{:?}", done.grid_check);
+    assert!(export.grid.expect("grid exported").confirmed);
 }
 
 #[test]
@@ -451,4 +513,187 @@ fn a_grid_confirmed_under_another_bpm_range_passes() {
         .expect("grid");
     assert!((grid.bpm_exact.0 - analysed.bpm.0).abs() < 1e-9, "{grid:?}");
     assert!(done.grid_check.passed(), "{:?}", done.grid_check);
+}
+
+/// One row of a report holding `check`, as `sc-cli process` writes it, its bytes as text.
+fn report_with(check: &GridCheck) -> String {
+    let outcome = ExportOutcome::XmlOnly {
+        reason: XmlOnlyReason::Mp3OrAac { codec: Codec::Mp3 },
+    };
+    let mut row = BatchRow::not_written(
+        Path::new("/m/a.mp3"),
+        BatchMode::Prepare,
+        &outcome,
+        Seconds(200.0),
+        Codec::Mp3,
+        XmlTrackInfo {
+            grid: XmlGrid::Absent,
+            title: None,
+            artist: None,
+        },
+    );
+    row.grid_check = Some(check.clone());
+    let cells = report_rows(&[row], XmlSelect::Batch);
+    let mut bytes = Vec::new();
+    sc_io::report::write_csv(&cells, &mut bytes).expect("written");
+    String::from_utf8(bytes).expect("UTF-8")
+}
+
+#[test]
+fn the_grid_report_cell_keeps_the_numbers_of_every_outcome() {
+    let off = GridCheck::OffBy {
+        offset_ms: -416.74,
+        bpm_diff: 0.000_2,
+    };
+    let report = report_with(&off.clone().on_confirmed_grid());
+    assert!(
+        report.contains(
+            ",the analysis reads this differently; your confirmed grid was written: \
+             off by -416.7 ms (BPM +0.0002),"
+        ),
+        "{report}"
+    );
+    let report = report_with(&GridCheck::CheckBar1 {
+        offset_ms: -416.74,
+        bpm_diff: 0.000_2,
+        beats: -1,
+    });
+    // Quoted: the wording holds a comma.
+    assert!(
+        report.contains(
+            r#","check bar 1: the analysis reads it 1 beat earlier (bar line -416.7 ms, BPM +0.0002)""#
+        ),
+        "{report}"
+    );
+    let report = report_with(&off);
+    assert!(
+        report.contains(",off by -416.7 ms (BPM +0.0002),"),
+        "{report}"
+    );
+    let bpm = GridCheck::BpmDiffers {
+        bpm_diff: 0.006,
+        found: sc_core::Bpm(120.006),
+    };
+    let report = report_with(&bpm.on_confirmed_grid());
+    assert!(
+        report.contains(": BPM differs by +0.0060 (found 120.006),"),
+        "{report}"
+    );
+    let meter = GridCheck::MeterDiffers {
+        found: sc_core::analysis::Meter::three_four(),
+    };
+    let report = report_with(&meter.on_confirmed_grid());
+    assert!(report.contains(": meter differs (found 3/4),"), "{report}");
+}
+
+/// A tone exported in Library mode: its path, and its sidecar as JSON.
+fn exported_tone(lib: &Lib) -> (PathBuf, serde_json::Value) {
+    let path = common::tone_wav(&lib.music(), "tone.wav", 12.0, 0.9);
+    let s = settings(
+        lib,
+        common::loudness_only(),
+        process(lib, BatchMode::Library, None),
+    );
+    let events = run(&batch(std::slice::from_ref(&path)), &s, &CancelToken::new());
+    assert_eq!(
+        names(&events, 1),
+        ["started", "processing", "written", "done"]
+    );
+    let sidecar = sc_io::txn::sidecar_path(&path);
+    let value = serde_json::from_slice(&std::fs::read(sidecar).expect("sidecar")).expect("JSON");
+    (path, value)
+}
+
+/// The sidecar `value` with a grid confirmed or not, and the check it records.
+fn with_check(
+    mut value: serde_json::Value,
+    confirmed: bool,
+    check: &serde_json::Value,
+) -> serde_json::Value {
+    value["export"]["grid"] = serde_json::json!({
+        "bar1": 220,
+        "firstBarLine": 220,
+        "bpm": 120.0,
+        "bpmExact": 120.0,
+        "meter": sc_core::analysis::Meter::four_four(),
+        "edited": false,
+        "confirmed": confirmed,
+    });
+    value["export"]["gridCheck"] = check.clone();
+    value
+}
+
+#[test]
+fn the_new_outcomes_round_trip_through_the_sidecar_with_their_numbers() {
+    let lib = Lib::new();
+    let (path, value) = exported_tone(&lib);
+    let txn = value["transaction"]
+        .as_str()
+        .expect("transaction")
+        .to_owned();
+    let sidecar = sc_io::txn::sidecar_path(&path);
+    for (confirmed, check) in [
+        (
+            false,
+            GridCheck::CheckBar1 {
+                offset_ms: -416.74,
+                bpm_diff: 0.000_2,
+                beats: -1,
+            },
+        ),
+        (
+            true,
+            GridCheck::OffBy {
+                offset_ms: -416.74,
+                bpm_diff: 0.000_2,
+            }
+            .on_confirmed_grid(),
+        ),
+        (true, GridCheck::NoGridFound.on_confirmed_grid()),
+    ] {
+        let first = with_check(value.clone(), confirmed, &serde_json::Value::Null);
+        std::fs::write(&sidecar, serde_json::to_vec(&first).expect("JSON")).expect("written");
+        sc_io::txn::record_grid_check(&lib.backups(), &txn, &path, &check).expect("recorded");
+        let read = sc_io::txn::sidecar::read(&sidecar).expect("reads");
+        assert_eq!(read.export.expect("export").grid_check, Some(check));
+    }
+}
+
+#[test]
+fn a_disagreement_recorded_earlier_on_a_confirmed_grid_reads_as_advisory() {
+    let lib = Lib::new();
+    let (path, value) = exported_tone(&lib);
+    let sidecar = sc_io::txn::sidecar_path(&path);
+    let recorded = serde_json::json!({"result": "offBy", "offsetMs": -416.7, "bpmDiff": 0.0});
+    let read_with = |confirmed: bool| {
+        let doc = with_check(value.clone(), confirmed, &recorded);
+        std::fs::write(&sidecar, serde_json::to_vec(&doc).expect("JSON")).expect("written");
+        let read = sc_io::txn::sidecar::read(&sidecar).expect("reads");
+        read.export.expect("export").grid_check.expect("a result")
+    };
+    let confirmed = read_with(true);
+    assert!(!confirmed.failed(), "{confirmed:?}");
+    assert_eq!(
+        confirmed,
+        GridCheck::Advisory {
+            disagreement: GridDisagreement::OffBy {
+                offset_ms: -416.7,
+                bpm_diff: 0.0,
+            }
+        }
+    );
+    // Not confirmed, it stays as it was recorded.
+    assert!(read_with(false).failed());
+}
+
+#[test]
+fn a_later_result_in_a_sidecar_reads_as_absent() {
+    let lib = Lib::new();
+    let (path, value) = exported_tone(&lib);
+    let sidecar = sc_io::txn::sidecar_path(&path);
+    let later = serde_json::json!({"result": "somethingLater", "offsetMs": 1.0});
+    let doc = with_check(value, true, &later);
+    std::fs::write(&sidecar, serde_json::to_vec(&doc).expect("JSON")).expect("written");
+    let read = sc_io::txn::sidecar::read(&sidecar).expect("reads");
+    assert_eq!(read.export.expect("export").grid_check, None);
 }

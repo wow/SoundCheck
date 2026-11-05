@@ -14,7 +14,8 @@
 //! Columns: `file` (as given), `mode` (`prepare`, `library`, or empty for a file only read),
 //! `action` (what happened to it), `gain_db`, `cut_s`, `bpm` (as written), `bar1_s` (bar 1 in
 //! the file as it is now), `grid` (what the rekordbox XML carries for it, or why not),
-//! `grid_check` (the check of the exported grid, when it ran), `notes` (`; `-separated).
+//! `grid_check` (the check of the exported grid as `sc_core::export::GridCheck` words it, with
+//! its numbers, when it ran), `notes` (`; `-separated).
 
 use std::io::Write;
 
