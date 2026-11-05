@@ -30,7 +30,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('the browser stand-in, for the notices and the recovery banner', () => {
+// Whole flows on fake timers: quick in time, but each renders the app many times over.
+describe('the browser stand-in, for the notices and the recovery banner', { timeout: 20_000 }, () => {
   it('exports rows with stale tags, Serato Autotags and a FLAC, each saying so', async () => {
     installMockBackend('none');
     render(<App />);
@@ -74,9 +75,15 @@ describe('the browser stand-in, for the notices and the recovery banner', () => 
     expect(
       within(banner).getByText('2 changes from the last session could not be finished'),
     ).toBeInTheDocument();
+    await act(async () => addPaths(['/Users/mock/Music/Crate']));
+    await advance(10_000);
     fireEvent.click(
       within(banner).getAllByRole('button', { name: /^Forget the change to/ })[0] as HTMLElement,
     );
+    // While the step asks, the table's keys wait: the arrows do not move the selection.
+    const before = useLibrary.getState().selected;
+    fireEvent.keyDown(window, { key: 'ArrowDown' });
+    expect(useLibrary.getState().selected).toBe(before);
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Forget' }));
     await advance(100);
     expect(
