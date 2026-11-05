@@ -120,6 +120,18 @@ fn a_report_cut_short_or_damaged_is_not_an_empty_one() {
     let mut short = bytes.clone();
     short.extend_from_slice(b"just one field\r\n");
     assert_eq!(read_rows(&short), None, "a row with too few fields");
+    // Cut inside the last field, quoted: every field is there, but not all of it.
+    let noted = csv_bytes(&[ReportRow {
+        file: "/a.wav".to_owned(),
+        notes: vec!["a, b".to_owned()],
+        ..ReportRow::default()
+    }]);
+    assert!(read_rows(&noted).is_some());
+    assert_eq!(
+        read_rows(&noted[..noted.len() - 4]),
+        None,
+        "cut in the last field"
+    );
     let text = String::from_utf8(bytes).unwrap().replace("-1.00", "oops");
     assert_eq!(read_rows(text.as_bytes()), None, "a number that is none");
 }

@@ -412,4 +412,9 @@ fn what_it_cannot_read_as_ours_it_says_so() {
         None,
         "a track with no tempo"
     );
+    assert_eq!(
+        read_tracks(b"<DJ_PLAYLISTS><COLLECTION><TRACK Location=\"file://localhost/a.wav\" TotalTime=\"1\"/></COLLECTION></DJ_PLAYLISTS>"),
+        None,
+        "an empty track"
+    );
 }

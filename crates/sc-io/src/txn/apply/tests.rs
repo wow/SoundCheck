@@ -424,6 +424,11 @@ fn a_copy_changed_while_waiting_for_its_lock_is_left_as_it_is() {
         std::fs::read(&copy).expect("copy"),
         b"edited while waiting for the lock"
     );
+    assert_eq!(
+        journal_entries(&s.backups).expect("journal").len(),
+        1,
+        "refused before anything was written or journaled"
+    );
 }
 
 #[test]
