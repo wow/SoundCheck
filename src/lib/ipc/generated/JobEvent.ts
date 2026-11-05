@@ -145,10 +145,16 @@ fileId: number,
  */
 row: ExportRow, 
 /**
+ * The file was replaced in place (not copied to a folder).
+ */
+inPlace: boolean, 
+/**
  * The row's analysis and plan after an export in place: the written file's own, with
- * the grid edit carried over. `None` for a copy in a folder, whose source and row do
- * not change, and when the written file's analysis did not finish (the row's `notes`
- * say so; analyse the row again).
+ * the grid edit carried over. `null` means two different things. With `inPlace` false
+ * (a copy in a folder) the source did not change and the row stays as it is. With
+ * `inPlace` true the written file's analysis did not finish (`row.notes` say why): the
+ * numbers the row shows describe audio that is gone, so clear them and analyse the row
+ * again. The session has already dropped them.
  */
 update: RowUpdate | null, } | { "type": "artefacts", 
 /**

@@ -235,7 +235,8 @@ fn a_pending_change_is_listed_and_can_be_forgotten() {
     });
     let journal = lib.backups().join("journal.jsonl");
     let mut text = std::fs::read_to_string(&journal).unwrap();
-    text.push_str(&format!("{line}\n"));
+    text.push_str(&line.to_string());
+    text.push('\n');
     std::fs::write(&journal, text).unwrap();
     assert_eq!(
         shell.forget(unlisted).unwrap_err().kind,
@@ -286,17 +287,16 @@ fn two_forgets_at_once_lose_neither() {
     let lib = Lib::new();
     let ids: Vec<String> = (0..8).map(|n| format!("6ac5b4f4-9-{n}")).collect();
     let gone = lib.base().join("Volumes/Gone/Track.wav");
-    let lines: String = ids
-        .iter()
-        .map(|txn| {
-            let line = serde_json::json!({
-                "txn": txn, "state": "planned", "at": "2026-10-07T10:00:00Z",
-                "kind": "in_place", "path": gone, "source": gone,
-                "temp": gone.with_file_name(format!(".Track.wav.soundcheck-tmp-{txn}")),
-            });
-            format!("{line}\n")
-        })
-        .collect();
+    let mut lines = String::new();
+    for txn in &ids {
+        let line = serde_json::json!({
+            "txn": txn, "state": "planned", "at": "2026-10-07T10:00:00Z",
+            "kind": "in_place", "path": gone, "source": gone,
+            "temp": gone.with_file_name(format!(".Track.wav.soundcheck-tmp-{txn}")),
+        });
+        lines.push_str(&line.to_string());
+        lines.push('\n');
+    }
     std::fs::create_dir_all(lib.backups()).unwrap();
     std::fs::write(lib.backups().join("journal.jsonl"), lines).unwrap();
     let shell = lib.shell(1);

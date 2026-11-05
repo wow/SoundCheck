@@ -23,4 +23,9 @@ plan: Plan | null,
 /**
  * Where the latest export of it stands, until it is reverted or exported again.
  */
-export: ExportRow | null, };
+export: ExportRow | null, 
+/**
+ * A change of it is in effect that `revert_file` can put back: also true with no `export`
+ * after a revert that left an earlier change standing.
+ */
+revertible: boolean, };

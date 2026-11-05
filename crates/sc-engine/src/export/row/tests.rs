@@ -111,7 +111,7 @@ fn long_notes_and_tags_stay_within_the_budget_at_every_step() {
     );
     assert_eq!(w.stage, JobStage::Writing);
     assert!(json_len(&w) <= MAX_ROW_BYTES, "written: {}", json_len(&w));
-    assert!(!w.notes.is_empty(), "the notes are kept, cut");
+    assert_ne!(w.notes.len(), 0, "the notes are kept, cut");
     assert!(
         !w.verification
             .as_ref()
@@ -133,7 +133,7 @@ fn long_notes_and_tags_stay_within_the_budget_at_every_step() {
         &process_done(many()),
     );
     assert!(json_len(&d) <= MAX_ROW_BYTES, "done: {}", json_len(&d));
-    assert!(!d.notes.is_empty());
+    assert_ne!(d.notes.len(), 0);
 }
 
 #[test]
