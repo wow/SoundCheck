@@ -7,7 +7,7 @@ use std::io::Write;
 use clap::ValueEnum;
 use sc_core::export::{
     BatchMode, Cut, DEFAULT_LEAD_MS, ExportOutcome, ExportPlan, ExportSettings, ExportSkip,
-    LEAD_MS_RANGE,
+    LEAD_MS_RANGE, Place,
 };
 pub(crate) use sc_engine::export::wording::{GRID_WITHHELD, notice_text, skip_why, xml_only_text};
 
@@ -58,7 +58,9 @@ impl ExportArgs {
         let Some(mode) = self.batch_mode else {
             return Ok(None);
         };
+        // What an export in place would do: the strictest case for Serato data and tags.
         let settings = ExportSettings {
+            place: Place::InPlace,
             grid_only: self.grid_only,
             lead_ms: self.lead_ms,
             xml: !self.no_xml,

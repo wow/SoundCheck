@@ -59,7 +59,7 @@ fn in_place_writes_backs_up_and_records_the_export() {
     let lib = Library::new();
     let wav = tone(&lib, "a.wav", 44_100);
     let original = bytes(&wav);
-    let run = process(&lib, &[arg(&wav), "--batch-mode", "library"]);
+    let run = process(&lib, &[arg(&wav), "--in-place", "--batch-mode", "library"]);
     assert!(run.ok, "{}", run.text());
     let first = run.stdout.lines().next().expect("a line");
     assert!(
@@ -166,7 +166,14 @@ fn json_has_one_document_per_file() {
     let hi_res = tone(&lib, "b.wav", 96_000);
     let run = process(
         &lib,
-        &[arg(&wav), arg(&hi_res), "--batch-mode", "library", "--json"],
+        &[
+            arg(&wav),
+            arg(&hi_res),
+            "--in-place",
+            "--batch-mode",
+            "library",
+            "--json",
+        ],
     );
     assert!(run.ok, "{}", run.text());
     let docs = run.docs();
@@ -196,6 +203,7 @@ fn refusals_print_three_lines_and_fail_the_run() {
             arg(&wav),
             arg(&wav),
             arg(&missing),
+            "--in-place",
             "--batch-mode",
             "library",
         ],
@@ -220,7 +228,10 @@ fn refusals_print_three_lines_and_fail_the_run() {
     // A skipped file is not a failure.
     let lib = Library::new();
     let hi_res = tone(&lib, "b.wav", 96_000);
-    let run = process(&lib, &[arg(&hi_res), "--batch-mode", "prepare"]);
+    let run = process(
+        &lib,
+        &[arg(&hi_res), "--in-place", "--batch-mode", "prepare"],
+    );
     assert!(run.ok, "{}", run.text());
     assert!(
         run.stdout.contains("b.wav: prepare: skipped"),
@@ -232,4 +243,43 @@ fn refusals_print_three_lines_and_fail_the_run() {
         "{}",
         run.text()
     );
+}
+
+#[test]
+fn refuses_without_being_told_where_files_go() {
+    let lib = Library::new();
+    let wav = tone(&lib, "a.wav", 44_100);
+    let before = bytes(&wav);
+    let run = process(&lib, &[arg(&wav), "--batch-mode", "prepare"]);
+    assert_eq!(run.code, Some(2), "{}", run.text());
+    assert_eq!(bytes(&wav), before, "nothing was written");
+    assert!(!lib.backups.exists(), "nothing was journaled");
+    let lines: Vec<&str> = run.stderr.lines().collect();
+    assert_eq!(lines.len(), 3, "three lines: {}", run.stderr);
+    assert!(lines[1].contains("why:"), "{}", run.stderr);
+    assert!(
+        lines[2].contains("--out") && lines[2].contains("--in-place"),
+        "{}",
+        run.stderr
+    );
+}
+
+#[test]
+fn out_and_in_place_are_one_choice() {
+    let lib = Library::new();
+    let wav = tone(&lib, "a.wav", 44_100);
+    let out = lib.base.join("out");
+    let run = process(
+        &lib,
+        &[
+            arg(&wav),
+            "--batch-mode",
+            "prepare",
+            "--in-place",
+            "--out",
+            arg(&out),
+        ],
+    );
+    assert_eq!(run.code, Some(2), "{}", run.text());
+    assert!(!out.exists());
 }

@@ -4,11 +4,11 @@ const initial = useSettings.getState();
 beforeEach(() => useSettings.setState(initial, true));
 
 describe('export settings', () => {
-  it('default to Prepare, in place with backup, source depth, XML on, TBPM in Prepare only', () => {
+  it('default to Prepare, to a folder, source depth, XML on, TBPM in Prepare only', () => {
     const s = useSettings.getState();
     expect(exportSettings(s, 'prepare')).toEqual({
       batchMode: 'prepare',
-      place: 'inPlace',
+      place: 'folder',
       depth: null,
       gridOnly: false,
       tbpm: true,
@@ -28,7 +28,7 @@ describe('export settings', () => {
   it('are in the saved part, so they persist', () => {
     const s = useSettings.getState();
     s.setBatchMode('library');
-    s.setPlace('folder');
+    s.setPlace('inPlace');
     s.setOutDir('/Music/Out');
     s.setDepth(16);
     s.setGridOnly(true);
@@ -36,7 +36,7 @@ describe('export settings', () => {
     s.setXml(false);
     expect(savedPart(useSettings.getState())).toMatchObject({
       batchMode: 'library',
-      place: 'folder',
+      place: 'inPlace',
       outDir: '/Music/Out',
       depth: 16,
       gridOnly: true,

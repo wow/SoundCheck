@@ -110,7 +110,10 @@ fn written(outcome: ExportOutcome) -> ExportPlan {
 }
 
 fn prepare() -> ExportSettings {
-    ExportSettings::new(BatchMode::Prepare)
+    ExportSettings {
+        place: Place::InPlace,
+        ..ExportSettings::new(BatchMode::Prepare)
+    }
 }
 
 fn cut_of(rate: u32, anchor: u64) -> Cut {

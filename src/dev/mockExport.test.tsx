@@ -25,6 +25,7 @@ describe('the browser stand-in', () => {
       },
     );
     useRecovery.setState({ running: false });
+    useSettings.setState({ place: 'inPlace' });
   });
   afterEach(() => {
     vi.useRealTimers();

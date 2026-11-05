@@ -61,7 +61,7 @@ describe('Rail', () => {
       mockIPC(() => []);
       render(<Rail />);
       expect(pressed('Prepare')).toBeInTheDocument();
-      expect(pressed('In place with backup')).toBeInTheDocument();
+      expect(pressed('To folder')).toBeInTheDocument();
       expect(pressed('Source')).toBeInTheDocument();
       expect(screen.getByRole('checkbox', { name: 'Grid only (no audio change)' })).not.toBeChecked();
       expect(screen.getByRole('checkbox', { name: 'Write TBPM' })).toBeChecked();
@@ -72,7 +72,7 @@ describe('Rail', () => {
       mockIPC(() => []);
       render(<Rail />);
       await userEvent.click(screen.getByRole('button', { name: 'Library' }));
-      await userEvent.click(screen.getByRole('button', { name: 'To folder' }));
+      await userEvent.click(screen.getByRole('button', { name: 'In place with backup' }));
       await userEvent.click(screen.getByRole('button', { name: '24-bit' }));
       await userEvent.click(screen.getByRole('checkbox', { name: 'Write rekordbox XML' }));
       // TBPM is per mode: off by default in Library, a track's tag being the DJ app's.
@@ -82,7 +82,7 @@ describe('Rail', () => {
       const saved = savedPart(useSettings.getState());
       expect(saved).toMatchObject({
         batchMode: 'library',
-        place: 'folder',
+        place: 'inPlace',
         depth: 24,
         xml: false,
         tbpm: { prepare: true, library: true },
@@ -90,7 +90,7 @@ describe('Rail', () => {
       // What is saved reads back as it was.
       expect(sanitize(JSON.parse(JSON.stringify(saved)) as Record<string, unknown>)).toMatchObject({
         batchMode: 'library',
-        place: 'folder',
+        place: 'inPlace',
         depth: 24,
         xml: false,
       });
@@ -121,7 +121,6 @@ describe('Rail', () => {
     it('asks for a folder for To folder, and shows the one chosen', async () => {
       mockIPC((cmd) => (cmd === 'plugin:dialog|open' ? '/Users/dj/Music/Out' : undefined));
       render(<Rail />);
-      await userEvent.click(screen.getByRole('button', { name: 'To folder' }));
       expect(screen.getByText('No folder chosen')).toBeInTheDocument();
       await userEvent.click(screen.getByRole('button', { name: 'Choose…' }));
       await waitFor(() => expect(useSettings.getState().outDir).toBe('/Users/dj/Music/Out'));
@@ -208,6 +207,7 @@ describe('Rail', () => {
       addRow(1, '/a');
       addRow(2, '/a');
       render(<Rail />);
+      useSettings.setState({ outDir: '/Out' });
       expect(exportButton()).toHaveTextContent('Export 2');
       expect(exportButton()).toBeEnabled();
     });
@@ -227,7 +227,7 @@ describe('Rail', () => {
       useSettings.setState({ place: 'folder', outDir: null });
       render(<Rail />);
       expect(exportButton()).toBeDisabled();
-      expect(screen.getByText('Choose a folder first.')).toBeInTheDocument();
+      expect(screen.getByText('Choose a folder')).toBeInTheDocument();
     });
 
     it('with nothing analysed there is nothing to press', () => {
@@ -235,7 +235,7 @@ describe('Rail', () => {
       useLibrary.getState().add([entry(1)]);
       render(<Rail />);
       expect(exportButton()).toBeDisabled();
-      expect(DEFAULT_SETTINGS.place).toBe('inPlace');
+      expect(DEFAULT_SETTINGS.place).toBe('folder');
     });
   });
 });

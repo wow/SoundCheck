@@ -79,7 +79,14 @@ fn process_in_place_writes_the_artefacts_into_a_new_batch_folder() {
     let wav = tone(&lib, "Şarkı & co.wav");
     let run = sc_cli(
         &lib,
-        &["process", arg(&wav), "--batch-mode", "prepare", "--no-grid"],
+        &[
+            "process",
+            arg(&wav),
+            "--in-place",
+            "--batch-mode",
+            "prepare",
+            "--no-grid",
+        ],
     );
     assert!(run.ok, "{}", run.text());
     let folders = batch_folders(&lib);
@@ -136,7 +143,14 @@ fn process_in_place_writes_the_artefacts_into_a_new_batch_folder() {
     // A second batch gets its own folder.
     let again = sc_cli(
         &lib,
-        &["process", arg(&wav), "--batch-mode", "prepare", "--no-grid"],
+        &[
+            "process",
+            arg(&wav),
+            "--in-place",
+            "--batch-mode",
+            "prepare",
+            "--no-grid",
+        ],
     );
     assert!(again.ok, "{}", again.text());
     assert_eq!(batch_folders(&lib).len(), 2);
@@ -199,6 +213,7 @@ fn no_xml_writes_no_artefacts() {
         &[
             "process",
             arg(&wav),
+            "--in-place",
             "--batch-mode",
             "library",
             "--no-grid",
@@ -265,7 +280,14 @@ fn xml_reads_an_export_back_from_its_sidecar() {
     tag_wav(&wav, "Gece Yarısı", "Ayşe & İlhan");
     let run = sc_cli(
         &lib,
-        &["process", arg(&wav), "--batch-mode", "library", "--no-grid"],
+        &[
+            "process",
+            arg(&wav),
+            "--in-place",
+            "--batch-mode",
+            "library",
+            "--no-grid",
+        ],
     );
     assert!(run.ok, "{}", run.text());
     record_grid(&wav);

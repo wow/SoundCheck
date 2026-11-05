@@ -50,7 +50,7 @@ export function exportBlock(g: ExportGate): string | null {
       ? 'Nothing new to export. Revert a track, or save its grid, to export it again.'
       : 'Analyse the tracks first.';
   }
-  if (g.needsFolder) return 'Choose a folder first.';
+  if (g.needsFolder) return 'Choose a folder';
   return null;
 }
 

@@ -1,7 +1,9 @@
 //! `sc-cli process`: exporting files with the engine's process job (`sc_engine::Task::Process`),
-//! the one the app's Export button runs. Crash recovery runs first; every file is analysed (the
-//! cache is used), planned as `sc-cli plan --batch-mode` plans it, written in place after a
-//! backup (or as a copy with `--out`), verified, and analysed again, its grid checked against
+//! the one the app's Export button runs. It must be told where files go: `--out <dir>` for copies,
+//! or `--in-place` to replace them after a backup; with neither it refuses, because changing the
+//! originals is never a default. Crash recovery runs first; every file is analysed (the
+//! cache is used), planned as `sc-cli plan --batch-mode` plans it, written, verified, and analysed
+//! again, its grid checked against
 //! the one exported (`  grid check:` under its line). Each file prints one line
 //! (or one JSON document) in the order given: what was written, or why not; a refusal prints
 //! three lines on stderr. A summary line ends the text output. Unless `--no-xml`, the batch's
@@ -78,9 +80,13 @@ pub struct ProcessArgs {
     /// Change no audio: no gain and no cut; only tags carry the grid.
     #[arg(long)]
     grid_only: bool,
-    /// Write copies into this folder (created if needed) and leave the files as they are.
-    #[arg(long, value_name = "DIR")]
+    /// Write copies into this folder (created if needed) and leave the files as they are. A copy
+    /// an earlier export wrote there is replaced; any other file of that name is left alone.
+    #[arg(long, value_name = "DIR", conflicts_with = "in_place")]
     out: Option<PathBuf>,
+    /// Replace the files themselves, after a backup. Either this or --out is required.
+    #[arg(long)]
+    in_place: bool,
     /// Output bits per sample.
     #[arg(long, value_enum, default_value = "source")]
     depth: DepthArg,
@@ -170,11 +176,25 @@ struct Counts {
     failed: usize,
 }
 
+/// Says that `process` was not told where files go, in three lines, and exits: changing the
+/// originals is never a default.
+fn refuse_no_destination() -> ! {
+    eprintln!(
+        "process: nothing written\n  why: it was not told where the files go, and it changes the \
+         originals only when asked\n  what to do: pass --out <folder> to write copies, or \
+         --in-place to replace the files after a backup"
+    );
+    std::process::exit(crate::EXIT_FAILED);
+}
+
 /// `sc-cli process`: returns how many files failed.
 ///
 /// # Errors
 /// Invalid flags, an unreachable backup, cache or edits folder, or a failed write to stdout.
 pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
+    if args.out.is_none() && !args.in_place {
+        refuse_no_destination();
+    }
     let decide = decide_settings(args.mode, args.target, args.ceiling, &args.analysis);
     decide.validate()?;
     let export = args.export_settings()?;

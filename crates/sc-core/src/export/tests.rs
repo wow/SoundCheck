@@ -5,11 +5,12 @@ use super::*;
 fn defaults_per_mode() {
     let prepare = ExportSettings::new(BatchMode::Prepare);
     assert!(prepare.tbpm && prepare.xml && !prepare.grid_only);
-    assert_eq!(prepare.place, Place::InPlace);
+    assert_eq!(prepare.place, Place::Folder);
     assert_eq!(prepare.depth, None);
     assert!((prepare.lead_ms - 5.0).abs() < f64::EPSILON);
     let library = ExportSettings::new(BatchMode::Library);
     assert!(!library.tbpm && library.xml);
+    assert_eq!(library.place, Place::Folder);
     assert_eq!(ExportSettings::default(), prepare);
     assert!(prepare.validate().is_ok() && library.validate().is_ok());
 }

@@ -54,7 +54,7 @@ function backend(answer: ExportPreview | { throws: unknown }) {
 
 beforeEach(() => {
   useLibrary.setState(initialLibrary, true);
-  useSettings.setState(initialSettings, true);
+  useSettings.setState({ ...initialSettings, place: 'inPlace' }, true);
   useRecovery.setState({ running: false });
   useExportFlow.setState({ phase: 'closed', request: null, preview: null, error: null, leftOut: 0 });
   // A pipeline left running by a test before this one.
@@ -245,6 +245,6 @@ describe('why Export cannot be pressed', () => {
     expect(exportBlock({ ...gate, xmlWriting: true })).toMatch(/XML/);
     expect(exportBlock({ ...gate, exportable: 0 })).toBe('Analyse the tracks first.');
     expect(exportBlock({ ...gate, exportable: 0, anyExported: true })).toMatch(/Revert a track, or save its grid/);
-    expect(exportBlock({ ...gate, needsFolder: true })).toMatch(/Choose a folder/);
+    expect(exportBlock({ ...gate, needsFolder: true })).toBe('Choose a folder');
   });
 });

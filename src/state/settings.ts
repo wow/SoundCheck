@@ -81,7 +81,8 @@ export const DEFAULT_SETTINGS: SavedSettings = {
   ceiling: -0.5,
   bpmRange: [70, 180],
   batchMode: 'prepare',
-  place: 'inPlace',
+  // Originals are changed only when asked; the folder is remembered once chosen.
+  place: 'folder',
   outDir: null,
   depth: null,
   gridOnly: false,
