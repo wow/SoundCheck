@@ -81,20 +81,24 @@ export function actionText(plan: Plan): {
   tone: 'fg' | 'accent' | 'muted';
 } {
   if (plan.skip) {
+    // Exporting leaves an AAC file as it is, and the rekordbox XML carries its grid.
+    if (plan.skip.type === 'analyseOnly' && plan.skip.codec === 'aac') {
+      return { main: 'Grid: XML only (AAC)', detail: 'AAC file writes arrive later', tone: 'muted' };
+    }
     const main =
       plan.skip.type === 'analyseOnly'
         ? `Skip: ${CODEC_LABEL[plan.skip.codec]} is analyse-only`
         : 'Skip: silent';
-    const detail = plan.skip.type === 'analyseOnly' ? 'Convert to AIFF arrives with export' : null;
+    const detail = plan.skip.type === 'analyseOnly' ? 'Convert to AIFF arrives later' : null;
     return { main, detail, tone: 'muted' };
   }
   const gain = plan.gain;
   if (!gain || gain.type === 'atTarget') {
     return { main: 'Already at target', detail: null, tone: 'fg' };
   }
+  // Exporting leaves an MP3 as it is for now, and the rekordbox XML carries its grid.
   if (gain.type === 'globalGain') {
-    const main = gain.steps === 0 ? 'Global-gain ±0 dB' : `Global-gain ${signed(gain.gainDb)} dB`;
-    return { main, detail: `Residual ${signed(gain.residualLu)} LU · MP3 moves in 1.5 dB steps`, tone: 'fg' };
+    return { main: 'Grid: XML only (MP3)', detail: 'MP3 file writes arrive later', tone: 'muted' };
   }
   if (gain.shortByLu > 0) {
     // The peak already sits at (or above) the ceiling: no boost at all is possible.

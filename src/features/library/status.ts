@@ -2,6 +2,7 @@ import type { Row } from '@/state/library';
 
 /** The Status column's text. */
 export function statusLabel(row: Row): string {
+  if (row.reverting) return 'Reverting';
   switch (row.state) {
     case 'queued':
       return 'Queued';
@@ -17,5 +18,18 @@ export function statusLabel(row: Row): string {
       return 'Error';
     case 'cancelled':
       return 'Cancelled';
+    case 'exportQueued':
+      return 'Queued';
+    case 'processing':
+      return `Processing ${Math.round(row.progress * 100)} %`;
+    case 'writing':
+      return 'Writing';
+    // Already verified: only the grid check is still running.
+    case 'checking':
+      return 'Checking';
+    case 'done':
+      return row.export?.verification ? 'Done, verified' : 'Done';
+    case 'failed':
+      return 'Failed';
   }
 }

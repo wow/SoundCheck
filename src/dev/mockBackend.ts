@@ -6,6 +6,7 @@
  */
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { gridCommand } from './mockGrid';
+import { exportCommand } from './mockExport';
 import type { Channel } from '@tauri-apps/api/core';
 import type {
   Codec,
@@ -20,7 +21,7 @@ import type {
   RowPlan,
 } from '@/lib/ipc';
 
-interface Synthetic {
+export interface Synthetic {
   title: string;
   artist: string;
   codec: Codec;
@@ -37,6 +38,8 @@ interface Synthetic {
   verdict?: RowGrid['verdict'];
   reasons?: RowGrid['reasons'];
   fails?: boolean;
+  /** Holds Serato cue points. */
+  serato?: boolean;
 }
 
 const LIBRARY: Synthetic[] = [
@@ -47,6 +50,8 @@ const LIBRARY: Synthetic[] = [
   { title: 'Float Bounce', artist: 'Mock Artist E', codec: 'wav', rate: 44100, bits: 32, kbps: null, float: true, sp95: -8.1, integrated: -9.6, tp: 0.3, bpm: 87, confidence: 'amber', verdict: 'staticWarn', reasons: ['octaveMargin'] },
   { title: 'Lossless Import', artist: 'Mock Artist F', codec: 'alac', rate: 44100, bits: 16, kbps: null, sp95: -10.2, integrated: -11.5, tp: -0.2, bpm: 124 },
   { title: 'Already There', artist: 'Mock Artist G', codec: 'flac', rate: 48000, bits: 24, kbps: null, sp95: -11.02, integrated: -12.3, tp: -0.6, bpm: 120 },
+  // Already cued in Serato, in a folder of its own: the batch switches to Library.
+  { title: 'Serato Cued', artist: 'Mock Artist M', codec: 'wav', rate: 44100, bits: 16, kbps: null, sp95: -9.2, integrated: -10.4, tp: -0.7, bpm: 122, serato: true },
   // Every BPM flag at once (octave in doubt, a meter, worth a listen): the widest BPM cell.
   { title: 'Six Eight Waltz', artist: 'Mock Artist H', codec: 'flac', rate: 44100, bits: 16, kbps: null, sp95: -9.5, integrated: -11.2, tp: -1.1, bpm: 138.41, meter: '6/8 · 3+3', confidence: 'amber', verdict: 'staticWarn', reasons: ['octaveMargin'] },
   { title: 'Broken Download', artist: 'Mock Artist I', codec: 'mp3', rate: 44100, bits: null, kbps: 256, sp95: null, integrated: null, tp: 0, bpm: null, fails: true },
@@ -88,8 +93,8 @@ function fileEntry(s: Synthetic, folder: string, fileId: number): FileEntry {
       artist: s.artist,
       album: null,
       djUnsafe: s.float ? 'float' : null,
-      serato: false,
-      seratoTags: [],
+      serato: s.serato ?? false,
+      seratoTags: s.serato ? ['markers', 'beatGrid'] : [],
       seratoUnknown: false,
       soundcheck: null,
       soundcheckUnreadable: null,
@@ -97,7 +102,7 @@ function fileEntry(s: Synthetic, folder: string, fileId: number): FileEntry {
   };
 }
 
-function analysisFor(s: Synthetic): RowAnalysis {
+export function analysisFor(s: Synthetic): RowAnalysis {
   return {
     duration: 240,
     sampleRate: s.rate,
@@ -133,7 +138,7 @@ function analysisFor(s: Synthetic): RowAnalysis {
 }
 
 /** The same rules as the engine's decide, enough for a believable table. */
-function planFor(s: Synthetic, a: RowAnalysis): Plan {
+export function planFor(s: Synthetic, a: RowAnalysis): Plan {
   const measured = settings.mode === 'dj' ? a.shortTermP95 : a.integrated;
   const review: ReviewReason[] = [];
   const g = a.grid;
@@ -200,6 +205,12 @@ function runJob(jobId: number, fileIds: number[], channel: unknown) {
 const MONITOR_KEY = 'soundcheck-mock-monitor';
 
 export function installMockBackend(): void {
+  const session = {
+    analysed,
+    entries,
+    revision: () => revision,
+    entryFor: (s: Synthetic, fileId: number) => fileEntry(s, '/Music/Mock Crate', fileId),
+  };
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     switch (cmd) {
@@ -217,6 +228,7 @@ export function installMockBackend(): void {
       }
       case 'cancel_job': {
         cancelled.add(a.jobId as number);
+        exportCommand(cmd, a, session);
         return true;
       }
       case 'set_decide_settings': {
@@ -232,7 +244,9 @@ export function installMockBackend(): void {
       case 'calibration_target':
         return -9.2;
       case 'restore_session':
-        return { revision, rows: [] };
+        return { revision, rows: [], runningJobs: [], artefacts: null, artefactsFailed: null };
+      case 'recovery_status':
+        return { state: 'finished', recovered: [], pending: [] };
       case 'clear_session':
         analysed.clear();
         entries.clear();
@@ -247,12 +261,18 @@ export function installMockBackend(): void {
       case 'plugin:store|set':
         if (a.key === 'monitor') localStorage.setItem(MONITOR_KEY, JSON.stringify(a.value));
         return null;
-      case 'plugin:dialog|open':
-        return ['/Music/Mock Crate'];
+      case 'plugin:dialog|open': {
+        // The folder an export goes to is one path; adding asks for several.
+        const options = a.options as { multiple?: boolean } | undefined;
+        return options?.multiple ? ['/Music/Mock Crate'] : '/Users/mock/Music/Exports';
+      }
+      case 'plugin:opener|reveal_item_in_dir':
+        return null;
       case 'plugin:dialog|message':
         return true;
       default:
         return (
+          exportCommand(cmd, a, session) ??
           gridCommand(cmd, a, (fileId) => {
             const s = entries.get(fileId);
             const an = analysed.get(fileId);

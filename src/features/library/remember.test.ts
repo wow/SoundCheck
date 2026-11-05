@@ -4,6 +4,7 @@ import type { FileEntry } from '@/lib/ipc';
 import { loadTrackList, saveTrackList } from '@/lib/persist';
 import { useLibrary } from '@/state/library';
 import { analysis, entry, plan } from '@/test/fixtures';
+import { pipeline } from '@/features/pipeline/actions';
 import { startTrackListPersistence } from './remember';
 
 vi.mock('@/lib/persist', () => ({
@@ -46,7 +47,13 @@ describe('remembering the track list', () => {
   it('after a window reload takes the rows from the engine instead', async () => {
     mockIPC((cmd) => {
       if (cmd === 'restore_session') {
-        return { revision: 2, rows: [{ entry: entry(9), row: analysis(), plan: plan() }] };
+        return {
+          revision: 2,
+          rows: [{ entry: entry(9), row: analysis(), plan: plan(), export: null, revertible: false }],
+          runningJobs: [],
+          artefacts: null,
+          artefactsFailed: null,
+        };
       }
       return null;
     });
@@ -54,6 +61,32 @@ describe('remembering the track list', () => {
     await waitFor(() => expect(useLibrary.getState().order).toEqual([9]));
     expect(loadTrackList).not.toHaveBeenCalled();
     expect(useLibrary.getState().rows[9]?.state).toBe('analysed');
+    stop();
+  });
+
+  it('a job still running at a reload sets the pipeline waiting for it', async () => {
+    mockIPC((cmd) => {
+      if (cmd === 'restore_session') {
+        return {
+          revision: 2,
+          rows: [{ entry: entry(9), row: analysis(), plan: plan(), export: null, revertible: false }],
+          runningJobs: [4],
+          artefacts: null,
+          artefactsFailed: null,
+        };
+      }
+      return null;
+    });
+    const stop = startTrackListPersistence();
+    await waitFor(() => expect(pipeline().getSnapshot().value).toBe('windingDown'));
+    expect(useLibrary.getState().locked).toBe('all');
+    // The read after it says the job is gone (the mock's next answer), and the pipeline is free.
+    mockIPC((cmd) =>
+      cmd === 'restore_session'
+        ? { revision: 2, rows: [], runningJobs: [], artefacts: null, artefactsFailed: null }
+        : null,
+    );
+    await waitFor(() => expect(pipeline().getSnapshot().value).toBe('idle'), { timeout: 2000 });
     stop();
   });
 

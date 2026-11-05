@@ -1,4 +1,12 @@
-import type { FileEntry, JobEvent, Plan, RowAnalysis } from '@/lib/ipc';
+import type {
+  ExportArtefacts,
+  ExportRow,
+  ExportVerification,
+  FileEntry,
+  JobEvent,
+  Plan,
+  RowAnalysis,
+} from '@/lib/ipc';
 
 /** A probed FLAC row. */
 export function entry(fileId: number, title = `Track ${fileId}`): FileEntry {
@@ -72,4 +80,61 @@ export function plan(overrides: Partial<Plan> = {}): Plan {
 
 export function analysed(fileId: number, p: Plan = plan(), a: RowAnalysis = analysis()): JobEvent {
   return { type: 'analysed', jobId: 1, fileId, row: a, plan: p, revision: 0 };
+}
+
+export function verification(overrides: Partial<ExportVerification> = {}): ExportVerification {
+  return {
+    blocks: 29,
+    carried: 26,
+    patched: 0,
+    edited: 1,
+    replaced: 2,
+    dropped: 0,
+    tagsAdded: 3,
+    framesIn: 1000,
+    framesOut: 1000,
+    bitsOut: 16,
+    exact: false,
+    dithered: false,
+    staleLoudnessTags: [],
+    ...overrides,
+  };
+}
+
+/** A row the engine sends for a file being written with a -2.3 dB gain and a 0.21 s cut. */
+export function exportRow(overrides: Partial<ExportRow> = {}): ExportRow {
+  return {
+    stage: 'processing',
+    action: { type: 'write', gainDb: -2.3, cut: { type: 'cut', frames: 9261, seconds: 0.21 } },
+    positionsShift: true,
+    gridWithheld: false,
+    notices: [],
+    verification: null,
+    gridCheck: null,
+    editCarried: false,
+    revertible: false,
+    notes: [],
+    ...overrides,
+  };
+}
+
+/** A row finished, verified and in place. */
+export function doneRow(overrides: Partial<ExportRow> = {}): ExportRow {
+  return exportRow({
+    stage: 'done',
+    verification: verification(),
+    gridCheck: { result: 'pass', offsetMs: 0.4, bpmDiff: 0 },
+    revertible: true,
+    ...overrides,
+  });
+}
+
+export function artefacts(overrides: Partial<ExportArtefacts> = {}): ExportArtefacts {
+  return {
+    folder: '/exports/2026-11-05',
+    xml: '/exports/2026-11-05/soundcheck-rekordbox.xml',
+    report: '/exports/2026-11-05/grid-report.csv',
+    listed: 3,
+    ...overrides,
+  };
 }

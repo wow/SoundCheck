@@ -1,5 +1,5 @@
 import { Ear } from 'lucide-react';
-import type { Codec, Confidence } from '@/lib/ipc';
+import { errorCopy, type Codec, type Confidence } from '@/lib/ipc';
 import {
   CODEC_LABEL,
   DJ_UNSAFE_TEXT,
@@ -13,6 +13,7 @@ import {
 import { cn } from '@/lib/utils';
 import type { Row, RowState } from '@/state/library';
 import { isShort } from '@/state/library';
+import { ExportActionCell, GridCheckBadge, RevertIcon, RevertSpinner } from '@/features/export/ExportCells';
 import { statusLabel } from './status';
 
 export function CodecBadge({ codec }: { codec: Codec }) {
@@ -65,18 +66,41 @@ const PILL: Record<RowState, string> = {
   skipped: 'text-fg-2 border-line bg-transparent',
   error: 'text-err border-[rgba(248,113,113,.45)] bg-[rgba(248,113,113,.10)]',
   cancelled: 'text-fg-2 border-line bg-transparent',
+  exportQueued: 'text-fg-2 border-line bg-transparent',
+  processing: 'text-accent-2 border-[rgba(79,209,197,.35)] bg-[rgba(79,209,197,.08)]',
+  writing: 'text-accent-2 border-[rgba(79,209,197,.35)] bg-[rgba(79,209,197,.08)]',
+  checking: 'text-accent-2 border-[rgba(79,209,197,.35)] bg-[rgba(79,209,197,.08)]',
+  done: 'text-ok border-[rgba(74,222,128,.35)] bg-[rgba(74,222,128,.08)]',
+  failed: 'text-err border-[rgba(248,113,113,.45)] bg-[rgba(248,113,113,.10)]',
 };
+
+const REVERTING = 'text-accent-2 border-[rgba(79,209,197,.35)] bg-[rgba(79,209,197,.08)]';
 
 export function StatusPill({ row }: { row: Row }) {
   return (
     <span
       className={cn(
-        'inline-flex h-[22px] items-center whitespace-nowrap rounded-md border px-2 text-xs font-medium',
-        PILL[row.state],
+        'inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded-md border px-2 text-xs font-medium',
+        row.reverting ? REVERTING : PILL[row.state],
       )}
     >
+      {row.reverting && <RevertSpinner />}
       {statusLabel(row)}
     </span>
+  );
+}
+
+/** The Status column: where the row is, and after an export its grid check and Revert. */
+export function StatusCell({ id, row, selected }: { id: number; row: Row; selected: boolean }) {
+  const check = row.export?.gridCheck;
+  return (
+    <div className="flex min-w-0 flex-col gap-px">
+      <div className="flex items-center gap-1">
+        <StatusPill row={row} />
+        <RevertIcon id={id} row={row} selected={selected} />
+      </div>
+      {check && <GridCheckBadge check={check} />}
+    </div>
   );
 }
 
@@ -279,7 +303,26 @@ export function BpmCell({
   );
 }
 
-export function ActionCell({ row, bpmRange }: { row: Row; bpmRange: [number, number] }) {
+export function ActionCell({
+  row,
+  bpmRange,
+  stacked = false,
+}: {
+  row: Row;
+  bpmRange: [number, number];
+  /** No room for a gain and a cut on one line. */
+  stacked?: boolean;
+}) {
+  if (row.state === 'failed') {
+    return (
+      <div className="min-w-0">
+        <div className="truncate text-[12.5px] font-medium text-err" title={row.exportError?.message}>
+          {row.exportError ? errorCopy(row.exportError) : 'Could not export'}
+        </div>
+        <div className="truncate text-[12px] text-fg-2">The file was not changed</div>
+      </div>
+    );
+  }
   if (row.state === 'error') {
     const missing = row.error?.kind === 'io' && /no such file|not found/i.test(row.error.message);
     return (
@@ -293,6 +336,7 @@ export function ActionCell({ row, bpmRange }: { row: Row; bpmRange: [number, num
       </div>
     );
   }
+  if (row.export) return <ExportActionCell row={row} exportRow={row.export} stacked={stacked} />;
   if (!row.plan) return <Dash />;
   const action = actionText(row.plan);
   const review = reviewText(row.plan.review, row.analysis, bpmRange);

@@ -1,12 +1,55 @@
 import { createActor, type Actor } from 'xstate';
-import { analyze, calibrationTarget, cancelJob, clearSession, expandPaths } from '@/lib/ipc';
+import {
+  analyze,
+  calibrationTarget,
+  cancelJob,
+  clearSession,
+  expandPaths,
+  exportFiles,
+  ipcErrorOf,
+  restoreSession,
+  type JobEvent,
+} from '@/lib/ipc';
 import { ask } from '@/lib/platform';
 import { useLibrary, staleIds } from '@/state/library';
 import { analysisSettings, useSettings } from '@/state/settings';
 import { pipelineMachine } from './machine';
 
+/** How often a reloaded window reads the session while the job it cannot hear winds down. */
+export const WIND_DOWN_POLL_MS = 500;
+
 /** The one pipeline of the app, wired to the engine and the library store. */
 function createPipeline(): Actor<typeof pipelineMachine> {
+  /** A job that never started: what stopped it shows, and its rows end as they were. */
+  const refused = (err: unknown) => {
+    const lib = useLibrary.getState();
+    lib.applyEvent({ type: 'aborted', jobId: 0, error: ipcErrorOf(err) });
+    lib.applyEvent({ type: 'finished', jobId: 0, cancelled: false });
+    actor.send({ type: 'FINISHED' });
+  };
+  const onExportEvent = (event: JobEvent) => {
+    useLibrary.getState().applyEvent(event);
+    // Replaced in place and not analysed: what the row showed is gone, so it is analysed again.
+    if (event.type === 'exportDone' && event.inPlace && !event.update) {
+      actor.send({ type: 'ANALYSE', fileIds: [event.fileId] });
+    }
+    if (event.type === 'finished') actor.send({ type: 'FINISHED' });
+  };
+  const watchSession = async () => {
+    const range = () => useSettings.getState().bpmRange;
+    try {
+      for (;;) {
+        await new Promise((go) => setTimeout(go, WIND_DOWN_POLL_MS));
+        const snapshot = await restoreSession();
+        useLibrary.getState().restore(snapshot, range());
+        if (snapshot.runningJobs.length === 0) break;
+      }
+    } catch {
+      // The session cannot be read: nothing more can be known about that job.
+    }
+    useLibrary.getState().windDownEnded();
+    actor.send({ type: 'WOUND_DOWN' });
+  };
   const actor: Actor<typeof pipelineMachine> = createActor(
     pipelineMachine.provide({
       actions: {
@@ -20,21 +63,19 @@ function createPipeline(): Actor<typeof pipelineMachine> {
             if (event.type === 'finished') actor.send({ type: 'FINISHED' });
           })
             .then((jobId) => actor.send({ type: 'STARTED', jobId }))
-            .catch((err: unknown) => {
-              const message = err instanceof Error ? err.message : String(err);
-              const lib = useLibrary.getState();
-              lib.applyEvent({
-                type: 'aborted',
-                jobId: 0,
-                error: { kind: 'internal', message, fileId: null },
-              });
-              lib.applyEvent({ type: 'finished', jobId: 0, cancelled: false });
-              actor.send({ type: 'FINISHED' });
-            });
+            .catch(refused);
+        },
+        startExport: (_, { job }) => {
+          if (!job) return;
+          useLibrary.getState().beginExport(job.request.fileIds, job.planned);
+          exportFiles(job.request, onExportEvent)
+            .then((jobId) => actor.send({ type: 'STARTED', jobId }))
+            .catch(refused);
         },
         cancelJob: (_, { jobId }) => {
           if (jobId !== null) void cancelJob(jobId);
         },
+        watchSession: () => void watchSession(),
       },
     }),
   );
@@ -73,7 +114,7 @@ export async function clearList(): Promise<void> {
 }
 
 /** Stops the running job. */
-export function cancelAnalysis(): void {
+export function cancelRunningJob(): void {
   pipeline().send({ type: 'CANCEL' });
 }
 

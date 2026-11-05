@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { useLibrary, visibleIds } from '@/state/library';
 import { useSettings } from '@/state/settings';
 import { layoutFor, minWidth, rowDomId, type Layout } from './columns';
-import { ActionCell, BpmCell, LoudnessCell, NameCell, SpecCell, StatusPill, TpCell } from './cells';
+import { ActionCell, BpmCell, LoudnessCell, NameCell, SpecCell, StatusCell, TpCell } from './cells';
 import { openInGridView } from '@/features/grid/actions';
 
 /** Row height in px; rows are fixed-height so only the visible ones are rendered. */
@@ -124,10 +124,10 @@ function TrackRow({
         />
       </Cell>
       <Cell width={layout.action}>
-        <ActionCell row={row} bpmRange={bpmRange} />
+        <ActionCell row={row} bpmRange={bpmRange} stacked={layout.compact} />
       </Cell>
       <Cell width={layout.status}>
-        <StatusPill row={row} />
+        <StatusCell id={id} row={row} selected={selected} />
       </Cell>
     </div>
   );

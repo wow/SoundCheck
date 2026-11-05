@@ -166,6 +166,9 @@ describe('library store', () => {
           },
           { entry: entry(8), row: null, plan: null, export: null, revertible: false },
         ],
+        runningJobs: [],
+        artefacts: null,
+        artefactsFailed: null,
       },
       [70, 180],
     );

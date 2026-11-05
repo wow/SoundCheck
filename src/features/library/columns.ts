@@ -30,8 +30,8 @@ export const WIDE: Layout = {
   loudness: 188,
   tp: 56,
   bpm: 196,
-  action: 224,
-  status: 118,
+  action: 244,
+  status: 142,
   nameMin: 180,
   bar: true,
 };
@@ -47,9 +47,9 @@ export const COMPACT: Layout = {
   loudness: 124,
   tp: 56,
   bpm: 176,
-  action: 200,
-  status: 112,
-  nameMin: 140,
+  action: 190,
+  status: 142,
+  nameMin: 120,
   bar: false,
 };
 
@@ -65,9 +65,9 @@ export const NARROW: Layout = {
   loudness: 124,
   tp: null,
   bpm: 132,
-  action: 180,
-  status: 112,
-  nameMin: 140,
+  action: 168,
+  status: 142,
+  nameMin: 130,
   bar: false,
 };
 
