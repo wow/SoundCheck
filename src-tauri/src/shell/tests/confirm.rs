@@ -402,3 +402,50 @@ fn a_moved_and_changed_source_is_told_true_of_the_copy_in_the_folder() {
         ]
     );
 }
+
+fn at_export_done(e: &JobEvent) -> bool {
+    matches!(e, JobEvent::ExportDone { .. })
+}
+
+#[test]
+fn a_client_that_says_no_name_is_taken_still_overwrites_nothing() {
+    let lib = Lib::new();
+    let shell = lib.shell(1);
+    let a = tone_in(&lib, "a", "track.wav");
+    let b = tone_in(&lib, "b", "track.wav");
+    // Another level, so the two copies could not pass for each other.
+    tone_wav(&b, 0.4, 44_100);
+    let ids = analysed(&shell, &[&a, &b]);
+    let out = lib.base().join("out");
+    let req = request(&ids, to_folder(), Some(&out));
+    let preview = shell.plan_export(&req).unwrap();
+    let mut sent = confirmed(req, &preview);
+    sent.file_ids = ids.clone();
+    if let Some(c) = sent.confirmed.as_mut() {
+        for f in &mut c.files {
+            f.same_name = false;
+        }
+        assert_eq!(c.files.len(), 2, "both rows confirmed");
+    }
+
+    // Held right after the first copy is written: its bytes then are the ones to keep.
+    let held = super::support::held_at(&shell, sent, at_export_done);
+    let copy = out.join("track.wav");
+    let first = sha256(&copy);
+    let events = held.finish();
+
+    assert!(steps(&events, ids[0]).contains(&"exportDone"), "{events:?}");
+    let second = steps(&events, ids[1]);
+    assert!(!second.contains(&"exportDone"), "{events:?}");
+    assert!(
+        second.contains(&"exportSkipped") || second.contains(&"failed"),
+        "{events:?}"
+    );
+    assert_eq!(sha256(&copy), first, "the first copy is not written over");
+    let names: Vec<_> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .filter(|n| n.to_string_lossy().ends_with(".wav"))
+        .collect();
+    assert_eq!(names, ["track.wav"], "one copy, no second name made up");
+}

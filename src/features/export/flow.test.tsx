@@ -248,9 +248,16 @@ describe('what the job is told', () => {
     ).toBeInTheDocument();
     expect(writeButton()).toHaveTextContent('Write 1 file');
 
+    // The refused row says why on the table, and keeps saying it once the step closes.
+    const refusedRow = () => useLibrary.getState().rows[4];
+    expect(refusedRow()?.state).toBe('failed');
+    expect(refusedRow()?.exportError).toEqual({ kind: 'inPlaceRefused', message: 'it is a link', fileId: 4 });
+    expect(useLibrary.getState().rows[1]?.state).not.toBe('failed');
     act(() => confirmExport());
     await waitFor(() => expect(backend.exported).toHaveLength(1));
     expect(backend.exported[0]?.fileIds).toEqual([1, 2, 3]);
+    expect(refusedRow()?.state).toBe('failed');
+    expect(refusedRow()?.exportError?.kind).toBe('inPlaceRefused');
     expect(backend.exported[0]?.confirmed?.files).toEqual([
       { fileId: 1, identity: 'id-1', sameName: false },
       { fileId: 2, identity: 'id-2', sameName: true },

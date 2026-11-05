@@ -65,8 +65,10 @@ export function ExportActionCell({
   const text = exportActionText(exportRow, row.entry.info.codec);
   const shift = exportRow.positionsShift;
   const verified = exportRow.verification ? verifiedText(exportRow.verification) : null;
-  // Said first: the row's other numbers already are those of the settings now.
-  const different = now ? exportDifference(row, now)?.text : undefined;
+  // Said first: the row's other numbers already are those of the settings now. A skipped row was
+  // never exported, so its reason stays: it is what the user has to act on.
+  const skipped = exportRow.action.type === 'skip';
+  const different = now && !skipped ? exportDifference(row, now)?.text : undefined;
   const second = different ?? verified ?? text.detail;
   const main = text.main ?? [text.gain, text.cut].filter(Boolean).join(' · ');
   const twoChanges = text.gain !== null && text.cut !== null;

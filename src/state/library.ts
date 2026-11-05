@@ -336,6 +336,14 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
   markChanged(fileIds) {
     set({ rows: patchRows(get().rows, fileIds.map((id) => [id, () => ({ changedOnDisk: true })])) });
   },
+  markRefused(refusals) {
+    set({
+      rows: patchRows(
+        get().rows,
+        refusals.map(({ fileId, error }) => [fileId, () => ({ state: 'failed', progress: 0, exportError: error })]),
+      ),
+    });
+  },
   setNotice(notice) {
     set({ notice });
   },

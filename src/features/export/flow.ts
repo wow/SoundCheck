@@ -9,6 +9,7 @@ import { useRecovery } from '@/state/recovery';
 import { useSettings } from '@/state/settings';
 import { closeGridViewOf } from './actions';
 import { batchChoice } from './mode';
+import { isRefusal } from './summary';
 import { againCopy, exportNow, exportWork, type ExportWork } from './work';
 
 /**
@@ -155,10 +156,12 @@ async function planRows(mine: number): Promise<void> {
     const preview = await answer;
     if (mine !== attempt) return;
     useExportFlow.setState({ phase: 'ready', preview });
-    const changed = (preview?.rows ?? [])
-      .filter((r) => r.error?.kind === 'fileChanged')
-      .map((r) => r.fileId);
+    const rows = preview?.rows ?? [];
+    const changed = rows.filter((r) => r.error?.kind === 'fileChanged').map((r) => r.fileId);
     if (changed.length > 0) useLibrary.getState().markChanged(changed);
+    // Left out of the job, a refused row says why on the table, as a failed export would.
+    const refused = rows.flatMap(({ fileId, error }) => (error && isRefusal(error) ? [{ fileId, error }] : []));
+    if (refused.length > 0) useLibrary.getState().markRefused(refused);
   } catch (err) {
     if (mine === attempt) useExportFlow.setState({ phase: 'failed', error: errorCopy(ipcErrorOf(err)) });
   }

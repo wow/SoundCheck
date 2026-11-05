@@ -94,10 +94,12 @@ describe('the row details', () => {
     expect(button).toHaveAttribute('title', expect.stringContaining('running export'));
   });
 
-  it('says why the XML left it out, and that its grid changed since', () => {
+  it('says why the XML left it out, and that its grid or file changed since', () => {
     show({ export: doneRow(), xmlNotListed: 'no grid', exportStale: true });
     expect(screen.getByText('Not in the rekordbox XML: no grid')).toBeInTheDocument();
-    expect(screen.getByText(/grid changed since this export/)).toBeInTheDocument();
+    expect(
+      screen.getByText('The grid or the file changed since this export; export it again to write it.'),
+    ).toBeInTheDocument();
   });
 
   it('Revert runs from here too', async () => {

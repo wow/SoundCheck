@@ -50,7 +50,7 @@ export interface Row {
   exportError?: IpcError;
   /** A change of the file made in place is in effect, which Revert can put back. */
   revertible?: boolean;
-  /** Its grid was saved since its export: exporting it again would write something new. */
+  /** Its grid was saved, or the file changed, since its export: exporting it again would write something new. */
   exportStale?: boolean;
   /** Revert is running on this row (it takes about 10 s for a 6-minute track). */
   reverting?: boolean;
@@ -165,6 +165,8 @@ export interface LibraryState {
   restore(snapshot: SessionSnapshot): void;
   /** These files changed after they were analysed: Analyse brings them up to date. */
   markChanged(fileIds: number[]): void;
+  /** Rows an export would be refused for, each with why: they fail as the job would fail them. */
+  markRefused(refusals: { fileId: number; error: IpcError }[]): void;
   setNotice(notice: string | null): void;
   setInfo(info: string | null): void;
   /** Empties the list (the engine forgets it too, through `clearList`). */

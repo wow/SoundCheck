@@ -86,7 +86,7 @@ export function ExportDetail() {
     >
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <Told row={row} now={now} />
-        {row.exportStale && <Line tone="text-fg-1">The grid changed since this export; export it again to write it.</Line>}
+        {row.exportStale && <Line tone="text-fg-1">The grid or the file changed since this export; export it again to write it.</Line>}
         {row.reverting && (
           <p role="status" className="text-[12px] text-fg-1">
             Reverting: restoring the original and analysing it again…
