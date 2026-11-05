@@ -11,12 +11,13 @@ use sc_core::export::{Cut, ExportSkip, GridCheck, LEAD_MS_RANGE};
 use sc_core::ipc::{
     AnalyzeRequest, ExportAction, IpcErrorKind, JobEvent, RowUpdate, WriteXmlRequest,
 };
-use sc_core::{AudioSpec, Bpm, testsig};
+use sc_core::{Bpm, testsig};
 use sc_io::cache::Cache;
 
 use super::super::Shell;
 use super::support::{
-    Lib, date_back, events_until_finished, export, mtime, prepare, request, sha256, steps,
+    Lib, date_back, events_until_finished, export, held_at, in_folder, mtime, prepare, request,
+    sha256, steps,
 };
 
 fn have_models() -> bool {
@@ -37,27 +38,25 @@ fn with_grid() -> AnalysisSettings {
     }
 }
 
-/// 0.3 s of silence, then 64 clicks at 120 BPM, the first of each four louder: a bar 1 close
-/// enough to the start to be cut to. 16-bit stereo 44.1 kHz.
+/// 0.3 s of a quiet noise floor, then 64 beats at 120 BPM of kick and click with an accented bar 1
+/// that the detector finds wherever the track starts. 16-bit stereo 44.1 kHz.
 fn click_wav(path: &Path) {
-    let clicks = testsig::click_track(AudioSpec::CD, Bpm(120.0), 64, 15.0);
+    let mono = testsig::kick_click_track(120.0, 64, 0.3, testsig::KICK_CLICK_ACCENTS);
     let mut w = hound::WavWriter::create(
         path,
         hound::WavSpec {
             channels: 2,
-            sample_rate: 44_100,
+            sample_rate: testsig::KICK_CLICK_RATE_HZ,
             bits_per_sample: 16,
             sample_format: hound::SampleFormat::Int,
         },
     )
     .unwrap();
-    for _ in 0..2 * testsig::frames_for(AudioSpec::CD, 0.3) {
-        w.write_sample(0_i16).unwrap();
-    }
-    for s in &clicks.data {
+    for s in mono {
         #[allow(clippy::cast_possible_truncation)]
-        w.write_sample((f64::from(*s) * 0.5 * 32_767.0).round() as i16)
-            .unwrap();
+        let q = (s * f64::from(i16::MAX)).round() as i16;
+        w.write_sample(q).unwrap();
+        w.write_sample(q).unwrap();
     }
     w.finalize().unwrap();
 }
@@ -113,17 +112,14 @@ fn the_cut_row_shows_the_export(events: &[JobEvent], wav: &Path) {
         row.positions_shift && row.edit_carried && row.revertible,
         "{row:?}"
     );
-    // The chip is the check the engine recorded. On clicks with little accent the detector's
-    // downbeat is not this test's matter; the check ran, and the row says what it found.
+    // The written file's own analysis agrees with the exported grid, and the row says what the
+    // sidecar recorded.
     let doc = sc_io::txn::sidecar::read(&sc_io::txn::sidecar_path(wav)).unwrap();
     let recorded = doc.export.expect("the export is recorded").grid_check;
-    assert!(
-        matches!(
-            recorded,
-            Some(GridCheck::Pass { .. } | GridCheck::OffBy { .. })
-        ),
-        "{recorded:?}"
-    );
+    let Some(GridCheck::Pass { offset_ms, .. }) = recorded else {
+        panic!("{recorded:?}");
+    };
+    assert!(offset_ms.abs() <= 2.0, "{offset_ms} ms");
     assert_eq!(row.grid_check, recorded);
     let v = row.verification.as_ref().expect("verified");
     let Cut::Cut { frames, .. } = cut else {
@@ -176,9 +172,10 @@ fn revert_restores_hash_and_the_confirmed_edit() {
     );
     assert_eq!(sha256(&wav), before);
 
+    // While the export runs, a grid view of the old version cannot open (see `holds.rs`); one
+    // already open is about the file as it was: it closes.
     let (_, events) = export(&shell, request(&[id], prepare(), None));
 
-    // The track open in the grid view is about the file as it was: it closes.
     assert_eq!(
         shell.peaks(id, 1024, 0, 10).unwrap_err().kind,
         IpcErrorKind::InvalidArgument
@@ -190,7 +187,15 @@ fn revert_restores_hash_and_the_confirmed_edit() {
     the_cut_row_shows_the_export(&events, &wav);
     assert_ne!(sha256(&wav), before);
 
+    // A grid view opened on the written file is about what the revert takes away.
+    shell.open_track(id, |_| {}).unwrap();
+    shell.peaks(id, 1024, 0, 10).expect("it is open");
     let reverted = shell.revert(id).unwrap();
+    assert_eq!(
+        shell.peaks(id, 1024, 0, 10).unwrap_err().kind,
+        IpcErrorKind::InvalidArgument,
+        "the revert closed the view"
+    );
 
     assert_eq!(sha256(&wav), before, "the original's bytes");
     assert_eq!(mtime(&wav), dated, "the original's modification time");
@@ -281,6 +286,28 @@ fn an_export_reads_the_file_again_so_serato_data_added_since_the_row_was_probed_
         before,
         "a cut in place would move its cue points"
     );
+}
+
+#[test]
+fn a_grid_view_opens_during_a_copy_to_a_folder_whose_source_does_not_change() {
+    if !have_models() {
+        return;
+    }
+    let lib = Lib::new();
+    let wav = lib.music().join("click.wav");
+    click_wav(&wav);
+    let shell = lib.shell(1);
+    let id = analysed_click(&shell, &wav);
+    let out = lib.base().join("out");
+    let held = held_at(
+        &shell,
+        request(&[id], in_folder(prepare()), Some(&out)),
+        |e| matches!(e, JobEvent::Started { .. }),
+    );
+    shell
+        .open_track(id, |_| {})
+        .expect("the source stays as it is");
+    held.finish();
 }
 
 #[test]

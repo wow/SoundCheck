@@ -22,7 +22,7 @@ use sc_engine::{
 };
 use sc_io::rekordbox::is_soundcheck_xml;
 
-use super::Shell;
+use super::{HoldKind, Shell};
 
 /// `error` about the file `file_id`.
 fn about(file_id: u32, error: Error) -> IpcError {
@@ -98,6 +98,23 @@ impl Shell {
         }
     }
 
+    /// Refuses a folder nothing is written into, whatever the rows do: inside the backups, which
+    /// SoundCheck never lists or touches again, and on a rekordbox USB export.
+    ///
+    /// # Errors
+    /// `invalidArgument`, `rekordboxUsbExport`, or `io` when no folder above it resolves.
+    fn refuse_destination(&self, dir: &Path) -> Result<(), IpcError> {
+        if sc_io::txn::is_under_backup_root(dir, &self.backup_root()?)? {
+            return Err(Error::InvalidArgument(format!(
+                "{} is inside the backup folder; choose another folder",
+                dir.display()
+            ))
+            .into());
+        }
+        sc_io::txn::check_folder_not_rekordbox(dir, &sc_io::txn::SystemVolumes)?;
+        Ok(())
+    }
+
     /// Starts exporting `req.file_ids`, sending every event to `send`; returns at once with the
     /// job's id. A running job is cancelled with [`Shell::cancel`]. The grid view closes if it
     /// shows a file about to be replaced.
@@ -105,8 +122,9 @@ impl Shell {
     /// # Errors
     /// Before anything is written: `recoveryRunning` while the start-up recovery runs;
     /// `invalidArgument` for settings out of their limits or a folder that does not fit the
-    /// place; what [`Self::distinct_rows`] refuses; `alreadyExists` when a file SoundCheck did not
-    /// write holds the name of an artefact in the folder.
+    /// place; what [`Self::distinct_rows`] and [`Self::refuse_destination`] refuse; `alreadyExists`
+    /// when a file SoundCheck did not write holds the name of an artefact in the folder; `busy`
+    /// when another job or command is working on one of the files.
     pub fn export(
         &self,
         req: ExportRequest,
@@ -130,20 +148,27 @@ impl Shell {
         let place = out_dir
             .as_ref()
             .map_or(Place::InPlace, |dir| Place::Folder(dir.clone()));
-        self.distinct_rows(&req.file_ids, &place)?;
+        let files = self.distinct_rows(&req.file_ids, &place)?;
         if let Some(dir) = &out_dir {
             if dir.exists() && !dir.is_dir() {
                 return Err(
                     Error::InvalidArgument(format!("{} is not a folder", dir.display())).into(),
                 );
             }
+            self.refuse_destination(dir)?;
             if req.settings.xml
                 && let Some(conflict) = artefact_conflict(dir)
             {
                 return Err(conflict.error.into());
             }
         }
-        if req.settings.place == ExportPlace::InPlace {
+        let kind = if req.settings.place == ExportPlace::InPlace {
+            HoldKind::ExportInPlace
+        } else {
+            HoldKind::ExportCopy
+        };
+        let hold = self.hold(&files, kind)?;
+        if kind == HoldKind::ExportInPlace {
             self.close_track_of(&req.file_ids);
         }
         let job = ExportJob {
@@ -154,7 +179,7 @@ impl Shell {
             exports_root: self.inner.roots.exports.clone(),
         };
         let job_id = self.session().next_job_id();
-        self.spawn_job(job_id, send, move |shell, cancel, forward| {
+        self.spawn_job(job_id, hold, send, move |shell, cancel, forward| {
             run_export_job(
                 &shell.inner.session,
                 job_id,
@@ -169,13 +194,15 @@ impl Shell {
 
     /// Puts the original of the file's newest change back (`undo_file`, which verifies the backup
     /// and removes the file's cache entry) and refreshes its row: the original analysed again,
-    /// which fills the cache, with its saved edit applied. The grid view closes if it shows the
-    /// file. A failed analysis leaves the file reverted, with a note.
+    /// which fills the cache, with its saved edit applied. The file is held throughout, so a
+    /// second press cannot undo a second change. The grid view closes if it shows the file. A
+    /// failed analysis leaves the file reverted, with a note.
     ///
     /// # Errors
     /// `recoveryRunning`; `invalidArgument` for a row the session does not hold; `nothingToUndo`
     /// for a file with no change to revert; `fileChanged` for one edited since it was written;
-    /// `verifyFailed`, the in-place refusals and `io` from the undo.
+    /// `busy` while another job or command is working on it; `verifyFailed`, the in-place refusals
+    /// and `io` from the undo.
     pub fn revert(&self, file_id: u32) -> Result<RevertResult, IpcError> {
         self.revert_analysing(file_id, |path| self.analyse_original(path))
     }
@@ -210,7 +237,7 @@ impl Shell {
         let info = sc_io::probe(&path);
         let update = self
             .session()
-            .set_reverted(file_id, info.clone(), analysis)
+            .set_reverted(file_id, info.clone(), analysis, undone.earlier_changes)
             .map(Box::new);
         Ok(RevertResult {
             entry: sc_core::ipc::FileEntry { info, ..entry },
@@ -246,9 +273,10 @@ impl Shell {
     ///
     /// # Errors
     /// `recoveryRunning`; what [`Self::distinct_rows`] refuses; `invalidArgument` for an `out`
-    /// that is not an absolute `.xml` path; `alreadyExists` when a file SoundCheck did not write
-    /// is there; `modelUnavailable`; `io` when writing fails. A file that cannot be analysed is
-    /// reported among those not listed.
+    /// that is not an absolute `.xml` path; what [`Self::refuse_destination`] refuses;
+    /// `alreadyExists` when a file SoundCheck did not write is there; `busy` while one of the
+    /// files is being exported or reverted; `modelUnavailable`; `io` when writing fails. A file
+    /// that cannot be analysed is reported among those not listed.
     pub fn write_xml(&self, req: WriteXmlRequest) -> Result<XmlWritten, IpcError> {
         self.refuse_while_recovering()?;
         let out = req
@@ -270,8 +298,12 @@ impl Shell {
                 }
                 None => {}
             }
+            if let Some(dir) = out.parent() {
+                self.refuse_destination(dir)?;
+            }
         }
         let files = self.distinct_rows(&req.file_ids, &Place::InPlace)?;
+        let _hold = self.hold(&files, HoldKind::Reading)?;
         let rows = self.analysed_rows(&files)?;
         let artefacts = self.write_xml_rows(&rows, out.as_deref())?;
         let not_listed = not_listed(&rows, XmlSelect::All)
@@ -355,18 +387,19 @@ impl Shell {
     pub fn forget(&self, txn: &str) -> Result<ForgetResult, IpcError> {
         self.refuse_while_recovering()?;
         let root = self.backup_root()?;
-        let RecoveryStatus::Finished { recovered, pending } = self.recovery_status() else {
-            return Err(not_pending(txn));
-        };
-        if !pending.iter().any(|p| p.txn == txn) {
+        let listed = matches!(
+            self.recovery_status(),
+            RecoveryStatus::Finished { pending, .. } if pending.iter().any(|p| p.txn == txn)
+        );
+        if !listed {
             return Err(not_pending(txn));
         }
         let forgotten = sc_io::txn::forget(&root, txn)?;
-        let status = RecoveryStatus::Finished {
-            recovered,
-            pending: pending.into_iter().filter(|p| p.txn != txn).collect(),
-        };
-        self.inner.recovery.set(status.clone());
+        let status = self.inner.recovery.update(|status| {
+            if let RecoveryStatus::Finished { pending, .. } = status {
+                pending.retain(|p| p.txn != txn);
+            }
+        });
         Ok(ForgetResult {
             path: forgotten.path.display().to_string(),
             backup: forgotten.backup.map(|b| b.display().to_string()),

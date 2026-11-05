@@ -3,13 +3,17 @@
 
 use std::path::{Path, PathBuf};
 
-use sc_core::ipc::{IpcErrorKind, RecoveryStatus, WriteXmlRequest};
+use sc_core::Seconds;
+use sc_core::export::{Cut, ExportPlan, GridCheck, GridCheckSkip, XmlGrid, XmlTrackInfo};
+use sc_core::ipc::{IpcErrorKind, JobEvent, RecoveryStatus, WriteXmlRequest};
+use sc_engine::{EditState, EngineEvent, ProcessDone};
 use sc_io::cache::Cache;
-use sc_io::txn::{self, State};
+use sc_io::render::RenderReport;
+use sc_io::txn::{self, State, TxnKind, TxnReport};
 
 use super::support::{
-    Lib, analysed, date_back, export, loudness_only, mtime, prepare, request, sha256, steps,
-    tone_wav,
+    Lib, analysed, date_back, export, in_folder, loudness_only, mtime, prepare, request, sha256,
+    steps, tone_wav,
 };
 
 #[test]
@@ -222,6 +226,28 @@ fn a_pending_change_is_listed_and_can_be_forgotten() {
     let (_, events) = export(&shell, request(&ids, prepare(), None));
     assert!(steps(&events, ids[0]).contains(&"exportDone"));
 
+    // Unfinished in the journal, but not what recovery reported: it may be running.
+    let unlisted = "6ac5b4f4-9-2";
+    let line = serde_json::json!({
+        "txn": unlisted, "state": "planned", "at": "2026-10-07T10:00:00Z",
+        "kind": "in_place", "path": gone, "source": gone,
+        "temp": gone.with_file_name(format!(".Track.wav.soundcheck-tmp-{unlisted}")),
+    });
+    let journal = lib.backups().join("journal.jsonl");
+    let mut text = std::fs::read_to_string(&journal).unwrap();
+    text.push_str(&format!("{line}\n"));
+    std::fs::write(&journal, text).unwrap();
+    assert_eq!(
+        shell.forget(unlisted).unwrap_err().kind,
+        IpcErrorKind::InvalidArgument
+    );
+    let entries = txn::journal_entries(&lib.backups()).unwrap();
+    let entry = entries
+        .iter()
+        .find(|e| e.txn == unlisted)
+        .expect("journaled");
+    assert!(!entry.state.is_final(), "left as it was");
+
     // An id recovery did not leave pending is refused, the finished export's included.
     let finished = txn::journal_entries(&lib.backups())
         .unwrap()
@@ -253,6 +279,237 @@ fn a_pending_change_is_listed_and_can_be_forgotten() {
         IpcErrorKind::InvalidArgument,
         "only once"
     );
-    // The next start finds nothing.
-    assert_eq!(lib.shell(1).recovery_status(), clean);
+}
+
+#[test]
+fn two_forgets_at_once_lose_neither() {
+    let lib = Lib::new();
+    let ids: Vec<String> = (0..8).map(|n| format!("6ac5b4f4-9-{n}")).collect();
+    let gone = lib.base().join("Volumes/Gone/Track.wav");
+    let lines: String = ids
+        .iter()
+        .map(|txn| {
+            let line = serde_json::json!({
+                "txn": txn, "state": "planned", "at": "2026-10-07T10:00:00Z",
+                "kind": "in_place", "path": gone, "source": gone,
+                "temp": gone.with_file_name(format!(".Track.wav.soundcheck-tmp-{txn}")),
+            });
+            format!("{line}\n")
+        })
+        .collect();
+    std::fs::create_dir_all(lib.backups()).unwrap();
+    std::fs::write(lib.backups().join("journal.jsonl"), lines).unwrap();
+    let shell = lib.shell(1);
+    std::thread::scope(|scope| {
+        for id in &ids {
+            let shell = shell.clone();
+            scope.spawn(move || shell.forget(id).unwrap());
+        }
+    });
+    assert_eq!(
+        shell.recovery_status(),
+        RecoveryStatus::Finished {
+            recovered: vec![],
+            pending: vec![]
+        }
+    );
+}
+
+#[test]
+fn a_revert_that_leaves_an_earlier_change_keeps_the_row_revertible() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    let original = sha256(&wav);
+    assert!(!shell.restore().rows[0].revertible, "nothing to put back");
+    let (_, events) = export(&shell, request(&ids, prepare(), None));
+    assert!(steps(&events, ids[0]).contains(&"exportDone"));
+    assert!(shell.restore().rows[0].revertible);
+    let first = sha256(&wav);
+    // A second change: another target, so the file changes again.
+    shell
+        .set_decide_settings(sc_core::plan::DecideSettings {
+            target: sc_core::Lufs(-14.0),
+            ..sc_core::plan::DecideSettings::dj()
+        })
+        .unwrap();
+    let (_, events) = export(&shell, request(&ids, prepare(), None));
+    assert!(steps(&events, ids[0]).contains(&"exportDone"));
+    assert_ne!(sha256(&wav), first);
+
+    let reverted = shell.revert(ids[0]).unwrap();
+    assert_eq!(sha256(&wav), first);
+    assert_eq!(reverted.earlier_changes, 1);
+    let snapshot = shell.restore();
+    assert_eq!(snapshot.rows[0].export, None, "that export is gone");
+    assert!(snapshot.rows[0].revertible, "a reload still offers Revert");
+
+    // The next export of it that is skipped or copied says the earlier change stands.
+    let out = lib.base().join("out");
+    let (_, events) = export(&shell, request(&ids, in_folder(prepare()), Some(&out)));
+    let row = events
+        .iter()
+        .find_map(|e| match e {
+            JobEvent::ExportDone { row, in_place, .. } => {
+                assert!(!in_place);
+                Some(row)
+            }
+            _ => None,
+        })
+        .expect("done");
+    assert!(row.revertible, "the earlier change still stands");
+
+    let reverted = shell.revert(ids[0]).unwrap();
+    assert_eq!(sha256(&wav), original);
+    assert_eq!(reverted.earlier_changes, 0);
+    assert!(!shell.restore().rows[0].revertible);
+}
+
+#[test]
+fn a_skip_after_an_export_in_place_keeps_it_revertible() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    let (_, events) = export(&shell, request(&ids, prepare(), None));
+    assert!(steps(&events, ids[0]).contains(&"exportDone"));
+    // Grid only on a file without a grid is skipped.
+    let grid_only = sc_core::export::ExportSettings {
+        grid_only: true,
+        ..prepare()
+    };
+    let (_, events) = export(&shell, request(&ids, grid_only, None));
+    assert_eq!(steps(&events, ids[0]), ["started", "exportSkipped"]);
+    let row = events
+        .iter()
+        .find_map(|e| match e {
+            JobEvent::ExportSkipped { row, .. } => Some(row),
+            _ => None,
+        })
+        .expect("skipped");
+    assert!(row.revertible, "the export before it still stands");
+    assert!(shell.restore().rows[0].export.as_ref().unwrap().revertible);
+    assert!(shell.revert(ids[0]).is_ok());
+}
+
+/// The events of a file written in place whose own analysis did not finish. Nothing can make that
+/// analysis fail on demand, so these are what the batch sends then.
+fn events_of_an_unfinished_analysis(wav: &Path) -> [EngineEvent; 3] {
+    let plan = ExportPlan {
+        gain_db: 3.0,
+        trim_frames: 0,
+        trim_snapped_from_frames: None,
+        expect_frames: 1000,
+        bits: None,
+        tags: vec![],
+        bext: None,
+        cut: Cut::NoGrid,
+        notices: vec![],
+        grid_withheld: false,
+    };
+    let report = TxnReport {
+        txn: "6ac5b4f4-1-0".to_owned(),
+        kind: TxnKind::InPlace,
+        source: wav.to_path_buf(),
+        output: wav.to_path_buf(),
+        backup: None,
+        sidecar: None,
+        render: RenderReport {
+            tags_added: false,
+            tags_not_added: None,
+            tag_edit: None,
+            vorbis_edit: None,
+            frames_in: 1000,
+            frames_out: 1000,
+            trim_frames: 0,
+            trim_requested_frames: 0,
+            sample_rate_hz: 44_100,
+            channels: 2,
+            bits_out: 16,
+            exact: false,
+            dithered: false,
+            samples_saturated: 0,
+            pcm_hash: [0; 32],
+            stale_loudness_tags: vec![],
+            blocks: vec![],
+            leading_bytes: 0,
+            trailing_bytes: 0,
+            output_bytes: 0,
+        },
+        original_blake3: [0; 32],
+        output_blake3: [0; 32],
+        output_bytes: 0,
+        notes: vec![],
+        timings: vec![],
+    };
+    let done = ProcessDone {
+        output: wav.to_path_buf(),
+        duration: Seconds(5.0),
+        xml: XmlTrackInfo {
+            grid: XmlGrid::Absent,
+            title: None,
+            artist: None,
+        },
+        analysis: None,
+        edit: EditState::default(),
+        edit_carried: false,
+        grid_check: GridCheck::NotChecked {
+            reason: GridCheckSkip::NotAnalysed,
+        },
+        notes: vec!["the written file could not be analysed: it broke".to_owned()],
+    };
+    [
+        EngineEvent::Processing {
+            file_id: 1,
+            plan: Box::new(plan),
+        },
+        EngineEvent::Written {
+            file_id: 1,
+            report: Box::new(report),
+        },
+        EngineEvent::Done {
+            file_id: 1,
+            done: Box::new(done),
+        },
+    ]
+}
+
+#[test]
+fn an_export_in_place_whose_analysis_did_not_finish_clears_the_rows_numbers() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    assert_eq!(ids, [1]);
+    assert!(shell.restore().rows[0].row.is_some());
+
+    let mut last = None;
+    for event in events_of_an_unfinished_analysis(&wav) {
+        last = shell.session().on_engine_event(1, event);
+    }
+
+    let Some(JobEvent::ExportDone {
+        row,
+        in_place,
+        update,
+        ..
+    }) = last
+    else {
+        panic!("{last:?}");
+    };
+    assert!(in_place, "the file was replaced");
+    assert_eq!(update, None, "and there is nothing to show for it");
+    assert!(
+        row.notes[0].contains("could not be analysed"),
+        "{:?}",
+        row.notes
+    );
+    let snapshot = shell.restore();
+    assert_eq!(
+        snapshot.rows[0].row, None,
+        "what was measured no longer holds"
+    );
+    assert_eq!(snapshot.rows[0].plan, None);
+    assert!(snapshot.rows[0].revertible);
 }

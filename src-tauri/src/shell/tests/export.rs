@@ -364,6 +364,28 @@ fn settings_are_checked_at_the_boundary() {
 }
 
 #[test]
+fn a_folder_inside_the_backups_is_refused_before_anything_is_written() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    let out = lib.backups().join("copies");
+    let err = shell
+        .export(request(&ids, in_folder(prepare()), Some(&out)), |_| {})
+        .unwrap_err();
+    assert_eq!(err.kind, IpcErrorKind::InvalidArgument, "{err:?}");
+    assert!(!out.exists(), "no XML or report in the backups");
+    // Neither does the XML command write there.
+    let refused = shell
+        .write_xml(WriteXmlRequest {
+            file_ids: ids,
+            out: Some(lib.backups().join("mine.xml").display().to_string()),
+        })
+        .unwrap_err();
+    assert_eq!(refused.kind, IpcErrorKind::InvalidArgument, "{refused:?}");
+}
+
+#[test]
 fn a_foreign_artefact_in_the_folder_refuses_the_export() {
     let lib = Lib::new();
     let wav = lib.tone("a.wav", 0.1);

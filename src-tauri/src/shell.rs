@@ -3,7 +3,7 @@
 //! one-line call into this. Exporting, reverting and the rekordbox XML are in [`export`].
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use sc_core::Lufs;
@@ -14,8 +14,8 @@ use sc_core::ipc::{
 use sc_core::plan::{DecideSettings, check_bpm_range};
 use sc_engine::player::Player;
 use sc_engine::{
-    BatchSettings, CancelToken, RecoveryGate, Session, Task, collect_audio_files, default_workers,
-    probe_all, recover_at_start, run_job,
+    BatchFile, BatchSettings, CancelToken, RecoveryGate, Session, Task, collect_audio_files,
+    default_workers, probe_all, recover_at_start, run_job,
 };
 use sc_io::artefacts::default_exports_root;
 use sc_io::cache::Cache;
@@ -23,6 +23,9 @@ use sc_io::edits::EditStore;
 use sc_io::txn::default_backup_root;
 
 mod export;
+mod holds;
+
+pub(crate) use holds::{Hold, HoldKind, Holds};
 
 fn no_backup_folder() -> RecoveryStatus {
     RecoveryStatus::Skipped {
@@ -48,6 +51,8 @@ pub struct Shell {
 pub(crate) struct Inner {
     pub(crate) session: Mutex<Session>,
     jobs: Mutex<HashMap<JobId, CancelToken>>,
+    /// The files the running jobs and commands are working on.
+    pub(crate) holds: Arc<Holds>,
     pub(crate) cache: Option<Cache>,
     pub(crate) edits: Option<EditStore>,
     /// The analysis settings of the latest job, which the grid view's refits and cache lookups
@@ -93,6 +98,7 @@ impl Shell {
             inner: Arc::new(Inner {
                 session: Mutex::new(session),
                 jobs: Mutex::new(HashMap::new()),
+                holds: Arc::new(Holds::default()),
                 cache,
                 edits,
                 analysis: Mutex::new(AnalysisSettings::default()),
@@ -189,13 +195,17 @@ impl Shell {
     /// returns at once with the job's id.
     ///
     /// # Errors
-    /// An `invalidArgument` error, and no job, when the BPM range is out of its limits.
+    /// An `invalidArgument` error, and no job, when the BPM range is out of its limits; `busy` when
+    /// one of the files is being exported or reverted, whose analysis would land on the row after
+    /// the change.
     pub fn start(
         &self,
         req: AnalyzeRequest,
         send: impl FnMut(JobEvent) + Send + 'static,
     ) -> Result<JobId, IpcError> {
         check_bpm_range(req.analysis.bpm_range)?;
+        let files = self.session().batch(&req.file_ids);
+        let hold = self.hold(&files, HoldKind::Reading)?;
         *self
             .inner
             .analysis
@@ -208,7 +218,7 @@ impl Shell {
             cache: self.inner.cache.clone(),
             task: Task::Analyze,
         };
-        self.spawn_job(job_id, send, move |shell, cancel, forward| {
+        self.spawn_job(job_id, hold, send, move |shell, cancel, forward| {
             run_job(
                 &shell.inner.session,
                 job_id,
@@ -221,12 +231,26 @@ impl Shell {
         Ok(job_id)
     }
 
-    /// Runs a job on its own thread, its events going to `send`. The job leaves the running set
-    /// before its last event goes out, so a caller that has seen `finished` never finds it still
-    /// cancellable.
+    /// Holds the files of a batch as `kind`.
+    ///
+    /// # Errors
+    /// `busy`, naming the first file another job or command holds.
+    fn hold(&self, files: &[BatchFile], kind: HoldKind) -> Result<Hold, IpcError> {
+        let files: Vec<(u32, &Path)> = files
+            .iter()
+            .map(|f| (f.file_id, f.path.as_path()))
+            .collect();
+        self.inner.holds.acquire(&files, kind)
+    }
+
+    /// Runs a job on its own thread, its events going to `send`, holding `hold`'s files. The job
+    /// leaves the running set and lets go of its files before its last event goes out, so a caller
+    /// that has seen `finished` never finds it still cancellable or its files busy. A job that
+    /// panics lets go of them as its thread ends.
     fn spawn_job(
         &self,
         job_id: JobId,
+        hold: Hold,
         mut send: impl FnMut(JobEvent) + Send + 'static,
         run: impl FnOnce(&Shell, &CancelToken, &mut dyn FnMut(JobEvent)) + Send + 'static,
     ) {
@@ -237,9 +261,11 @@ impl Shell {
             .name(format!("sc-job-{job_id}"))
             .spawn(move || {
                 let jobs = shell.clone();
+                let mut hold = Some(hold);
                 let mut forward = |event: JobEvent| {
                     if matches!(event, JobEvent::Finished { .. }) {
                         jobs.jobs().remove(&job_id);
+                        hold.take();
                     }
                     send(event);
                 };

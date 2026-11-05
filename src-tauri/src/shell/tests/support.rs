@@ -185,6 +185,78 @@ pub(super) fn export(shell: &Shell, req: ExportRequest) -> (JobId, Vec<JobEvent>
     (job, events_until_finished(&rx))
 }
 
+/// A job whose events stop being forwarded at one of them, so it cannot send `finished`, and so
+/// lets go of nothing, until released.
+pub(super) struct Held {
+    rx: mpsc::Receiver<JobEvent>,
+    release: mpsc::Sender<()>,
+    /// The events up to the one it stopped at.
+    pub(super) before: Vec<JobEvent>,
+}
+
+impl Held {
+    /// Lets the job go on, and returns all its events to the end.
+    pub(super) fn finish(self) -> Vec<JobEvent> {
+        self.release.send(()).unwrap();
+        let mut events = self.before;
+        events.extend(events_until_finished(&self.rx));
+        events
+    }
+}
+
+/// How a test starts a job: its id, or why it was refused.
+type StartJob<'a> =
+    &'a dyn Fn(Box<dyn FnMut(JobEvent) + Send>) -> Result<JobId, sc_core::ipc::IpcError>;
+
+/// Starts a job with `start`, held at its first event that `stop` accepts.
+fn hold_at(start: StartJob<'_>, stop: fn(&JobEvent) -> bool) -> Held {
+    let (tx, rx) = mpsc::channel();
+    let (release, gate) = mpsc::channel::<()>();
+    let mut stopped = false;
+    start(Box::new(move |e| {
+        let stop_here = !stopped && stop(&e);
+        let _ = tx.send(e);
+        if stop_here {
+            stopped = true;
+            let _ = gate.recv();
+        }
+    }))
+    .unwrap();
+    let mut before = Vec::new();
+    loop {
+        let e = rx
+            .recv_timeout(Duration::from_secs(120))
+            .expect("the job reaches the event");
+        let here = stop(&e);
+        before.push(e);
+        if here {
+            return Held {
+                rx,
+                release,
+                before,
+            };
+        }
+    }
+}
+
+/// An export held at its first event that `stop` accepts.
+pub(super) fn held_at(shell: &Shell, req: ExportRequest, stop: fn(&JobEvent) -> bool) -> Held {
+    hold_at(&|send| shell.export(req.clone(), send), stop)
+}
+
+/// An analysis held at its first event that `stop` accepts.
+pub(super) fn analysis_held_at(
+    shell: &Shell,
+    file_ids: &[u32],
+    stop: fn(&JobEvent) -> bool,
+) -> Held {
+    let req = AnalyzeRequest {
+        file_ids: file_ids.to_vec(),
+        analysis: loudness_only(),
+    };
+    hold_at(&|send| shell.start(req.clone(), send), stop)
+}
+
 pub(super) fn prepare() -> ExportSettings {
     ExportSettings::new(BatchMode::Prepare)
 }

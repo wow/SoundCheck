@@ -78,7 +78,9 @@ impl Shell {
     /// decoding started and the player loaded at the planned gain with the click on.
     ///
     /// # Errors
-    /// `invalidArgument` for an unknown row; the analysis's or the decoder's error otherwise.
+    /// `invalidArgument` for an unknown row; `busy` while the file is exported in place or reverted
+    /// (a commit from a view of the old version would overwrite the new row's grid); the
+    /// analysis's or the decoder's error otherwise.
     pub fn open_track(
         &self,
         file_id: u32,
@@ -90,6 +92,7 @@ impl Shell {
             .entry(file_id)
             .ok_or_else(|| not_open(file_id))?;
         let path = PathBuf::from(&entry.path);
+        self.inner.holds.refuse_changing(file_id, &path)?;
         let mut settings = self
             .inner
             .analysis
@@ -132,6 +135,8 @@ impl Shell {
         // Held from loading the player until the track is in place: a refit or save of the
         // track before (which set the player's grid under this lock) cannot land in between.
         let mut view = self.view();
+        // Again, now that an export or revert starting from here on will find this view to close.
+        self.inner.holds.refuse_changing(file_id, &path)?;
         // Read under the view lock (lock order: view, session, player), so a settings change
         // cannot land between reading the gain and loading the player.
         let gain = DbFs(self.session().planned_gain(file_id).unwrap_or(0.0));
