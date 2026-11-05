@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, X } from 'lucide-react';
 import { refusal, type PendingChange } from '@/lib/ipc';
-import { dismissForgotten, dismissRecovery, useRecovery } from '@/state/recovery';
+import { askForget, dismissForgotten, dismissRecovery, useRecovery } from '@/state/recovery';
 import { ForgetConfirm } from './ForgetConfirm';
 import {
   failedText,
@@ -53,13 +53,7 @@ function Dismiss({ label, onClick }: { label: string; onClick: () => void }) {
 }
 
 /** One change left pending: its file, why, and Forget. */
-function Pending({
-  change,
-  onForget,
-}: {
-  change: PendingChange;
-  onForget: (c: PendingChange) => void;
-}) {
+function Pending({ change }: { change: PendingChange }) {
   const forgetting = useRecovery((r) => r.forgetting);
   const error = useRecovery((r) =>
     r.forgetError?.txn === change.txn ? r.forgetError.error : null,
@@ -83,7 +77,7 @@ function Pending({
           className={BUTTON}
           disabled={forgetting !== null}
           aria-label={`Forget the change to ${fileName(change.path)}`}
-          onClick={() => onForget(change)}
+          onClick={() => askForget(change)}
         >
           {forgetting === change.txn ? 'Forgetting…' : 'Forget'}
         </button>
@@ -118,7 +112,7 @@ export function RecoveryBanner() {
   const status = useRecovery((r) => r.status);
   const dismissed = useRecovery((r) => r.dismissed);
   const running = useAfter(status?.state === 'running', RUNNING_SHOW_AFTER_MS);
-  const [asking, setAsking] = useState<PendingChange | null>(null);
+  const asking = useRecovery((r) => r.asking);
 
   if (running) {
     return (
@@ -177,7 +171,7 @@ export function RecoveryBanner() {
           <p className="text-fg-2">{PENDING_TODO}</p>
           <ul className="max-h-[92px] min-w-0 overflow-y-auto">
             {status.pending.map((change) => (
-              <Pending key={change.txn} change={change} onForget={setAsking} />
+              <Pending key={change.txn} change={change} />
             ))}
           </ul>
           {recovered && (
@@ -187,7 +181,7 @@ export function RecoveryBanner() {
           )}
         </div>
       </section>
-      {asking && <ForgetConfirm change={asking} onClose={() => setAsking(null)} />}
+      {asking && <ForgetConfirm change={asking} onClose={() => askForget(null)} />}
     </>
   );
 }

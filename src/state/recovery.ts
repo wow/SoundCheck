@@ -5,6 +5,7 @@ import {
   recoveryStatus,
   type ForgetResult,
   type IpcError,
+  type PendingChange,
   type RecoveryStatus,
 } from '@/lib/ipc';
 
@@ -24,6 +25,8 @@ interface RecoveryState {
   forgetError: { txn: string; error: IpcError } | null;
   /** What the last Forget kept, for the line that says where it is. */
   forgotten: ForgetResult | null;
+  /** The change the Forget step is asking about, while it is open. */
+  asking: PendingChange | null;
 }
 
 const INITIAL: RecoveryState = {
@@ -33,6 +36,7 @@ const INITIAL: RecoveryState = {
   forgetting: null,
   forgetError: null,
   forgotten: null,
+  asking: null,
 };
 
 export const useRecovery = create<RecoveryState>()(() => INITIAL);
@@ -90,6 +94,11 @@ export async function forgetChange(txn: string): Promise<void> {
   } finally {
     useRecovery.setState({ forgetting: null });
   }
+}
+
+/** Opens the step that says what Forget means, for `change`; `null` closes it. */
+export function askForget(change: PendingChange | null): void {
+  useRecovery.setState({ asking: change });
 }
 
 /** Closes the line about finished changes or a failed check. */
