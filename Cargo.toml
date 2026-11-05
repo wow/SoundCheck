@@ -46,8 +46,8 @@ quick-xml = "0.42"
 percent-encoding = "2.3"
 # Write transaction: extended attributes copied through the atomic rename, fsync fallback,
 # free space and no-replace rename (rustix, fs only), ACL detection on macOS (exacl).
-xattr = "1.6"
-rustix = { version = "1.1", features = ["fs", "process"] }
+xattr = "1.7"
+rustix = { version = "1.1.6", features = ["fs", "process"] }
 exacl = "0.13"
 # Local date of the backup folders (time zone from the system); MIT OR Unlicense, used under MIT.
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
