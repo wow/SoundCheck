@@ -180,6 +180,7 @@ fn what_to_do(reason: ExportSkip) -> &'static str {
         ExportSkip::NotDjSafeRate { .. } => "convert it to 44.1 or 48 kHz in an audio editor first",
         ExportSkip::UnsupportedChannels { .. } => "export a stereo version first",
         ExportSkip::NothingToWrite { .. } => "run it again without --no-xml",
+        ExportSkip::OtherFileInFolder => "move that file away, or export into another folder",
         ExportSkip::Unsupported { .. } => "convert it to AIFF, WAV or FLAC first",
         ExportSkip::Silent => "check that it is the right file",
         ExportSkip::NoGrid => "set the grid in the app, or export without --grid-only",

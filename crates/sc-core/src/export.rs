@@ -359,6 +359,9 @@ pub enum ExportSkip {
     /// written (where bar 1 is cannot be trusted), so there is nothing to write. Confirm the
     /// grid first.
     GridNeedsReview,
+    /// The folder already holds a file of this name that is not a copy SoundCheck wrote, or that
+    /// changed since: it is left as it is.
+    OtherFileInFolder,
     /// An MP3 or AAC file, which only the rekordbox XML carries, without a grid: the XML would
     /// list nothing for it.
     XmlNoGrid {

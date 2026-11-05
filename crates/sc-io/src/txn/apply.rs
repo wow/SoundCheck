@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use sc_core::{ChangeCause, Error, RenderRequest, Result};
 
+use super::copy_at::{CopyAt, copy_at};
 use super::crash;
 use super::finish::finish;
 use super::fsx::{
@@ -51,6 +52,8 @@ struct Checked {
     /// The source's identity when it was checked, before waiting for the target lock.
     source_id: FileId,
     volume: Volume,
+    /// The earlier copy at the target this one replaces, proven SoundCheck's by its sidecar.
+    replaces: Option<FileId>,
 }
 
 /// What a transaction writes where.
@@ -63,6 +66,8 @@ pub(super) struct Plan<'a> {
     pub target: PathBuf,
     pub target_dir: PathBuf,
     pub temp: PathBuf,
+    /// The earlier copy at the target this one replaces.
+    pub replaces: Option<FileId>,
     /// In place: the backup's first-choice path and its temp file.
     pub backup: Option<(PathBuf, PathBuf)>,
     pub opts: &'a TxnOptions,
@@ -185,10 +190,14 @@ fn check(
         _ => name.clone(),
     };
     let target = target_dir.join(&out_name);
+    let mut replaces = None;
     if kind == TxnKind::ToFolder {
         check_outside_backups(&target, &opts.backup_root)?;
         if exists(&target) {
-            return Err(Error::AlreadyExists { path: target });
+            if !opts.replace_own_copy || copy_at(&target, &full)? != CopyAt::Own {
+                return Err(Error::AlreadyExists { path: target });
+            }
+            replaces = Some(FileId::read(&target)?);
         }
     }
     let source_id = FileId::read(&full)?;
@@ -209,6 +218,7 @@ fn check(
         create_dir,
         source_id,
         volume,
+        replaces,
     })
 }
 
@@ -222,7 +232,8 @@ fn plan<'a>(
 ) -> Result<Plan<'a>> {
     if c.kind == TxnKind::InPlace {
         check_in_place(&c.src.path, &c.target_dir, tx.volumes)?;
-    } else if exists(&c.target) {
+    } else if exists(&c.target) && Some(FileId::read(&c.target)?) != c.replaces {
+        // Something took the name, or changed the copy, while this waited for the lock.
         return Err(Error::AlreadyExists { path: c.target });
     }
     let meta = snapshot(&c.src.path)?;
@@ -254,6 +265,7 @@ fn plan<'a>(
         target: c.target,
         target_dir: c.target_dir,
         temp,
+        replaces: c.replaces,
         backup,
         opts,
         journal,
@@ -487,6 +499,15 @@ fn rename_into_place(tx: &Transaction<'_>, plan: &Plan<'_>) -> Result<()> {
     #[cfg(not(test))]
     let _ = tx;
     match plan.kind {
+        // An earlier copy, still what it was when it was proven ours, is replaced atomically.
+        TxnKind::ToFolder if plan.replaces.is_some() => {
+            if FileId::read(&plan.target).ok() != plan.replaces {
+                return Err(Error::AlreadyExists {
+                    path: plan.target.clone(),
+                });
+            }
+            std::fs::rename(&plan.temp, &plan.target).map_err(|e| io_err(&plan.target, e))
+        }
         TxnKind::ToFolder => rename_noreplace(&plan.temp, &plan.target),
         _ => std::fs::rename(&plan.temp, &plan.target).map_err(|e| io_err(&plan.target, e)),
     }

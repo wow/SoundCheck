@@ -386,3 +386,97 @@ fn a_file_that_changes_during_its_analysis_is_refused_not_written_from_a_stale_p
         "the plan was made from other bytes: {error}"
     );
 }
+
+/// What became of `wav` in one export to `out` (in place without one), at `target` LUFS.
+fn exported(lib: &Lib, wav: &std::path::Path, out: Option<PathBuf>, target: f64) -> &'static str {
+    let mut p = process(lib, BatchMode::Prepare, out);
+    p.decide.target = sc_core::Lufs(target);
+    let s = settings(lib, common::loudness_only(), p);
+    let events = run(&batch(&[wav.to_path_buf()]), &s, &CancelToken::new());
+    events
+        .iter()
+        .find_map(|e| match e {
+            EngineEvent::Done { .. } => Some("done"),
+            EngineEvent::ExportSkipped { .. } => Some("skipped"),
+            EngineEvent::Failed { .. } => Some("failed"),
+            _ => None,
+        })
+        .unwrap_or("none")
+}
+
+#[test]
+fn an_earlier_copy_is_replaced_and_the_source_left_alone() {
+    let lib = Lib::new();
+    let wav = common::tone_wav(&lib.music(), "a.wav", 3.0, 0.1);
+    let source = std::fs::read(&wav).unwrap();
+    let out = lib.dir.path().join("copies");
+
+    assert_eq!(exported(&lib, &wav, Some(out.clone()), -11.0), "done");
+    let copy = out.join("a.wav");
+    let first = std::fs::read(&copy).unwrap();
+
+    // Exported again at another gain: the same path, the new bytes, a sidecar proving them.
+    assert_eq!(exported(&lib, &wav, Some(out.clone()), -16.0), "done");
+    assert_ne!(
+        std::fs::read(&copy).unwrap(),
+        first,
+        "the copy was replaced"
+    );
+    assert_eq!(
+        std::fs::read(&wav).unwrap(),
+        source,
+        "the source is untouched"
+    );
+    assert_eq!(txn::copy_at(&copy, &wav).unwrap(), txn::CopyAt::Own);
+}
+
+#[test]
+fn a_file_of_that_name_its_sidecar_does_not_prove_is_skipped() {
+    let lib = Lib::new();
+    let wav = common::tone_wav(&lib.music(), "a.wav", 3.0, 0.1);
+    let out = lib.dir.path().join("copies");
+    assert_eq!(exported(&lib, &wav, Some(out.clone()), -11.0), "done");
+    let copy = out.join("a.wav");
+
+    // Changed by someone since: the sidecar no longer proves it.
+    let mut edited = std::fs::read(&copy).unwrap();
+    let at = edited.len() - 1;
+    edited[at] ^= 1;
+    std::fs::write(&copy, &edited).unwrap();
+    assert_eq!(exported(&lib, &wav, Some(out.clone()), -11.0), "skipped");
+    assert_eq!(std::fs::read(&copy).unwrap(), edited, "left as it is");
+
+    // No sidecar at all.
+    std::fs::remove_file(txn::sidecar_path(&copy)).unwrap();
+    assert_eq!(exported(&lib, &wav, Some(out), -11.0), "skipped");
+    assert_eq!(std::fs::read(&copy).unwrap(), edited, "left as it is");
+}
+
+#[test]
+fn an_export_into_the_sources_own_folder_never_replaces_the_source() {
+    let lib = Lib::new();
+    let wav = common::tone_wav(&lib.music(), "a.wav", 3.0, 0.1);
+    // An export in place first, whose sidecar proves the file's bytes.
+    assert_eq!(exported(&lib, &wav, None, -11.0), "done");
+    let written = std::fs::read(&wav).unwrap();
+
+    assert_eq!(exported(&lib, &wav, Some(lib.music()), -14.0), "skipped");
+    assert_eq!(std::fs::read(&wav).unwrap(), written);
+}
+
+#[test]
+fn a_plain_apply_never_replaces_a_copy() {
+    let lib = Lib::new();
+    let wav = common::tone_wav(&lib.music(), "a.wav", 3.0, 0.1);
+    let out = lib.dir.path().join("copies");
+    assert_eq!(exported(&lib, &wav, Some(out.clone()), -11.0), "done");
+    let opts = ApplyOptions {
+        place: sc_engine::Place::Folder(out),
+        ..ApplyOptions::in_place(lib.backups())
+    };
+    let refused = apply_file(&wav, &ApplyRequest::default(), &opts, &CancelToken::new());
+    assert!(
+        matches!(refused, Err(Error::AlreadyExists { .. })),
+        "{refused:?}"
+    );
+}

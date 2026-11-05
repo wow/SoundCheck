@@ -23,15 +23,18 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use std::collections::BTreeMap;
+
 use sc_core::analysis::{AnalysisRecord, AnalysisSettings, Grid};
 use sc_core::export::{
-    ExportOutcome, ExportPlan, ExportRecord, ExportSettings, ExportedGrid, GridCheck,
+    ExportOutcome, ExportPlan, ExportRecord, ExportSettings, ExportSkip, ExportedGrid, GridCheck,
     GridCheckSkip, Place as ExportPlace, SourceMeasurements, XmlGrid, XmlTrackInfo,
 };
 use sc_core::plan::{DecideSettings, Plan};
 use sc_core::{Error, Result, Seconds};
 use sc_io::cache::Cache;
 use sc_io::edits::{EditStore, SavedEdit};
+use sc_io::txn::{CopyAt, copy_at};
 
 use super::grid_check::{Choices, Exported, check_written, detector_grid, with_detector};
 use super::plan::{Bars, ExportInput, ExportSource, bar1_after, grid_trusted};
@@ -58,6 +61,9 @@ pub struct ProcessSettings {
     pub edits: Option<EditStore>,
     /// The start-up recovery: no file is analysed or written while it runs.
     pub recovery: std::sync::Arc<RecoveryGate>,
+    /// Each file as the user confirmed it, by id: a file that is no longer that one fails before
+    /// anything is written. `None` checks nothing.
+    pub confirmed: Option<BTreeMap<u32, String>>,
 }
 
 impl ProcessSettings {
@@ -93,6 +99,7 @@ impl ProcessSettings {
             keep_mtime: self.export.batch_mode == sc_core::export::BatchMode::Library,
             sidecar: true,
             cache,
+            replace_own_copy: true,
         }
     }
 }
@@ -137,11 +144,14 @@ pub(crate) fn process_file(
     progress: Option<&Progress>,
     send: &dyn Fn(EngineEvent),
 ) -> Result<EngineEvent> {
+    check_confirmed(file_id, path, settings)?;
     // Hashed before the analysis, so the plan and the hash the write checks describe the same
     // bytes: a file that changes during the analysis is refused, not written from a stale plan.
     let mut source = ExportSource::read(path);
     if source.codec.is_writable() {
         source.blake3 = Some(sc_io::txn::hash_file(path)?.1);
+        // What was hashed is what was confirmed: from here on the hash guards it.
+        check_confirmed(file_id, path, settings)?;
     }
     let mut record = analyzer
         .analyze_with(path, &mut Timings::default(), progress)?
@@ -163,7 +173,8 @@ pub(crate) fn process_file(
         source: &source,
         grid_confirmed: edit.confirmed,
     };
-    let plan = match plan_export_snapped(path, &input, &settings.export)? {
+    let outcome = plan_export_snapped(path, &input, &settings.export)?;
+    let plan = match gate_folder(outcome, path, settings.out_dir.as_deref())?.0 {
         ExportOutcome::Write { plan } => plan,
         outcome => {
             return Ok(EngineEvent::ExportSkipped {
@@ -238,6 +249,51 @@ pub(crate) fn process_file(
     Ok(EngineEvent::Done {
         file_id,
         done: Box::new(ProcessDone { xml, ..done }),
+    })
+}
+
+/// Refuses a file that is no longer the one the user confirmed.
+///
+/// # Errors
+/// [`Error::FileChanged`]; [`Error::Io`] when it cannot be read.
+fn check_confirmed(file_id: u32, path: &Path, settings: &ProcessSettings) -> Result<()> {
+    let Some(confirmed) = &settings.confirmed else {
+        return Ok(());
+    };
+    if confirmed.get(&file_id).map(String::as_str) == Some(&*sc_io::txn::file_identity(path)?) {
+        return Ok(());
+    }
+    Err(Error::FileChanged {
+        path: path.to_path_buf(),
+        detail: "since you confirmed the export; it was left as it is".to_owned(),
+        cause: sc_core::ChangeCause::SincePlanned,
+    })
+}
+
+/// `outcome`, given what is at the path a copy would take in `out_dir`: another file of that name
+/// keeps the file from being written. Also says whether the write replaces an earlier copy.
+///
+/// # Errors
+/// [`Error::Io`] when that file cannot be read to tell.
+pub(super) fn gate_folder(
+    outcome: ExportOutcome,
+    path: &Path,
+    out_dir: Option<&Path>,
+) -> Result<(ExportOutcome, bool)> {
+    let (ExportOutcome::Write { .. }, Some(dir), Some(name)) =
+        (&outcome, out_dir, path.file_name())
+    else {
+        return Ok((outcome, false));
+    };
+    Ok(match copy_at(&dir.join(name), path)? {
+        CopyAt::Nothing => (outcome, false),
+        CopyAt::Own => (outcome, true),
+        CopyAt::Foreign => (
+            ExportOutcome::Skip {
+                reason: ExportSkip::OtherFileInFolder,
+            },
+            false,
+        ),
     })
 }
 

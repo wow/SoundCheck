@@ -66,6 +66,7 @@
 //! `SC_TEST_CRASH_AFTER_STEP` (see [`CRASH_ENV`]).
 
 mod apply;
+mod copy_at;
 pub(crate) mod crash;
 mod finish;
 mod forget;
@@ -87,10 +88,12 @@ use sc_core::{Error, RenderRequest, Result};
 
 use crate::render::RenderReport;
 
+pub use copy_at::{CopyAt, copy_at};
 pub use crash::CRASH_ENV;
 pub use forget::{Forgotten, forget};
 pub use fsx::{TEMP_MARKER, hash_file, hex};
 pub use journal::{Entry, JOURNAL_FILE, Outcome, State, TxnKind, is_txn_id};
+pub use meta::file_identity;
 pub use preflight::{
     SPACE_MARGIN_BYTES, TagFamily, check_folder_not_rekordbox, is_in_resolved_backup_root,
     is_under_backup_root, resolve_backup_root, resolve_file, tag_family,
@@ -142,6 +145,10 @@ pub struct TxnOptions {
     /// ([`sc_core::Error::FileChanged`], [`sc_core::ChangeCause::SincePlanned`]). `None` checks
     /// nothing.
     pub expect_original_blake3: Option<[u8; 32]>,
+    /// A copy to a folder may replace an earlier copy of that name that SoundCheck wrote and its
+    /// sidecar still proves ([`copy_at`]). Anything else there is refused either way
+    /// ([`sc_core::Error::AlreadyExists`]).
+    pub replace_own_copy: bool,
 }
 
 impl TxnOptions {
@@ -154,6 +161,7 @@ impl TxnOptions {
             sidecar: true,
             export: None,
             expect_original_blake3: None,
+            replace_own_copy: false,
         }
     }
 }

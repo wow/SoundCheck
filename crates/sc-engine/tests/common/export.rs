@@ -72,6 +72,7 @@ pub fn process(lib: &Lib, mode: BatchMode, out: Option<PathBuf>) -> ProcessSetti
         backup_root: lib.backups(),
         edits: Some(lib.edits()),
         recovery: Arc::new(RecoveryGate::new(finished())),
+        confirmed: None,
     }
 }
 

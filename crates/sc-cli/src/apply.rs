@@ -459,6 +459,7 @@ pub fn run_apply(args: ApplyArgs) -> anyhow::Result<usize> {
         keep_mtime: !args.no_keep_mtime,
         sidecar: !args.no_sidecar,
         cache: Some(cache),
+        replace_own_copy: false,
     };
     let cancel = CancelToken::new();
     let mut failed = 0;

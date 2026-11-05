@@ -90,6 +90,6 @@ fn outcomes_serialise_as_tagged_unions() {
     let settings = serde_json::to_string(&ExportSettings::default()).unwrap();
     assert_eq!(
         settings,
-        r#"{"batchMode":"prepare","place":"inPlace","depth":null,"gridOnly":false,"tbpm":true,"xml":true,"leadMs":5.0}"#
+        r#"{"batchMode":"prepare","place":"folder","depth":null,"gridOnly":false,"tbpm":true,"xml":true,"leadMs":5.0}"#
     );
 }

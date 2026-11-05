@@ -102,6 +102,11 @@ pub fn skip_why(reason: ExportSkip) -> String {
              grid)",
             codec.label()
         ),
+        ExportSkip::OtherFileInFolder => {
+            "a file of this name is already in the folder, and it is not a copy SoundCheck wrote \
+             (or it changed since), so it is left as it is"
+                .to_owned()
+        }
         ExportSkip::GridNeedsReview => {
             "grid only, and its grid needs review, so it is not written and there is nothing \
              else to write"
