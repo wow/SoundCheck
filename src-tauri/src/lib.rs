@@ -11,9 +11,9 @@ mod shell;
 
 use sc_core::analysis::GridEdit;
 use sc_core::ipc::{
-    AnalyzeRequest, ExportRequest, FileEntry, ForgetResult, IpcError, IpcErrorKind, JobEvent,
-    JobId, Listen, RecoveryStatus, Replan, RevertResult, RowUpdate, SessionSnapshot, TrackEvent,
-    TrackOpened, WriteXmlRequest, XmlWritten,
+    AnalyzeRequest, ExportPreview, ExportRequest, FileEntry, ForgetResult, IpcError, IpcErrorKind,
+    JobEvent, JobId, Listen, RecoveryStatus, Replan, RevertResult, RowUpdate, SessionSnapshot,
+    TrackEvent, TrackOpened, WriteXmlRequest, XmlWritten,
 };
 use sc_core::plan::DecideSettings;
 use sc_core::{DbFs, Lufs, SampleIndex};
@@ -68,6 +68,16 @@ async fn analyze(
         // A closed channel means the window went away; the job still ends normally.
         let _ = on_event.send(event);
     })
+}
+
+/// What exporting these files would do, for the confirm step; nothing is written.
+#[tauri::command]
+async fn plan_export(
+    shell: State<'_, Shell>,
+    req: ExportRequest,
+) -> Result<ExportPreview, IpcError> {
+    let shell = shell.inner().clone();
+    blocking(move || shell.plan_export(&req)).await
 }
 
 /// Starts exporting files; refused while start-up recovery runs. Events arrive on `on_event`,
@@ -303,6 +313,7 @@ pub fn run() {
             recovery_status,
             expand_paths,
             analyze,
+            plan_export,
             export,
             revert_file,
             write_rekordbox_xml,

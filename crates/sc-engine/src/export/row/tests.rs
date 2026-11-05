@@ -197,3 +197,57 @@ fn the_row_tells_the_grid_check_outcomes_apart_by_type_alone() {
     assert_eq!(reported["result"], "offBy");
     assert_eq!(reported["offsetMs"], 7.2);
 }
+
+#[test]
+fn a_skipped_row_says_why_in_the_same_words_as_the_report() {
+    use crate::export::wording::{skip_why, xml_only_text};
+    use sc_core::export::XmlOnlyReason;
+    use sc_core::plan::Codec;
+
+    let reason = ExportSkip::NotDjSafeRate {
+        sample_rate_hz: 96_000,
+    };
+    let row = skipped(&ExportOutcome::Skip { reason }, false);
+    assert_eq!(row.notes, [skip_why(reason)]);
+
+    let reason = XmlOnlyReason::Mp3OrAac { codec: Codec::Mp3 };
+    let row = skipped(&ExportOutcome::XmlOnly { reason }, false);
+    assert_eq!(row.notes, [xml_only_text(reason)]);
+}
+
+#[test]
+fn what_the_plan_says_is_worded_and_kept_through_every_step() {
+    use crate::export::wording::{GRID_WITHHELD, notice_text};
+
+    let plan = ExportPlan {
+        grid_withheld: true,
+        ..plan()
+    };
+    let notice = notice_text(plan.notices[0]);
+    let row = planned(&plan, false);
+    assert_eq!(row.notes, [notice.clone(), GRID_WITHHELD.to_owned()]);
+
+    let row = written(
+        row,
+        &report(TxnKind::InPlace, vec!["a note".to_owned()], Vec::new()),
+    );
+    assert_eq!(
+        row.notes,
+        [
+            notice.clone(),
+            GRID_WITHHELD.to_owned(),
+            "a note".to_owned()
+        ]
+    );
+
+    let row = done(row, &process_done(vec!["after".to_owned()]));
+    assert_eq!(
+        row.notes,
+        [
+            notice,
+            GRID_WITHHELD.to_owned(),
+            "a note".to_owned(),
+            "after".to_owned()
+        ]
+    );
+}

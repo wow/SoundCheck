@@ -431,6 +431,16 @@ fn worst_case_export_row() -> ExportRow {
 }
 
 #[test]
+fn a_worst_case_preview_row_stays_within_budget() {
+    let row = ExportPreviewRow {
+        file_id: u32::MAX,
+        row: Some(Box::new(worst_case_export_row())),
+        error: None,
+    };
+    assert!(json_len(&row) <= MAX_ROW_BYTES, "{} bytes", json_len(&row));
+}
+
+#[test]
 fn a_worst_case_export_row_stays_within_budget() {
     let row = worst_case_export_row();
     assert!(json_len(&row) <= MAX_ROW_BYTES, "{} bytes", json_len(&row));

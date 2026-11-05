@@ -311,13 +311,23 @@ impl Shell {
     }
 
     /// Everything the session holds, for a window that reloads. Jobs still running are
-    /// cancelled: their events would go to a page that no longer listens.
+    /// cancelled: their events would go to a page that no longer listens. They end on their own
+    /// time, so the snapshot names them: a window reads it again until none is left. Read in this
+    /// order, a snapshot naming none holds all they did.
     #[must_use]
     pub fn restore(&self) -> SessionSnapshot {
-        for token in self.jobs().values() {
-            token.cancel();
+        let mut running: Vec<JobId> = {
+            let jobs = self.jobs();
+            for token in jobs.values() {
+                token.cancel();
+            }
+            jobs.keys().copied().collect()
+        };
+        running.sort_unstable();
+        SessionSnapshot {
+            running_jobs: running,
+            ..self.session().snapshot()
         }
-        self.session().snapshot()
     }
 
     /// The median S-P95 of the analysed rows, for "Calibrate from my library".

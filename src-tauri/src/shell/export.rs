@@ -1,6 +1,7 @@
-//! The export commands' bodies: starting an export, reverting a file, writing a rekordbox XML of
-//! analysed rows and forgetting a change recovery left pending. Every one of them is refused while
-//! the start-up recovery runs: the engine would only wait for it, and the user is better told.
+//! The export commands' bodies: saying what an export would do, starting one, reverting a file,
+//! writing a rekordbox XML of analysed rows and forgetting a change recovery left pending. Every
+//! one of them is refused while the start-up recovery runs: the engine would only wait for it, and
+//! the user is better told.
 
 use std::path::{Path, PathBuf};
 
@@ -8,12 +9,13 @@ use sc_core::Error;
 use sc_core::analysis::AnalysisRecord;
 use sc_core::export::Place as ExportPlace;
 use sc_core::ipc::{
-    ExportArtefacts, ExportRequest, ForgetResult, IpcError, IpcErrorKind, JobEvent, JobId,
-    RecoveryStatus, RevertResult, WriteXmlRequest, XmlNotListed, XmlWritten,
+    ExportArtefacts, ExportPreview, ExportPreviewRow, ExportRequest, ForgetResult, IpcError,
+    IpcErrorKind, JobEvent, JobId, RecoveryStatus, RevertResult, WriteXmlRequest, XmlNotListed,
+    XmlWritten,
 };
 use sc_engine::export::{
     ExportJob, XmlOutRefusal, analysed_row, artefact_conflict, export_artefacts, failed_row,
-    new_artefacts_folder, not_listed, run_export_job, xml_out_refusal, xml_tracks,
+    new_artefacts_folder, not_listed, preview_row, run_export_job, xml_out_refusal, xml_tracks,
 };
 use sc_engine::{
     Analyzer, BatchFile, BatchRow, BatchSettings, CancelToken, EditState, EngineEvent, Place,
@@ -115,21 +117,15 @@ impl Shell {
         Ok(())
     }
 
-    /// Starts exporting `req.file_ids`, sending every event to `send`; returns at once with the
-    /// job's id. A running job is cancelled with [`Shell::cancel`]. The grid view closes if it
-    /// shows a file about to be replaced.
+    /// What an export of `req` needs, once everything that refuses it before anything is written
+    /// has had its say.
     ///
     /// # Errors
-    /// Before anything is written: `recoveryRunning` while the start-up recovery runs;
-    /// `invalidArgument` for settings out of their limits or a folder that does not fit the
-    /// place; what [`Self::distinct_rows`] and [`Self::refuse_destination`] refuse; `alreadyExists`
-    /// when a file SoundCheck did not write holds the name of an artefact in the folder; `busy`
-    /// when another job or command is working on one of the files.
-    pub fn export(
+    /// See [`Self::export`], except `busy`.
+    fn checked_export(
         &self,
-        req: ExportRequest,
-        send: impl FnMut(JobEvent) + Send + 'static,
-    ) -> Result<JobId, IpcError> {
+        req: &ExportRequest,
+    ) -> Result<(ProcessSettings, Vec<BatchFile>), IpcError> {
         self.refuse_while_recovering()?;
         let out_dir = req
             .out_dir
@@ -162,6 +158,90 @@ impl Shell {
                 return Err(conflict.error.into());
             }
         }
+        Ok((process, files))
+    }
+
+    /// What exporting `req.file_ids` would do with each, planned as the job plans them, with
+    /// everything the job would refuse refused here too. Nothing is written. A file that cannot be
+    /// planned (not analysed yet, its start unreadable) gets its error on its row, as the job would
+    /// report it on its row.
+    ///
+    /// # Errors
+    /// What [`Self::export`] refuses; `busy` while one of the files is being exported or reverted.
+    pub fn plan_export(&self, req: &ExportRequest) -> Result<ExportPreview, IpcError> {
+        let (process, files) = self.checked_export(req)?;
+        let _hold = self.hold(&files, HoldKind::Reading)?;
+        let decide = process.decide;
+        let rows = files
+            .iter()
+            .map(|file| {
+                let planning = self.session().planning_row(file.file_id);
+                let planned = planning
+                    .ok_or_else(|| {
+                        Error::InvalidArgument(format!(
+                            "{} is not analysed yet",
+                            file.path.display()
+                        ))
+                    })
+                    .and_then(|(record, edit, revertible)| {
+                        preview_row(
+                            &file.path,
+                            &record,
+                            edit,
+                            &decide,
+                            &req.settings,
+                            revertible,
+                        )
+                    });
+                match planned {
+                    Ok(row) => ExportPreviewRow {
+                        file_id: file.file_id,
+                        row: Some(row),
+                        error: None,
+                    },
+                    Err(error) => ExportPreviewRow {
+                        file_id: file.file_id,
+                        row: None,
+                        error: Some(about(file.file_id, error)),
+                    },
+                }
+            })
+            .collect();
+        let shown = |dir: &Path| dir.display().to_string();
+        let artefacts_folder = if req.settings.xml {
+            match &process.out_dir {
+                Some(dir) => Some(shown(dir)),
+                None => self.inner.roots.exports.as_deref().map(shown),
+            }
+        } else {
+            None
+        };
+        Ok(ExportPreview {
+            rows,
+            backup_folder: process
+                .out_dir
+                .is_none()
+                .then(|| shown(&process.backup_root)),
+            artefacts_folder,
+        })
+    }
+
+    /// Starts exporting `req.file_ids`, sending every event to `send`; returns at once with the
+    /// job's id. A running job is cancelled with [`Shell::cancel`]. The grid view closes if it
+    /// shows a file about to be replaced.
+    ///
+    /// # Errors
+    /// Before anything is written: `recoveryRunning` while the start-up recovery runs;
+    /// `invalidArgument` for settings out of their limits or a folder that does not fit the
+    /// place; what [`Self::distinct_rows`] and [`Self::refuse_destination`] refuse; `alreadyExists`
+    /// when a file SoundCheck did not write holds the name of an artefact in the folder; `busy`
+    /// when another job or command is working on one of the files.
+    pub fn export(
+        &self,
+        req: ExportRequest,
+        send: impl FnMut(JobEvent) + Send + 'static,
+    ) -> Result<JobId, IpcError> {
+        let (process, files) = self.checked_export(&req)?;
         let kind = if req.settings.place == ExportPlace::InPlace {
             HoldKind::ExportInPlace
         } else {
@@ -310,6 +390,7 @@ impl Shell {
         let _hold = self.hold(&files, HoldKind::Reading)?;
         let rows = self.analysed_rows(&files)?;
         let artefacts = self.write_xml_rows(&rows, out.as_deref())?;
+        self.session().set_artefacts(Some(Ok(artefacts.clone())));
         let not_listed = not_listed(&rows, XmlSelect::All)
             .into_iter()
             .map(|(i, why)| XmlNotListed {

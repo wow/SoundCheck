@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 pub use export::{
-    ExportAction, ExportArtefacts, ExportRequest, ExportRow, ExportVerification, ForgetResult,
-    MAX_ROW_NOTES_JSON_BYTES, MAX_STALE_TAGS_JSON_BYTES, RevertResult, WriteXmlRequest,
-    XmlNotListed, XmlWritten, bounded_strings,
+    ExportAction, ExportArtefacts, ExportPreview, ExportPreviewRow, ExportRequest, ExportRow,
+    ExportVerification, ForgetResult, MAX_ROW_NOTES_JSON_BYTES, MAX_STALE_TAGS_JSON_BYTES,
+    RevertResult, WriteXmlRequest, XmlNotListed, XmlWritten, bounded_strings,
 };
 pub use recovery::{PendingChange, RecoveredChange, RecoveryOutcome, RecoveryStatus};
 pub use track::{
@@ -344,6 +344,13 @@ pub struct SessionSnapshot {
     pub revision: u32,
     /// The rows.
     pub rows: Vec<SessionRow>,
+    /// Jobs still winding down when this was read: they were cancelled, but until they end their
+    /// files are busy and their rows can still change. Read again until this is empty.
+    pub running_jobs: Vec<JobId>,
+    /// Where the latest batch's rekordbox XML and grid report are, until the next batch.
+    pub artefacts: Option<ExportArtefacts>,
+    /// Why the latest batch's rekordbox XML and grid report could not be written.
+    pub artefacts_failed: Option<IpcError>,
 }
 
 /// A row's plan, sent when the settings change.

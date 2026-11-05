@@ -134,6 +134,7 @@ pub fn run_export_job(
     send: &mut dyn FnMut(JobEvent),
 ) {
     let lock = || session.lock().unwrap_or_else(PoisonError::into_inner);
+    lock().set_artefacts(None);
     let files = lock().batch(file_ids);
     let settings = BatchSettings {
         analysis: job.analysis.clone(),
@@ -165,6 +166,15 @@ pub fn run_export_job(
     match result {
         Ok(summary) => {
             if let Some(event) = write_batch_artefacts(job_id, job, &rows.finish()) {
+                match &event {
+                    JobEvent::Artefacts { artefacts, .. } => {
+                        lock().set_artefacts(Some(Ok(artefacts.clone())));
+                    }
+                    JobEvent::ArtefactsFailed { error, .. } => {
+                        lock().set_artefacts(Some(Err(error.clone())));
+                    }
+                    _ => {}
+                }
                 send(event);
             }
             send(JobEvent::Finished {

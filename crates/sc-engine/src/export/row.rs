@@ -10,6 +10,15 @@ use sc_io::render::{BlockFate, RenderReport};
 use sc_io::txn::{TxnKind, TxnReport};
 
 use super::ProcessDone;
+use super::wording::{GRID_WITHHELD, notice_text, skip_why, xml_only_text};
+
+/// What the plan says the user should know, in words, for the row's notes.
+fn plan_notes(plan: &ExportPlan) -> Vec<String> {
+    let notices = plan.notices.iter().map(|n| notice_text(*n));
+    notices
+        .chain(plan.grid_withheld.then(|| GRID_WITHHELD.to_owned()))
+        .collect()
+}
 
 /// A file planned, its write starting; `revertible`: an earlier change of it is in effect.
 pub(crate) fn planned(plan: &ExportPlan, revertible: bool) -> Box<ExportRow> {
@@ -26,19 +35,25 @@ pub(crate) fn planned(plan: &ExportPlan, revertible: bool) -> Box<ExportRow> {
         grid_check: None,
         edit_carried: false,
         revertible,
-        notes: Vec::new(),
+        notes: bounded_strings(plan_notes(plan), MAX_ROW_NOTES_JSON_BYTES),
     })
 }
 
-/// A file not written; `revertible`: an earlier change of it is in effect.
+/// A file not written, with why in words; `revertible`: an earlier change of it is in effect.
 pub(crate) fn skipped(outcome: &ExportOutcome, revertible: bool) -> Box<ExportRow> {
-    let (action, notices, grid_withheld) = match outcome {
-        ExportOutcome::XmlOnly { reason } => {
-            (ExportAction::XmlOnly { reason: *reason }, Vec::new(), false)
-        }
-        ExportOutcome::Skip { reason } => {
-            (ExportAction::Skip { reason: *reason }, Vec::new(), false)
-        }
+    let (action, notices, grid_withheld, why) = match outcome {
+        ExportOutcome::XmlOnly { reason } => (
+            ExportAction::XmlOnly { reason: *reason },
+            Vec::new(),
+            false,
+            vec![xml_only_text(*reason)],
+        ),
+        ExportOutcome::Skip { reason } => (
+            ExportAction::Skip { reason: *reason },
+            Vec::new(),
+            false,
+            vec![skip_why(*reason)],
+        ),
         // A batch reports a written file through its other events.
         ExportOutcome::Write { plan } => (
             ExportAction::Write {
@@ -47,6 +62,7 @@ pub(crate) fn skipped(outcome: &ExportOutcome, revertible: bool) -> Box<ExportRo
             },
             plan.notices.clone(),
             plan.grid_withheld,
+            plan_notes(plan),
         ),
     };
     Box::new(ExportRow {
@@ -59,7 +75,7 @@ pub(crate) fn skipped(outcome: &ExportOutcome, revertible: bool) -> Box<ExportRo
         grid_check: None,
         edit_carried: false,
         revertible,
-        notes: Vec::new(),
+        notes: bounded_strings(why, MAX_ROW_NOTES_JSON_BYTES),
     })
 }
 
@@ -110,7 +126,11 @@ pub(crate) fn written(row: Box<ExportRow>, report: &TxnReport) -> Box<ExportRow>
         verification: Some(verification(&report.render)),
         revertible: row.revertible || report.kind == TxnKind::InPlace,
         notes: bounded_strings(
-            not_added.into_iter().chain(report.notes.iter().cloned()),
+            row.notes
+                .iter()
+                .cloned()
+                .chain(not_added)
+                .chain(report.notes.iter().cloned()),
             MAX_ROW_NOTES_JSON_BYTES,
         ),
         ..*row

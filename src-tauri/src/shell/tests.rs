@@ -1,5 +1,6 @@
 //! Unit tests of the private parts of `src-tauri/src/shell.rs`; those of the export commands are
-//! in `tests/export.rs`, `tests/commands.rs`, `tests/holds.rs` and, with the grid, `tests/grid.rs`.
+//! in `tests/export.rs`, `tests/preview.rs`, `tests/commands.rs`, `tests/holds.rs` and, with the
+//! grid, `tests/grid.rs`.
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -14,6 +15,7 @@ mod commands;
 mod export;
 mod grid;
 mod holds;
+mod preview;
 mod support;
 
 fn tone_wav(dir: &Path, name: &str, amp: f32) {

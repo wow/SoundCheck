@@ -1,6 +1,6 @@
 //! What an export sends and receives over IPC: the request, the row each file shows (at most
 //! [`super::MAX_ROW_BYTES`] of JSON whatever the file holds, which [`ExportRow`]'s bounded lists
-//! see to), the batch's artefacts, and the answers of `revert_file`, `write_rekordbox_xml` and
+//! see to), the batch's artefacts, and the answers of `plan_export`, `revert_file`, `write_rekordbox_xml` and
 //! `forget_pending`. The written file's analysis, with its evidence, never crosses: the row
 //! carries the numbers the table shows.
 
@@ -9,7 +9,7 @@ use ts_rs::TS;
 
 use super::recovery::RecoveryStatus;
 use super::track::RowUpdate;
-use super::{FileEntry, JobStage};
+use super::{FileEntry, IpcError, JobStage};
 use crate::export::{Cut, ExportNotice, ExportSettings, ExportSkip, GridCheck, XmlOnlyReason};
 
 /// Most JSON bytes the notes of one [`ExportRow`] take; [`bounded_strings`] keeps them there.
@@ -29,6 +29,34 @@ pub struct ExportRequest {
     pub settings: ExportSettings,
     /// The absolute folder copies go to: required by, and only by, a `folder` place.
     pub out_dir: Option<String>,
+}
+
+/// What exporting would do with one file, before anything is written.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPreviewRow {
+    /// The file.
+    pub file_id: u32,
+    /// What its row would show: `stage` `processing` for a file that would be written, `skipped`
+    /// for one that would not, with the plan's notes worded. `None` when it could not be planned.
+    pub row: Option<Box<ExportRow>>,
+    /// Why it could not be planned: not analysed yet, or its start could not be read.
+    pub error: Option<IpcError>,
+}
+
+/// What `plan_export` found: the confirm step's numbers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPreview {
+    /// One row per file named, in that order.
+    pub rows: Vec<ExportPreviewRow>,
+    /// Where the originals go, for an export in place.
+    pub backup_folder: Option<String>,
+    /// Where the rekordbox XML and grid report go, with the XML on: the export's folder, or for
+    /// an export in place the folder a new dated folder is made in.
+    pub artefacts_folder: Option<String>,
 }
 
 /// What exporting does with a file, as the row's Action column shows it.

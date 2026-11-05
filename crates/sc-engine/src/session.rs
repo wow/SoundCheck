@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use sc_core::analysis::{AnalysisRecord, Grid};
 use sc_core::ipc::{
-    ExportRow, FileEntry, FileInfo, IpcError, JobEvent, JobId, Replan, RowAnalysis, RowPlan,
-    RowUpdate, SessionRow, SessionSnapshot,
+    ExportArtefacts, ExportRow, FileEntry, FileInfo, IpcError, JobEvent, JobId, Replan,
+    RowAnalysis, RowPlan, RowUpdate, SessionRow, SessionSnapshot,
 };
 use sc_core::plan::{DecideSettings, GainPlan, Plan};
 use sc_core::{Lufs, Result};
@@ -91,6 +91,9 @@ pub struct Session {
     revision: u32,
     /// Where the user's grid edits are saved; `None` applies none.
     edits: Option<EditStore>,
+    /// The latest batch's rekordbox XML and grid report, or why they could not be written, for a
+    /// window that reloads and never saw the event.
+    artefacts: Option<std::result::Result<ExportArtefacts, IpcError>>,
 }
 
 impl Session {
@@ -105,6 +108,7 @@ impl Session {
             settings,
             revision: 0,
             edits: None,
+            artefacts: None,
         }
     }
 
@@ -153,6 +157,24 @@ impl Session {
     pub fn clear(&mut self) {
         self.files.clear();
         self.by_path.clear();
+        self.artefacts = None;
+    }
+
+    /// The latest batch's artefacts, or why they could not be written; `None` for a batch that
+    /// has none (yet).
+    pub fn set_artefacts(
+        &mut self,
+        artefacts: Option<std::result::Result<ExportArtefacts, IpcError>>,
+    ) {
+        self.artefacts = artefacts;
+    }
+
+    /// What planning the file's export takes: its analysis with the grid as shown, the state of
+    /// that grid, and whether an earlier change of it is in effect. `None` until it is analysed.
+    #[must_use]
+    pub fn planning_row(&self, file_id: u32) -> Option<(AnalysisRecord, EditState, bool)> {
+        let t = self.files.get(&file_id)?;
+        Some((t.record.clone()?, t.edit, t.revertible))
     }
 
     /// Files in the session.
@@ -235,6 +257,17 @@ impl Session {
                     revertible: t.revertible,
                 })
                 .collect(),
+            running_jobs: Vec::new(),
+            artefacts: self
+                .artefacts
+                .as_ref()
+                .and_then(|a| a.as_ref().ok())
+                .cloned(),
+            artefacts_failed: self
+                .artefacts
+                .as_ref()
+                .and_then(|a| a.as_ref().err())
+                .cloned(),
         }
     }
 

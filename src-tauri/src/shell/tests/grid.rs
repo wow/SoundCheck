@@ -289,6 +289,42 @@ fn an_export_reads_the_file_again_so_serato_data_added_since_the_row_was_probed_
 }
 
 #[test]
+fn the_confirm_step_plans_the_cut_the_job_makes() {
+    if !have_models() {
+        return;
+    }
+    let lib = Lib::new();
+    let wav = lib.music().join("click.wav");
+    click_wav(&wav);
+    let shell = lib.shell(1);
+    let id = analysed_click(&shell, &wav);
+    confirm(&shell, id);
+    shell.close_track();
+
+    let preview = shell.plan_export(&request(&[id], prepare(), None)).unwrap();
+    let row = preview.rows[0].row.as_ref().expect("planned");
+    assert!(row.positions_shift, "{row:?}");
+    assert!(matches!(
+        row.action,
+        ExportAction::Write {
+            cut: Cut::Cut { .. },
+            ..
+        }
+    ));
+
+    let (_, events) = export(&shell, request(&[id], prepare(), None));
+    let planned = events.iter().find_map(|e| match e {
+        JobEvent::Processing { row, .. } => Some(row.action.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        planned.as_ref(),
+        Some(&row.action),
+        "the cut, to the sample"
+    );
+}
+
+#[test]
 fn a_grid_view_opens_during_a_copy_to_a_folder_whose_source_does_not_change() {
     if !have_models() {
         return;
