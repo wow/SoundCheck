@@ -75,6 +75,9 @@ const PILL: Record<RowState, string> = {
   failed: 'text-err border-[rgba(248,113,113,.45)] bg-[rgba(248,113,113,.10)]',
 };
 
+/** What gets a row whose file changed up to date. */
+export const PRESS_ANALYSE = 'Press Analyse to read it again';
+
 const REVERTING = 'text-accent-2 border-[rgba(79,209,197,.35)] bg-[rgba(79,209,197,.08)]';
 
 export function StatusPill({ row }: { row: Row }) {
@@ -342,7 +345,9 @@ export function ActionCell({
         <div className="truncate text-[12.5px] font-medium text-err" title={row.exportError?.message}>
           {row.exportError ? rowErrorCopy(row.exportError, row.entry.path) : 'Could not export'}
         </div>
-        <div className="truncate text-[12px] text-fg-2">The file was not changed</div>
+        <div className="truncate text-[12px] text-fg-2">
+          {row.changedOnDisk ? PRESS_ANALYSE : 'The file was not changed'}
+        </div>
       </div>
     );
   }
@@ -356,6 +361,14 @@ export function ActionCell({
         <div className="truncate text-[11px] text-fg-2">
           {missing ? 'Moved or deleted since it was added' : 'Analyse again, or check the file'}
         </div>
+      </div>
+    );
+  }
+  if (row.changedOnDisk) {
+    return (
+      <div className="min-w-0">
+        <div className="truncate text-[12.5px] font-medium">Changed since it was analysed</div>
+        <div className="truncate text-[12px] text-fg-2">{PRESS_ANALYSE}</div>
       </div>
     );
   }

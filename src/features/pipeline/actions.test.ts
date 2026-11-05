@@ -134,12 +134,12 @@ describe('a reload during an export', () => {
     const answers = [
       snapshot({
         runningJobs: [9],
-        rows: [{ entry: entry(1), row: null, plan: null, export: null, revertible: false, exportStale: false }],
+        rows: [{ entry: entry(1), row: null, plan: null, export: null, revertible: false, exportStale: false, analysedRange: null }],
       }),
       snapshot({
         runningJobs: [],
         artefacts: { folder: '/x', xml: '/x/a.xml', report: '/x/a.csv', listed: 1 },
-        rows: [{ entry: entry(1), row: analysis(), plan: plan(), export: doneRow(), revertible: true, exportStale: false }],
+        rows: [{ entry: entry(1), row: analysis(), plan: plan(), export: doneRow(), revertible: true, exportStale: false, analysedRange: null }],
       }),
     ];
     const reads: number[] = [];
@@ -171,7 +171,7 @@ describe('a reload during an export', () => {
     const calls: string[] = [];
     const answers = [
       snapshot({
-        rows: [{ entry: entry(1), row: null, plan: null, export: doneRow(), revertible: true, exportStale: false }],
+        rows: [{ entry: entry(1), row: null, plan: null, export: doneRow(), revertible: true, exportStale: false, analysedRange: null }],
       }),
     ];
     mockIPC((cmd) => {
@@ -193,7 +193,7 @@ describe('a reload during an export', () => {
     // A reload during an analysis (job 5), with an older export (job 9) on record.
     const answers = [snapshot({ runningJobs: [], lastExport: summary })];
     mockIPC((cmd) => (cmd === 'restore_session' ? answers.shift() : undefined));
-    lib.getState().restore(snapshot({ runningJobs: [5], lastExport: summary }), [70, 180]);
+    lib.getState().restore(snapshot({ runningJobs: [5], lastExport: summary }));
     pipeline().send({ type: 'WIND_DOWN' });
     await act(async () => vi.advanceTimersByTimeAsync(WIND_DOWN_POLL_MS));
     expect(lib.getState().lastExport?.stoppedByReload).toBeFalsy();
@@ -201,7 +201,7 @@ describe('a reload during an export', () => {
     // The export itself.
     const again = [snapshot({ runningJobs: [], lastExport: summary })];
     mockIPC((cmd) => (cmd === 'restore_session' ? again.shift() : undefined));
-    lib.getState().restore(snapshot({ runningJobs: [9] }), [70, 180]);
+    lib.getState().restore(snapshot({ runningJobs: [9] }));
     pipeline().send({ type: 'WIND_DOWN' });
     await act(async () => vi.advanceTimersByTimeAsync(WIND_DOWN_POLL_MS));
     expect(lib.getState().lastExport?.stoppedByReload).toBe(true);

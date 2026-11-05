@@ -6,7 +6,7 @@ import type {
   RevertResult,
   SessionRow,
 } from '@/lib/ipc';
-import type { JobKind, JobProgress, LastExport, Row, RowState } from './libraryTypes';
+import type { ExportTally, JobKind, JobProgress, Row, RowState } from './libraryTypes';
 
 /**
  * What the export events do to a row. A row's `export` is what its Action column shows: the
@@ -97,7 +97,12 @@ export function exportPatch(row: Row, event: JobEvent): Partial<Row> | null {
     case 'exportDone':
       return { ...doneOnDisk(row, event), export: event.row, exportBefore: undefined, exportStale: false };
     case 'failed':
-      return { ...exportEnded(row), state: 'failed', exportError: event.error };
+      return {
+        ...exportEnded(row),
+        state: 'failed',
+        exportError: event.error,
+        ...(event.error.kind === 'fileChanged' ? { changedOnDisk: true } : {}),
+      };
     case 'cancelled':
       return exportEnded(row);
     default:
@@ -144,7 +149,7 @@ function doneOnDisk(row: Row, event: Extract<JobEvent, { type: 'exportDone' }>):
 }
 
 /** A row as the session holds it, after the window reloaded; `live`: a job is still running. */
-export function rowFromSession(r: SessionRow, revision: number, range: [number, number], live: boolean): Row {
+export function rowFromSession(r: SessionRow, revision: number, live: boolean): Row {
   const analysed = r.row && r.plan ? r : null;
   const standing = r.export ?? undefined;
   const row: Row = {
@@ -155,7 +160,12 @@ export function rowFromSession(r: SessionRow, revision: number, range: [number, 
     exportStale: r.exportStale,
     ...(standing ? { export: standing } : {}),
     ...(analysed
-      ? { analysis: r.row ?? undefined, plan: r.plan ?? undefined, planRevision: revision, analysedRange: range }
+      ? {
+          analysis: r.row ?? undefined,
+          plan: r.plan ?? undefined,
+          planRevision: revision,
+          ...(r.analysedRange ? { analysedRange: r.analysedRange } : {}),
+        }
       : {}),
   };
   const inFlight = standing?.stage === 'processing' || standing?.stage === 'writing';
@@ -220,18 +230,22 @@ export function newJob(kind: JobKind, fileIds: number[]): JobProgress {
     etaMs: null,
     realtimeX: null,
     startedAt: Date.now(),
+    tally: { written: 0, xmlOnly: 0, skipped: 0, failed: 0 },
   };
 }
 
-/** What became of the rows of an export. */
-export function summarise(rows: Row[], cancelled: boolean, seconds: number): LastExport {
-  const stage = (r: Row) => r.export?.stage;
-  return {
-    written: rows.filter((r) => stage(r) === 'done').length,
-    xmlOnly: rows.filter((r) => r.export?.action.type === 'xmlOnly').length,
-    skipped: rows.filter((r) => stage(r) === 'skipped' && r.export?.action.type !== 'xmlOnly').length,
-    failed: rows.filter((r) => r.state === 'failed').length,
-    cancelled,
-    seconds,
-  };
+/** Counts what `event` did to the batch: its own events, not what its rows now show. */
+export function tallied(tally: ExportTally, event: JobEvent): ExportTally {
+  switch (event.type) {
+    case 'exportDone':
+      return { ...tally, written: tally.written + 1 };
+    case 'exportSkipped':
+      return event.row.action.type === 'xmlOnly'
+        ? { ...tally, xmlOnly: tally.xmlOnly + 1 }
+        : { ...tally, skipped: tally.skipped + 1 };
+    case 'failed':
+      return { ...tally, failed: tally.failed + 1 };
+    default:
+      return tally;
+  }
 }

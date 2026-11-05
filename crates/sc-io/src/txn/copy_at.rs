@@ -66,6 +66,8 @@ pub(crate) fn proven_copy(target: &Path, source: &Path) -> Result<(CopyAt, Optio
         return Ok(foreign);
     };
     let (bytes, hash) = hash_file(target)?;
+    #[cfg(test)]
+    tests::after_hash(target);
     // Read first and compared after: a change while it was read is not proven by what was read.
     if bytes != output.bytes || hex(&hash) != output.blake3 || FileId::read(target)? != identity {
         return Ok(foreign);

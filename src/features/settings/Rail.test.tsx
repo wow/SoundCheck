@@ -228,7 +228,27 @@ describe('Rail', () => {
       useSettings.setState({ place: 'folder', outDir: null });
       render(<Rail />);
       expect(exportButton()).toBeDisabled();
-      expect(screen.getByText('Choose a folder')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Choose a folder' })).toBeInTheDocument();
+    });
+
+    it('the hint opens the folder picker, and Export is ready after it', async () => {
+      mockIPC((cmd) => (cmd === 'plugin:dialog|open' ? '/Users/dj/Out' : []));
+      addRow(1, '/a');
+      useSettings.setState({ place: 'folder', outDir: null });
+      render(<Rail />);
+      await userEvent.click(screen.getByRole('button', { name: 'Choose a folder' }));
+      await waitFor(() => expect(useSettings.getState().outDir).toBe('/Users/dj/Out'));
+      expect(exportButton()).toBeEnabled();
+      expect(screen.queryByRole('button', { name: 'Choose a folder' })).toBeNull();
+    });
+
+    it('other reasons stay plain text', () => {
+      mockIPC(() => []);
+      addRow(1, '/a');
+      useSettings.setState({ place: 'folder', outDir: null });
+      useRecovery.setState({ running: true });
+      render(<Rail />);
+      expect(screen.queryByRole('button', { name: 'Choose a folder' })).toBeNull();
     });
 
     it('is disabled with the reason while a job runs', () => {

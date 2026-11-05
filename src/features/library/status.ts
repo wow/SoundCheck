@@ -5,6 +5,11 @@ export function exportedAndRests(row: Row): boolean {
   return row.state === 'needsReview' && row.export?.stage === 'done';
 }
 
+/** Left to the rekordbox XML, which lists it: it carries 4/4 grids only. */
+function listedInXml(row: Row): boolean {
+  return row.export?.action.type === 'xmlOnly' && row.analysis?.grid?.fourFour !== false;
+}
+
 /** The Status column's text. */
 export function statusLabel(row: Row): string {
   if (row.reverting) return 'Reverting';
@@ -19,7 +24,7 @@ export function statusLabel(row: Row): string {
     case 'needsReview':
       return 'Needs review';
     case 'skipped':
-      return 'Skipped';
+      return listedInXml(row) ? 'XML only' : 'Skipped';
     case 'error':
       return 'Error';
     case 'cancelled':

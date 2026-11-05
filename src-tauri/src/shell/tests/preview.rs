@@ -9,7 +9,10 @@ use sc_core::ipc::{
     JobEvent, JobStage,
 };
 
-use super::support::{Lib, analysed, export, held_at, in_folder, prepare, request, sha256, steps};
+use super::support::{
+    Lib, analysed, events_until_finished, export, held_at, in_folder, loudness_only, prepare,
+    request, sha256, steps,
+};
 
 fn at_processing(e: &JobEvent) -> bool {
     matches!(e, JobEvent::Processing { .. })
@@ -556,4 +559,38 @@ fn a_link_to_its_own_copy_never_counts_as_replacing_it() {
         "{events:?}"
     );
     assert_eq!(sha256(&copy), before, "left as it is");
+}
+
+#[test]
+fn a_file_changed_after_confirm_exports_once_it_is_analysed_again() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    let req = request(&ids, prepare(), None);
+    let preview = shell.plan_export(&req).unwrap();
+    rewrite(&wav);
+    let (_, events) = export(&shell, confirmed_of(req.clone(), &preview));
+    assert!(steps(&events, ids[0]).contains(&"failed"), "{events:?}");
+    // Still changed for the plan, until it is read again.
+    assert!(shell.plan_export(&req).unwrap().rows[0].error.is_some());
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    shell
+        .start(
+            sc_core::ipc::AnalyzeRequest {
+                file_ids: ids.clone(),
+                analysis: loudness_only(),
+            },
+            move |e| {
+                let _ = tx.send(e);
+            },
+        )
+        .unwrap();
+    events_until_finished(&rx);
+
+    let preview = shell.plan_export(&req).unwrap();
+    assert!(preview.rows[0].error.is_none(), "{:?}", preview.rows[0]);
+    let (_, events) = export(&shell, confirmed_of(req, &preview));
+    assert!(steps(&events, ids[0]).contains(&"exportDone"), "{events:?}");
 }

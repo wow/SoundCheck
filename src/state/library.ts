@@ -8,7 +8,7 @@ import {
   restingState,
   revertedPatch,
   rowFromSession,
-  summarise,
+  tallied,
   writtenWithoutAnalysis,
 } from './exportRows';
 import { visibleIds } from './librarySelectors';
@@ -73,7 +73,16 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
   queue(fileIds, range) {
     const rows = patchRows(
       get().rows,
-      fileIds.map((id) => [id, () => ({ state: 'queued', progress: 0, error: undefined, analysedRange: range })]),
+      fileIds.map((id) => [
+        id,
+        () => ({
+          state: 'queued',
+          progress: 0,
+          error: undefined,
+          exportError: undefined,
+          analysedRange: range,
+        }),
+      ]),
     );
     set({
       rows,
@@ -171,7 +180,7 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
     if (job?.kind === 'export' && 'fileId' in event && job.fileIds.includes(event.fileId)) {
       set({
         rows: one(rows, event.fileId, (row) => exportPatch(row, event)),
-        job: job.jobId === null ? { ...job, jobId: event.jobId } : job,
+        job: { ...job, jobId: job.jobId ?? event.jobId, tally: tallied(job.tally, event) },
       });
       return;
     }
@@ -194,6 +203,9 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
             return {
               state: restingState(plan, row.export),
               progress: 1,
+              // Read again: what its export wrote was made of what the file was before.
+              ...(row.changedOnDisk && row.export ? { exportStale: true } : {}),
+              changedOnDisk: false,
               analysis: event.row,
               plan,
               planRevision: newer ? row.planRevision : event.revision,
@@ -245,11 +257,11 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
             job: null,
             locked: null,
             lastRun: 'export',
-            lastExport: summarise(
-              ids.map((id) => next[id]).filter((r): r is Row => r !== undefined),
-              event.cancelled,
-              (Date.now() - job.startedAt) / 1000,
-            ),
+            lastExport: {
+              ...job.tally,
+              cancelled: event.cancelled,
+              seconds: (Date.now() - job.startedAt) / 1000,
+            },
           });
           break;
         }
@@ -296,7 +308,7 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
       ),
     });
   },
-  restore(snapshot, range) {
+  restore(snapshot) {
     const { rows: before, selected } = get();
     const live = snapshot.runningJobs.length > 0;
     const rows: Record<number, Row> = {};
@@ -304,7 +316,7 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
     for (const r of snapshot.rows) {
       const id = r.entry.fileId;
       order.push(id);
-      const row = rowFromSession(r, snapshot.revision, range, live);
+      const row = rowFromSession(r, snapshot.revision, live);
       // Added while the job winds down, and waiting for it: still waiting.
       rows[id] = before[id]?.state === 'queued' && !row.analysis ? before[id] : row;
     }
@@ -320,6 +332,9 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
       lastExport: snapshot.lastExport,
       lastRun: snapshot.lastExport ? 'export' : null,
     });
+  },
+  markChanged(fileIds) {
+    set({ rows: patchRows(get().rows, fileIds.map((id) => [id, () => ({ changedOnDisk: true })])) });
   },
   setNotice(notice) {
     set({ notice });

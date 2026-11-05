@@ -6,7 +6,7 @@ import { displayTitle, level } from '@/lib/format';
 import { pipeline } from '@/features/pipeline/actions';
 import { Toggle } from '@/features/settings/controls';
 import { useLibrary } from '@/state/library';
-import { confirmExport, dismissExportConfirm, selectedRows, setExportAgain, useExportFlow } from './flow';
+import { confirmExport, dismissExportConfirm, setExportAgain, useExportFlow } from './flow';
 import { countPreview, shortPath, summaryLine, type ExportCounts } from './summary';
 
 const buttonClass =
@@ -78,21 +78,20 @@ function Particulars({ rows: planned }: { rows: ExportPreviewRow[] }) {
 }
 
 /** What the step asks to do, the same words for its title and its button. */
-function askText(counts: ExportCounts | null): string {
-  if (!counts) return 'Export';
+function askText(counts: ExportCounts | null, planned: boolean): string {
+  if (!counts) return planned ? 'Nothing to write' : 'Export';
   if (counts.written > 0) return `Write ${plural(counts.written, 'file')}`;
   return counts.xmlOnlyNew > 0 ? 'Update the rekordbox XML' : 'Nothing to write';
 }
 
 /** The summary shown before anything is written: the numbers are the engine's plan, file by file. */
 export function ExportConfirm() {
-  const flow = useExportFlow();
-  const { phase, request, preview, error, leftOut, differing, along, again, stays, offer } = flow;
+  const { phase, request, preview, error, leftOut, differing, along, again, stays, offer } = useExportFlow();
   const idle = useSelector(pipeline(), (p) => p.value === 'idle');
   if (phase === 'closed') return null;
-  const rows = selectedRows(flow);
+  const rows = preview?.rows ?? [];
   const counts = preview ? countPreview(rows, along) : null;
-  const ask = askText(counts);
+  const ask = askText(counts, phase === 'ready');
   const canWrite = counts !== null && (counts.written > 0 || counts.xmlOnlyNew > 0);
   const inFolder = preview && !preview.backupFolder;
   return (
@@ -131,11 +130,12 @@ export function ExportConfirm() {
                   : `${counts.foreign} files in the folder aren't SoundCheck's, skipped.`}
               </p>
             )}
-            {differing.length > 0 && (
-              <div className="flex flex-col gap-1.5 rounded-md border border-line bg-bg-2 px-3 py-2">
-                {!again && <p className="text-[12.5px] text-fg-1">{stays}.</p>}
-                <Toggle label={offer} checked={again} onChange={setExportAgain} />
-              </div>
+            {counts.otherTrack > 0 && (
+              <p className="text-[12px] text-fg-1">
+                {counts.otherTrack === 1
+                  ? '1 file skipped: a copy of another track already has its name.'
+                  : `${counts.otherTrack} files skipped: copies of other tracks already have their names.`}
+              </p>
             )}
             {preview.artefactsFolder && (
               <p className="text-[12px] leading-[1.45] text-fg-2">
@@ -159,6 +159,12 @@ export function ExportConfirm() {
             )}
             <Particulars rows={rows} />
           </>
+        )}
+        {phase !== 'failed' && phase !== 'planning' && differing.length > 0 && (
+          <div className="flex flex-col gap-1.5 rounded-md border border-line bg-bg-2 px-3 py-2">
+            {!again && <p className="text-[12.5px] text-fg-1">{stays}.</p>}
+            <Toggle label={offer} checked={again} onChange={setExportAgain} />
+          </div>
         )}
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2 border-t border-line px-5 py-3">

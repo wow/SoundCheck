@@ -199,6 +199,65 @@ describe('a row outside the running batch', () => {
   });
 });
 
+describe('the footer counts of an export', () => {
+  it('count this job, not an earlier export a failed or cancelled row falls back on', () => {
+    exporting(1, 2, 3);
+    lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 1, row: doneRow(), inPlace: false, update: null });
+    lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 2, row: doneRow(), inPlace: false, update: null });
+    lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 3, row: doneRow(), inPlace: false, update: null });
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
+    // Exported again: one fails, one is cancelled, one is written.
+    lib().beginExport([1, 2, 3], []);
+    lib().applyEvent({ type: 'failed', jobId: 4, fileId: 1, error: { kind: 'io', message: 'x', fileId: 1 } });
+    lib().applyEvent({ type: 'cancelled', jobId: 4, fileId: 2 });
+    lib().applyEvent({ type: 'exportDone', jobId: 4, fileId: 3, row: doneRow(), inPlace: false, update: null });
+    lib().applyEvent({ type: 'finished', jobId: 4, cancelled: true });
+    expect(row(1).export?.stage).toBe('done');
+    expect(row(2).export?.stage).toBe('done');
+    expect(lib().lastExport).toMatchObject({ written: 1, failed: 1, skipped: 0, xmlOnly: 0, cancelled: true });
+  });
+});
+
+describe('a file that changed', () => {
+  const changed: IpcError = { kind: 'fileChanged', message: '/a changed since you confirmed', fileId: 1 };
+
+  it('after confirm: the row fails and Analyse lights up, then a new analysis clears it', () => {
+    exporting(1);
+    expect(staleIds(lib(), [70, 180])).toEqual([]);
+    lib().applyEvent({ type: 'failed', jobId: 3, fileId: 1, error: changed });
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
+    expect(row(1)).toMatchObject({ state: 'failed', changedOnDisk: true });
+    expect(staleIds(lib(), [70, 180])).toEqual([1]);
+
+    lib().queue([1], [70, 180]);
+    expect(row(1)).toMatchObject({ state: 'queued', exportError: undefined });
+    lib().applyEvent(analysed(1));
+    lib().applyEvent({ type: 'finished', jobId: 5, cancelled: false });
+    expect(row(1)).toMatchObject({ state: 'analysed', changedOnDisk: false });
+    expect(staleIds(lib(), [70, 180])).toEqual([]);
+  });
+
+  it('another failure does not ask for an analysis', () => {
+    exporting(1);
+    lib().applyEvent({ type: 'failed', jobId: 3, fileId: 1, error: { kind: 'verifyFailed', message: 'x', fileId: 1 } });
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
+    expect(row(1).changedOnDisk).toBeFalsy();
+    expect(staleIds(lib(), [70, 180])).toEqual([]);
+  });
+
+  it('with an export standing, its new analysis makes that export stale', () => {
+    exporting(1);
+    lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 1, row: doneRow(), inPlace: false, update: null });
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
+    lib().markChanged([1]);
+    expect(staleIds(lib(), [70, 180])).toEqual([1]);
+    lib().queue([1], [70, 180]);
+    lib().applyEvent(analysed(1));
+    expect(row(1).exportStale).toBe(true);
+    expect(row(1).changedOnDisk).toBe(false);
+  });
+});
+
 describe('exportDone by case', () => {
   it('in place with an update: the row is the written file', () => {
     exporting(1);
@@ -310,14 +369,12 @@ describe('a saved grid', () => {
     lib().restore(
       {
         revision: 1,
-        rows: [{ entry: entry(1), row: analysis(), plan: plan(), export: doneRow(), revertible: true, exportStale: true }],
+        rows: [{ entry: entry(1), row: analysis(), plan: plan(), export: doneRow(), revertible: true, exportStale: true, analysedRange: null }],
         runningJobs: [],
         artefacts: null,
         artefactsFailed: null,
         lastExport: null,
-      },
-      [70, 180],
-    );
+      });
     expect(row(1).exportStale).toBe(true);
   });
 });
@@ -390,6 +447,7 @@ describe('a reload during an export', () => {
     export: exp,
     revertible,
     exportStale: false,
+    analysedRange: [70, 180],
   });
   const session = (overrides: Partial<SessionSnapshot> = {}): SessionSnapshot => ({
     revision: 4,
@@ -407,7 +465,7 @@ describe('a reload during an export', () => {
   });
 
   it('shows the rows in flight in their stage, and every row locked', () => {
-    lib().restore(session(), [70, 180]);
+    lib().restore(session());
     expect(row(1).state).toBe('checking');
     expect(row(2).state).toBe('writing');
     expect(row(3).state).toBe('done');
@@ -416,14 +474,14 @@ describe('a reload during an export', () => {
   });
 
   it('keeps Revert after a reload', () => {
-    lib().restore(session({ runningJobs: [] }), [70, 180]);
+    lib().restore(session({ runningJobs: [] }));
     expect(row(3).revertible).toBe(true);
     expect(row(3).export?.verification).toBeDefined();
     expect(isLocked(lib().locked, 3)).toBe(false);
   });
 
   it('a read with no job left ends the rows in flight and brings the artefact links back', () => {
-    lib().restore(session(), [70, 180]);
+    lib().restore(session());
     lib().select(3);
     const a = artefacts();
     lib().restore(
@@ -432,9 +490,7 @@ describe('a reload during an export', () => {
         artefacts: a,
         lastExport: { jobId: 9, written: 2, xmlOnly: 0, skipped: 0, failed: 0, cancelled: true, seconds: 3 },
         rows: [sessionRow(1, doneRow(), true), sessionRow(2, null), sessionRow(3, doneRow(), true), sessionRow(4, null)],
-      }),
-      [70, 180],
-    );
+      }));
     lib().windDownEnded();
     expect(row(1).state).toBe('done');
     expect(row(2).state).toBe('analysed');
@@ -445,17 +501,30 @@ describe('a reload during an export', () => {
   });
 
   it('a row left in flight with no job running shows no stage it is not in', () => {
-    lib().restore(session({ runningJobs: [] }), [70, 180]);
+    lib().restore(session({ runningJobs: [] }));
     expect(row(1).state).toBe('analysed');
     expect(row(1).export).toBeUndefined();
+  });
+
+  it('keeps the BPM range each row was analysed with', () => {
+    lib().restore(
+      session({
+        runningJobs: [],
+        rows: [{ ...sessionRow(1, null), analysedRange: [60, 120] }, { ...sessionRow(2, null), analysedRange: null }],
+      }),
+    );
+    expect(row(1).analysedRange).toEqual([60, 120]);
+    expect(row(2).analysedRange).toBeUndefined();
+    // So it counts as analysed under another range, where the settings say 70-180.
+    expect(staleIds(lib(), [70, 180])).toEqual([1]);
   });
 
   it('reads the last batch from the session, not from every row with an export', () => {
     // Rows 1 and 3 were exported by earlier batches; the last batch wrote one file.
     const summary = { jobId: 12, written: 1, xmlOnly: 0, skipped: 2, failed: 0, cancelled: false, seconds: 7 };
-    lib().restore(session({ runningJobs: [], lastExport: summary }), [70, 180]);
+    lib().restore(session({ runningJobs: [], lastExport: summary }));
     expect(lib().lastExport).toEqual(summary);
-    lib().restore(session({ runningJobs: [], lastExport: null }), [70, 180]);
+    lib().restore(session({ runningJobs: [], lastExport: null }));
     expect(lib().lastExport).toBeNull();
     expect(lib().lastRun).toBeNull();
   });
@@ -465,9 +534,7 @@ describe('a reload during an export', () => {
       session({
         runningJobs: [],
         rows: [{ ...sessionRow(1, doneRow(), true), row: null, plan: null }],
-      }),
-      [70, 180],
-    );
+      }));
     expect(row(1)).toMatchObject({ state: 'queued', revertible: true });
     expect(row(1).export?.stage).toBe('done');
     expect(staleIds(lib(), [70, 180])).toEqual([1]);
@@ -475,15 +542,15 @@ describe('a reload during an export', () => {
 
   it('brings back the artefacts failure too', () => {
     const error: IpcError = { kind: 'io', message: 'disk full', fileId: null };
-    lib().restore(session({ runningJobs: [], artefactsFailed: error }), [70, 180]);
+    lib().restore(session({ runningJobs: [], artefactsFailed: error }));
     expect(lib().artefactsFailed).toEqual(error);
   });
 
   it('a track added while the job winds down stays queued through the next read', () => {
-    lib().restore(session(), [70, 180]);
+    lib().restore(session());
     lib().add([entry(5)]);
     const rows = [...session().rows, { ...sessionRow(5, null), row: null, plan: null }];
-    lib().restore(session({ rows }), [70, 180]);
+    lib().restore(session({ rows }));
     expect(row(5).state).toBe('queued');
   });
 });

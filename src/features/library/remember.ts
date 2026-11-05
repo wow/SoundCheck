@@ -1,7 +1,6 @@
 import { restoreSession } from '@/lib/ipc';
 import { loadTrackList, saveTrackList } from '@/lib/persist';
 import { useLibrary } from '@/state/library';
-import { useSettings } from '@/state/settings';
 import { addPaths, analyseWritten, pipeline } from '@/features/pipeline/actions';
 
 /**
@@ -29,7 +28,7 @@ export function startTrackListPersistence(): () => void {
       if (stopped) return;
       if (snapshot?.runningJobs?.length) pipeline().send({ type: 'WIND_DOWN' });
       if (snapshot?.rows?.length) {
-        useLibrary.getState().restore(snapshot, useSettings.getState().bpmRange);
+        useLibrary.getState().restore(snapshot);
         if (!snapshot.runningJobs?.length) analyseWritten();
       } else {
         const paths = await loadTrackList();

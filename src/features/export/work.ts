@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { BatchMode, DecideSettings, ExportSettings, ExportedWith } from '@/lib/ipc';
+import type { BatchMode, DecideSettings, ExportSettings, ExportSkip, ExportedWith } from '@/lib/ipc';
 import { level } from '@/lib/format';
 import { useLibrary, type Row } from '@/state/library';
 import {
@@ -105,12 +105,48 @@ export function againCopy(rows: Row[], now: ExportNow): { stays: string; offer: 
   return { stays: `${found.length} ${how} stay as they are`, offer };
 }
 
+/**
+ * What could make a skipped file writable, as `ExportSkip::cure` says in the engine. `file`: nothing
+ * here, it is about the file itself. `grid`: a saved or confirmed grid. `settings`: other export
+ * settings. `disk`: what is in the folder, which can change with no word to the app.
+ */
+export type SkipCure = 'file' | 'grid' | 'settings' | 'disk';
+
+export function skipCure(reason: ExportSkip): SkipCure {
+  switch (reason.type) {
+    case 'notDjSafeRate':
+    case 'unsupportedChannels':
+    case 'unsupported':
+    case 'silent':
+      return 'file';
+    case 'noGrid':
+    case 'gridNeedsReview':
+    case 'xmlNoGrid':
+    case 'xmlGridNeedsReview':
+    case 'xmlNotOptedIn':
+      return 'grid';
+    case 'seratoInPlaceCut':
+    case 'seratoUnknownInPlaceCut':
+    case 'nothingToWrite':
+      return 'settings';
+    case 'otherFileInFolder':
+    case 'copyOfOtherTrack':
+      return 'disk';
+    default: {
+      const unhandled: never = reason;
+      return unhandled;
+    }
+  }
+}
+
 /** What the Export button has to work on. */
 export interface ExportWork {
-  /** Never exported, failed, with a new grid, or skipped under other settings: new work. */
+  /** Never exported, failed, or with a new grid: new work. */
   fresh: number[];
   /** Exported with other settings: they stay as they are unless the confirm step is ticked. */
   differing: number[];
+  /** Skipped for something that may be cured: planned again, and work only if the plan differs. */
+  retry: number[];
   /** Skipped or XML-only as before: they go along with a batch, but make none. */
   along: number[];
   /** Fresh or differing rows analysed under another BPM range, which the job would see otherwise. */
@@ -127,11 +163,34 @@ function sameRange(a: [number, number] | undefined, b: [number, number]): boolea
   return a === undefined || (a[0] === b[0] && a[1] === b[1]);
 }
 
+/** Which of `work`'s lists a row with an analysis belongs on, `null` when an export leaves it out. */
+function workOf(row: Row, different: boolean, work: ExportWork): number[] | null {
+  const made = row.export;
+  if (made?.stage === 'done') {
+    if (row.exportStale) return work.fresh;
+    return different ? work.differing : null;
+  }
+  if (made?.stage !== 'skipped') return work.fresh;
+  if (made.action.type === 'xmlOnly') return row.exportStale || different ? work.fresh : work.along;
+  if (made.action.type !== 'skip') return work.fresh;
+  switch (skipCure(made.action.reason)) {
+    case 'file':
+      return work.along;
+    case 'grid':
+      return row.exportStale || different ? work.retry : work.along;
+    case 'settings':
+      return different ? work.retry : work.along;
+    case 'disk':
+      return work.retry;
+  }
+}
+
 /** Sorts the rows by what an export made now would mean for each. */
 export function exportWork(rows: Row[], ids: number[], now: ExportNow): ExportWork {
   const work: ExportWork = {
     fresh: [],
     differing: [],
+    retry: [],
     along: [],
     needAnalyse: 0,
     anyExported: false,
@@ -146,15 +205,10 @@ export function exportWork(rows: Row[], ids: number[], now: ExportNow): ExportWo
     if (row.revertible) work.anyRevertible = true;
     if (row.reverting) work.reverting = true;
     if (row.analysis === undefined) return;
-    const different = exportDifference(row, now) !== null;
-    const stage = row.export?.stage;
-    const settled = stage === 'done' || stage === 'skipped';
-    let target: number[];
-    if (!settled || row.exportStale) target = work.fresh;
-    else if (stage === 'skipped') target = different ? work.fresh : work.along;
-    else target = different ? work.differing : [];
+    const target = workOf(row, exportDifference(row, now) !== null, work);
+    if (!target) return;
     target.push(id);
-    if ((target === work.fresh || target === work.differing) && !sameRange(row.analysedRange, range)) {
+    if (target !== work.along && !sameRange(row.analysedRange, range)) {
       work.needAnalyse += 1;
     }
   });

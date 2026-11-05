@@ -49,7 +49,7 @@ describe('remembering the track list', () => {
       if (cmd === 'restore_session') {
         return {
           revision: 2,
-          rows: [{ entry: entry(9), row: analysis(), plan: plan(), export: null, revertible: false, exportStale: false }],
+          rows: [{ entry: entry(9), row: analysis(), plan: plan(), export: null, revertible: false, exportStale: false, analysedRange: null }],
           runningJobs: [],
           artefacts: null,
           artefactsFailed: null,
@@ -70,7 +70,7 @@ describe('remembering the track list', () => {
       if (cmd === 'restore_session') {
         return {
           revision: 2,
-          rows: [{ entry: entry(9), row: analysis(), plan: plan(), export: null, revertible: false, exportStale: false }],
+          rows: [{ entry: entry(9), row: analysis(), plan: plan(), export: null, revertible: false, exportStale: false, analysedRange: null }],
           runningJobs: [4],
           artefacts: null,
           artefactsFailed: null,
@@ -99,7 +99,7 @@ describe('remembering the track list', () => {
       if (cmd === 'restore_session') {
         return {
           revision: 2,
-          rows: [{ entry: entry(9), row: null, plan: null, export: doneRow(), revertible: true, exportStale: false }],
+          rows: [{ entry: entry(9), row: null, plan: null, export: doneRow(), revertible: true, exportStale: false, analysedRange: null }],
           runningJobs: [],
           artefacts: null,
           artefactsFailed: null,

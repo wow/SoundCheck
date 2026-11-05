@@ -271,6 +271,51 @@ describe('a row exported with other settings', () => {
   });
 });
 
+describe('the pill of a row left to the XML', () => {
+  const xml = () =>
+    exportRow({ stage: 'skipped', action: { type: 'xmlOnly', reason: { type: 'gridOnlyFlac' } }, positionsShift: false });
+
+  it('says XML only when the XML lists it', () => {
+    expect(statusLabel(row({ state: 'skipped', export: xml() }))).toBe('XML only');
+  });
+
+  it('says Skipped when it does not: the XML carries 4/4 grids only', () => {
+    const grid = analysis().grid;
+    if (!grid) throw new Error('fixture has a grid');
+    const odd = analysis({ grid: { ...grid, fourFour: false } });
+    expect(statusLabel(row({ state: 'skipped', export: xml(), analysis: odd }))).toBe('Skipped');
+  });
+
+  it('a plain skip stays Skipped', () => {
+    const skip = exportRow({ stage: 'skipped', action: { type: 'skip', reason: { type: 'silent' } } });
+    expect(statusLabel(row({ state: 'skipped', export: skip }))).toBe('Skipped');
+  });
+});
+
+describe('a row whose file changed', () => {
+  it('says so and to press Analyse, when the plan found it', () => {
+    render(<ActionCell row={row({ state: 'analysed', changedOnDisk: true })} bpmRange={[70, 180]} />);
+    expect(screen.getByText('Changed since it was analysed')).toBeInTheDocument();
+    expect(screen.getByText('Press Analyse to read it again')).toBeInTheDocument();
+  });
+
+  it('says to press Analyse, not that nothing happened, when the job refused it', () => {
+    render(
+      <ActionCell
+        row={row({
+          state: 'failed',
+          changedOnDisk: true,
+          exportError: { kind: 'fileChanged', message: '/music/Track 1.flac changed since you confirmed', fileId: 1 },
+        })}
+        bpmRange={[70, 180]}
+      />,
+    );
+    expect(screen.getByText('This file changed since you confirmed')).toBeInTheDocument();
+    expect(screen.getByText('Press Analyse to read it again')).toBeInTheDocument();
+    expect(screen.queryByText('The file was not changed')).toBeNull();
+  });
+});
+
 describe('text from the engine', () => {
   it('reads as a sentence where the row shows it', () => {
     render(

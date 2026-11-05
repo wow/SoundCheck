@@ -164,16 +164,15 @@ describe('library store', () => {
             export: null,
             revertible: false,
             exportStale: false,
+            analysedRange: [70, 180],
           },
-          { entry: entry(8), row: null, plan: null, export: null, revertible: false, exportStale: false },
+          { entry: entry(8), row: null, plan: null, export: null, revertible: false, exportStale: false, analysedRange: null },
         ],
         runningJobs: [],
         artefacts: null,
         artefactsFailed: null,
         lastExport: null,
-      },
-      [70, 180],
-    );
+      });
     const s = useLibrary.getState();
     expect(s.order).toEqual([7, 8]);
     expect(s.rows[7]).toMatchObject({ state: 'needsReview', planRevision: 4 });

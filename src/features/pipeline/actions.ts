@@ -39,13 +39,12 @@ function createPipeline(): Actor<typeof pipelineMachine> {
     if (event.type === 'finished') actor.send({ type: 'FINISHED' });
   };
   const watchSession = async () => {
-    const range = () => useSettings.getState().bpmRange;
     const limit = Date.now() + WIND_DOWN_LIMIT_MS;
     try {
       for (;;) {
         await new Promise((go) => setTimeout(go, WIND_DOWN_POLL_MS));
         const snapshot = await restoreSession();
-        useLibrary.getState().restore(snapshot, range());
+        useLibrary.getState().restore(snapshot);
         if (snapshot.runningJobs.length === 0) break;
         if (Date.now() >= limit) {
           useLibrary

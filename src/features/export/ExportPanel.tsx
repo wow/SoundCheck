@@ -8,7 +8,7 @@ import { useLibrary, type Row } from '@/state/library';
 import { useRecovery } from '@/state/recovery';
 import { EXPORT_DEPTHS, useSettings } from '@/state/settings';
 import { pickOutDir } from './actions';
-import { exportBlock, openExportConfirm, useExportFlow } from './flow';
+import { CHOOSE_FOLDER, exportBlock, hasExportWork, openExportConfirm, useExportFlow } from './flow';
 import { batchChoice, type BatchChoice } from './mode';
 import { shortPath } from './summary';
 import { useExportWork, type ExportWork } from './work';
@@ -159,10 +159,6 @@ function useExportGate(): { block: string | null; work: ExportWork; opening: boo
   return { block, work, opening, note };
 }
 
-function exportCan(work: ExportWork): boolean {
-  return work.fresh.length > 0 || work.differing.length > 0;
-}
-
 /** The Export button, kept in view at the bottom of the rail, with what stands in its way. */
 export function ExportAction() {
   const { block, work, opening, note } = useExportGate();
@@ -171,7 +167,7 @@ export function ExportAction() {
       <button
         type="button"
         data-export-button
-        disabled={block !== null || !exportCan(work) || opening}
+        disabled={block !== null || !hasExportWork(work) || opening}
         onClick={() => void openExportConfirm()}
         className={cn(
           'inline-flex h-[34px] w-full items-center justify-center rounded-[7px] bg-accent text-[13px] font-semibold text-bg-0',
@@ -180,20 +176,34 @@ export function ExportAction() {
       >
         Export{work.fresh.length > 0 ? ` ${work.fresh.length}` : ''}
       </button>
-      <p className="text-[11.5px] leading-[1.4] text-fg-2">{block ?? note}</p>
+      {block === CHOOSE_FOLDER ? (
+        <button
+          type="button"
+          onClick={() => void pickOutDir()}
+          className="self-start text-[12px] font-medium text-accent hover:underline"
+        >
+          {CHOOSE_FOLDER}
+        </button>
+      ) : (
+        <p className="text-[11.5px] leading-[1.4] text-fg-2">{block ?? note}</p>
+      )}
     </div>
   );
 }
 
-/** The same button in the top bar of a narrow window, where the rail is behind a drawer. */
+/**
+ * The same button in the top bar of a narrow window, where the rail is behind a drawer. With a
+ * folder all that stands in the way, it asks for one rather than sit disabled.
+ */
 export function ExportBarButton({ className }: { className: string }) {
   const { block, work, opening, note } = useExportGate();
+  const needsFolder = block === CHOOSE_FOLDER;
   return (
     <button
       type="button"
-      disabled={block !== null || !exportCan(work) || opening}
+      disabled={(block !== null && !needsFolder) || !hasExportWork(work) || opening}
       title={block ?? note}
-      onClick={() => void openExportConfirm()}
+      onClick={() => void (needsFolder ? pickOutDir() : openExportConfirm())}
       className={className}
     >
       Export

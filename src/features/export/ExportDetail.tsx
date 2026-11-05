@@ -20,7 +20,7 @@ function Told({ row, now }: { row: Row; now: ExportNow }) {
       <>
         <Line tone="font-medium text-err">Failed</Line>
         <Line tone="text-fg-1">{rowErrorCopy(row.exportError, row.entry.path)}</Line>
-        <Line>The file was not changed.</Line>
+        <Line>{row.changedOnDisk ? 'Press Analyse to read it again.' : 'The file was not changed.'}</Line>
       </>
     );
   }

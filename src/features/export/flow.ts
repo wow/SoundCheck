@@ -1,12 +1,5 @@
 import { create } from 'zustand';
-import {
-  errorCopy,
-  ipcErrorOf,
-  planExport,
-  type ExportPreview,
-  type ExportPreviewRow,
-  type ExportRequest,
-} from '@/lib/ipc';
+import { errorCopy, ipcErrorOf, planExport, type ExportPreview, type ExportRequest } from '@/lib/ipc';
 import { commitFocusedField } from '@/lib/focus';
 import { pipeline } from '@/features/pipeline/actions';
 import { settingsLanded } from '@/features/settings/sync';
@@ -35,6 +28,8 @@ interface ExportFlow {
   differing: number[];
   /** Going along without being new work. */
   along: number[];
+  /** Everything the step may plan, in table order, the differing rows among them. */
+  planned: number[];
   /** Export the differing rows again too. */
   again: boolean;
   /** What the step says about those rows. */
@@ -50,6 +45,7 @@ const CLOSED: ExportFlow = {
   leftOut: 0,
   differing: [],
   along: [],
+  planned: [],
   again: false,
   stays: '',
   offer: '',
@@ -66,6 +62,9 @@ export interface ExportGate {
   needsFolder: boolean;
 }
 
+/** The reason when a folder is all that stands in the way: choosing one is the next step. */
+export const CHOOSE_FOLDER = 'Choose a folder';
+
 /** Why Export cannot be pressed now, plainly; `null` when it can. */
 export function exportBlock(g: ExportGate): string | null {
   const { work } = g;
@@ -74,24 +73,23 @@ export function exportBlock(g: ExportGate): string | null {
   if (work.reverting) return 'A revert is running.';
   if (g.xmlWriting) return 'The rekordbox XML is being written.';
   if (!g.hasRows) return null;
-  if (g.needsFolder) return 'Choose a folder';
   if (work.needAnalyse > 0) {
     const tracks = work.needAnalyse === 1 ? '1 track needs' : `${work.needAnalyse} tracks need`;
     return `${tracks} Analyse for this BPM range.`;
   }
-  if (work.fresh.length === 0 && work.differing.length === 0) {
+  if (!hasExportWork(work)) {
     if (!work.anyExported) return work.along.length > 0 ? 'Nothing new to export.' : 'Analyse the tracks first.';
     return work.anyRevertible
       ? 'Nothing new to export. Revert a track, or save a new grid, to export it again.'
       : 'Nothing new to export. Save a new grid, or change a setting, to export a track again.';
   }
+  if (g.needsFolder) return CHOOSE_FOLDER;
   return null;
 }
 
-/** The rows a request goes out with: planned, and the differing ones only when asked. */
-export function selectedRows(flow: Pick<ExportFlow, 'preview' | 'differing' | 'again'>): ExportPreviewRow[] {
-  const rows = flow.preview?.rows ?? [];
-  return flow.again ? rows : rows.filter((r) => !flow.differing.includes(r.fileId));
+/** Whether there is anything for the confirm step to plan and possibly write. */
+export function hasExportWork(work: ExportWork): boolean {
+  return work.fresh.length > 0 || work.differing.length > 0 || work.retry.length > 0;
 }
 
 /** Bumped by every opening and closing, so an old answer lands nowhere. */
@@ -112,46 +110,60 @@ export async function openExportConfirm(): Promise<void> {
   const rows = ids.map((id) => lib.rows[id] as Row);
   const now = exportNow(settings, batchChoice(settings, rows).mode);
   const work = exportWork(rows, ids, now);
-  const fileIds = ids.filter(
-    (id) => work.fresh.includes(id) || work.differing.includes(id) || work.along.includes(id),
+  const planned = ids.filter(
+    (id) =>
+      work.fresh.includes(id) ||
+      work.differing.includes(id) ||
+      work.retry.includes(id) ||
+      work.along.includes(id),
   );
-  if (fileIds.length === 0 || useRecovery.getState().running) {
+  if (planned.length === 0 || useRecovery.getState().running) {
     dismissExportConfirm();
     return;
   }
-  const request: ExportRequest = {
-    fileIds,
-    settings: now.settings,
-    outDir: now.outDir,
-    confirmed: null,
-  };
   const differingRows = work.differing.flatMap((id) => (lib.rows[id] ? [lib.rows[id]] : []));
   useExportFlow.setState({
-    request,
+    request: { fileIds: [], settings: now.settings, outDir: now.outDir, confirmed: null },
     leftOut: rows.filter((r) => r.analysis === undefined).length,
     differing: work.differing,
     along: work.along,
+    planned,
     ...againCopy(differingRows, now),
   });
+  await planRows(mine);
+}
+
+/** Asks the engine about exactly what would go out, so what the step says is what happens. */
+async function planRows(mine: number): Promise<void> {
+  const { request, planned, differing, again } = useExportFlow.getState();
+  if (!request) return;
+  const fileIds = again ? planned : planned.filter((id) => !differing.includes(id));
+  const asked = { ...request, fileIds };
+  useExportFlow.setState({ phase: 'planning', preview: null, request: asked, error: null });
   try {
-    const preview = await planExport(request);
-    if (mine === attempt) useExportFlow.setState({ phase: 'ready', preview });
+    const preview = fileIds.length > 0 ? await planExport(asked) : null;
+    if (mine !== attempt) return;
+    useExportFlow.setState({ phase: 'ready', preview });
+    const changed = (preview?.rows ?? [])
+      .filter((r) => r.error?.kind === 'fileChanged')
+      .map((r) => r.fileId);
+    if (changed.length > 0) useLibrary.getState().markChanged(changed);
   } catch (err) {
     if (mine === attempt) useExportFlow.setState({ phase: 'failed', error: errorCopy(ipcErrorOf(err)) });
   }
 }
 
-/** Ticks or unticks exporting the differing rows again. */
+/** Ticks or unticks exporting the differing rows again, and plans what that leaves. */
 export function setExportAgain(again: boolean): void {
   useExportFlow.setState({ again });
+  void planRows(++attempt);
 }
 
 /** Starts the export the step shows: the rows it could plan, each as it planned them. */
 export function confirmExport(): void {
-  const flow = useExportFlow.getState();
-  const { request, preview, phase } = flow;
+  const { request, preview, phase } = useExportFlow.getState();
   if (phase !== 'ready' || !request || !preview) return;
-  const planned = selectedRows(flow).filter((r) => r.row && r.identity);
+  const planned = preview.rows.filter((r) => r.row && r.identity);
   const fileIds = planned.map((r) => r.fileId);
   if (request.settings.place === 'inPlace') closeGridViewOf(fileIds, 'being exported in place');
   pipeline().send({

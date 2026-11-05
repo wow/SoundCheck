@@ -59,11 +59,21 @@ export interface Row {
   revertNotes?: string[];
   /** Why the rekordbox XML left it out. */
   xmlNotListed?: string;
+  /** The file changed after it was analysed or confirmed: Analyse brings the row up to date. */
+  changedOnDisk?: boolean;
 }
 
 export type Filter = 'all' | 'review' | 'short' | 'skipped' | 'done';
 
 export type JobKind = 'analysis' | 'export';
+
+/** What became of the files of a running export, from its own events. */
+export interface ExportTally {
+  written: number;
+  xmlOnly: number;
+  skipped: number;
+  failed: number;
+}
 
 export interface JobProgress {
   kind: JobKind;
@@ -75,6 +85,7 @@ export interface JobProgress {
   etaMs: number | null;
   realtimeX: number | null;
   startedAt: number;
+  tally: ExportTally;
 }
 
 export interface LastBatch {
@@ -151,7 +162,9 @@ export interface LibraryState {
   applyRowUpdate(update: RowUpdate): void;
   applyReplan(replan: Replan): void;
   /** Rebuilds the table from the engine's session after the window reloaded. */
-  restore(snapshot: SessionSnapshot, range: [number, number]): void;
+  restore(snapshot: SessionSnapshot): void;
+  /** These files changed after they were analysed: Analyse brings them up to date. */
+  markChanged(fileIds: number[]): void;
   setNotice(notice: string | null): void;
   setInfo(info: string | null): void;
   /** Empties the list (the engine forgets it too, through `clearList`). */

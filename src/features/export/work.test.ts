@@ -1,7 +1,7 @@
-import type { ExportedWith, ExportRow } from '@/lib/ipc';
+import type { ExportedWith, ExportRow, ExportSkip } from '@/lib/ipc';
 import type { Row } from '@/state/library';
 import { analysis, doneRow, entry, exportRow, plan } from '@/test/fixtures';
-import { againCopy, exportDifference, exportWork, type ExportNow } from './work';
+import { againCopy, exportDifference, exportWork, skipCure, type ExportNow } from './work';
 
 const now: ExportNow = {
   decide: { mode: 'dj', target: -11, ceiling: -0.5, bpmRange: [70, 180] },
@@ -74,9 +74,66 @@ describe('what Export has to work on', () => {
     expect(w).toMatchObject({ fresh: [1], differing: [2] });
   });
 
-  it('a skipped row goes along, but makes no work; under other settings it may not be skipped', () => {
-    expect(work([skip(same)])).toMatchObject({ fresh: [], along: [1] });
-    expect(work([skip({ ...same, settings: { ...now.settings, place: 'inPlace' }, outDir: null })]).fresh).toEqual([1]);
+  describe('a skipped row', () => {
+    const skipped = (reason: ExportSkip, w: ExportedWith = same) =>
+      row(exportRow({ stage: 'skipped', action: { type: 'skip', reason }, exportedWith: w }));
+    const moved = { ...same, settings: { ...now.settings, place: 'inPlace' as const }, outDir: null };
+    const target = { ...same, decide: { ...now.decide, target: -8 } };
+    const codec = 'mp3' as const;
+
+    it('about the file itself stays along, whatever changed', () => {
+      const reasons: ExportSkip[] = [
+        { type: 'notDjSafeRate', sampleRateHz: 96_000 },
+        { type: 'unsupportedChannels', channels: 6 },
+        { type: 'unsupported', codec: 'alac' },
+        { type: 'silent' },
+      ];
+      for (const reason of reasons) {
+        expect(skipCure(reason)).toBe('file');
+        for (const w of [same, target, moved]) expect(work([skipped(reason, w)]).along).toEqual([1]);
+        expect(work([{ ...skipped(reason), exportStale: true }]).along).toEqual([1]);
+      }
+    });
+
+    it('for its grid is planned again once a grid was saved or confirmed, or settings changed', () => {
+      const reasons: ExportSkip[] = [
+        { type: 'noGrid' },
+        { type: 'gridNeedsReview' },
+        { type: 'xmlNoGrid', codec },
+        { type: 'xmlGridNeedsReview', codec },
+        { type: 'xmlNotOptedIn', codec },
+      ];
+      for (const reason of reasons) {
+        expect(skipCure(reason)).toBe('grid');
+        expect(work([skipped(reason)]).along).toEqual([1]);
+        expect(work([{ ...skipped(reason), exportStale: true }]).retry).toEqual([1]);
+        expect(work([skipped(reason, moved)]).retry).toEqual([1]);
+      }
+    });
+
+    it('for its settings is planned again only when they changed', () => {
+      const reasons: ExportSkip[] = [
+        { type: 'seratoInPlaceCut', cutS: 0.1 },
+        { type: 'seratoUnknownInPlaceCut', cutS: 0.1 },
+        { type: 'nothingToWrite', reason: { type: 'gridOnlyFlac' } },
+      ];
+      for (const reason of reasons) {
+        expect(skipCure(reason)).toBe('settings');
+        expect(work([skipped(reason)]).along).toEqual([1]);
+        expect(work([skipped(reason, moved)]).retry).toEqual([1]);
+      }
+    });
+
+    it('for what is in the folder is always planned again, since that can change unseen', () => {
+      for (const reason of [{ type: 'otherFileInFolder' }, { type: 'copyOfOtherTrack' }] as ExportSkip[]) {
+        expect(skipCure(reason)).toBe('disk');
+        expect(work([skipped(reason)]).retry).toEqual([1]);
+      }
+    });
+
+    it('is never counted as new work', () => {
+      expect(work([skipped({ type: 'otherFileInFolder' })]).fresh).toEqual([]);
+    });
   });
 
   it('an XML-only row makes no work unless its grid changed', () => {
@@ -96,6 +153,8 @@ describe('what Export has to work on', () => {
     const old: [number, number] = [60, 120];
     expect(work([row(undefined, { analysedRange: old })]).needAnalyse).toBe(1);
     expect(work([{ ...done(same), analysedRange: old }]).needAnalyse).toBe(0);
+    // Neither does a row that is only going along.
+    expect(work([{ ...skip(same), analysedRange: old }]).needAnalyse).toBe(0);
     expect(work([row(undefined, { analysedRange: undefined })]).needAnalyse).toBe(0);
   });
 

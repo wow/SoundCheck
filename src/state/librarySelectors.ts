@@ -64,6 +64,7 @@ export function staleIds(s: Pick<LibraryState, 'rows' | 'order'>, range: [number
     const row = s.rows[id];
     if (!row || row.reverting) return false;
     if (row.state === 'error' || row.state === 'cancelled' || row.state === 'queued') return true;
+    if (row.changedOnDisk) return true;
     const r = row.analysedRange;
     return r !== undefined && (r[0] !== range[0] || r[1] !== range[1]);
   });

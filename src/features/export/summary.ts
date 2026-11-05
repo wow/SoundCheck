@@ -25,6 +25,8 @@ export interface ExportCounts {
   replacing: number;
   /** Files skipped because the folder holds another file of that name. */
   foreign: number;
+  /** Files skipped because a copy of another track has that name. */
+  otherTrack: number;
   /** Files only the XML carries that are new work: those going along again are not. */
   xmlOnlyNew: number;
 }
@@ -44,6 +46,7 @@ export function countPreview(rows: ExportPreviewRow[], along: number[] = []): Ex
     written: 0,
     replacing: 0,
     foreign: 0,
+    otherTrack: 0,
     xmlOnlyNew: 0,
   };
   for (const { row, fileId, replacesCopy } of rows) {
@@ -76,6 +79,7 @@ export function countPreview(rows: ExportPreviewRow[], along: number[] = []): Ex
       case 'skip':
         c.skipped += 1;
         if (row.action.reason.type === 'otherFileInFolder') c.foreign += 1;
+        if (row.action.reason.type === 'copyOfOtherTrack') c.otherTrack += 1;
         break;
     }
   }

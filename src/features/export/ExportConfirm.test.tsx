@@ -1,12 +1,12 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockIPC } from '@tauri-apps/api/mocks';
-import type { ExportPreview, ExportRequest } from '@/lib/ipc';
-import { pipeline } from '@/features/pipeline/actions';
+import type { ExportPreview, ExportRequest, JobEvent } from '@/lib/ipc';
+import { analyseStale, pipeline } from '@/features/pipeline/actions';
 import { useTrack } from '@/features/grid/store';
 import { Rail } from '@/features/settings/Rail';
 import { startSettingsSync } from '@/features/settings/sync';
-import { useLibrary } from '@/state/library';
+import { staleIds, useLibrary } from '@/state/library';
 import { usePanels } from '@/state/panels';
 import { useRecovery } from '@/state/recovery';
 import { useSettings } from '@/state/settings';
@@ -39,7 +39,7 @@ function backend(answer: ExportPreview | { throws: unknown }) {
     if (cmd === 'plan_export') {
       planned.push(req);
       if ('throws' in answer) throw answer.throws;
-      return answer;
+      return { ...answer, rows: answer.rows.filter((r) => req.fileIds.includes(r.fileId)) };
     }
     if (cmd === 'export') {
       exported.push(req);
@@ -54,7 +54,7 @@ beforeEach(() => {
   useLibrary.setState(initialLibrary, true);
   useSettings.setState({ ...initialSettings, place: 'inPlace' }, true);
   useRecovery.setState({ running: false });
-  useExportFlow.setState({ phase: 'closed', request: null, preview: null, error: null, leftOut: 0, differing: [], along: [], again: false, stays: '', offer: '' });
+  useExportFlow.setState({ phase: 'closed', request: null, preview: null, error: null, leftOut: 0, differing: [], along: [], planned: [], again: false, stays: '', offer: '' });
   // A pipeline left running by a test before this one.
   pipeline().send({ type: 'FINISHED' });
 });
@@ -188,6 +188,55 @@ describe('the confirm step', () => {
     void openExportConfirm();
     expect(await screen.findByText('1 file replaces your earlier copy.')).toBeInTheDocument();
     expect(screen.getByText("1 file in the folder isn't SoundCheck's, skipped.")).toBeInTheDocument();
+  });
+
+  it('counts a copy of another track apart from an earlier copy of its own', async () => {
+    add(1, 2);
+    useSettings.setState({ place: 'folder', outDir: '/Out' });
+    const other = exportRow({ stage: 'skipped', action: { type: 'skip', reason: { type: 'copyOfOtherTrack' } }, positionsShift: false });
+    backend(
+      exportPreview([previewRow(1, cutRow, { replacesCopy: true }), previewRow(2, other)], {
+        backupFolder: null,
+        artefactsFolder: '/Out',
+      }),
+    );
+    render(<ExportConfirm />);
+    void openExportConfirm();
+    expect(await screen.findByText('1 file skipped: a copy of another track already has its name.')).toBeInTheDocument();
+    expect(screen.getByText('1 file replaces your earlier copy.')).toBeInTheDocument();
+    expect(screen.queryByText(/isn't SoundCheck's/)).toBeNull();
+  });
+
+  it('names an artefact it cannot read, and how to go on', async () => {
+    add(1);
+    backend({
+      throws: {
+        kind: 'corrupt',
+        message:
+          'corrupt file /Out/grid-report.csv: it starts like one SoundCheck wrote but cannot be read, so what it lists would be lost. Nothing was written: move it away or choose another folder',
+        fileId: null,
+      },
+    });
+    render(<ExportConfirm />);
+    void openExportConfirm();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('/Out/grid-report.csv');
+    expect(alert).toHaveTextContent('choose another folder');
+    expect(screen.queryByRole('button', { name: /^Write/ })).toBeNull();
+  });
+
+  it('a file the plan found changed asks for an analysis, and lights Analyse', async () => {
+    add(1);
+    backend(
+      exportPreview([
+        previewRow(1, null, { error: { kind: 'fileChanged', message: 'changed since it was analysed', fileId: 1 } }),
+      ]),
+    );
+    render(<ExportConfirm />);
+    void openExportConfirm();
+    await screen.findByRole('button', { name: 'Nothing to write' });
+    expect(useLibrary.getState().rows[1]?.changedOnDisk).toBe(true);
+    expect(staleIds(useLibrary.getState(), [70, 180])).toEqual([1]);
   });
 
   it('says the folder\'s XML keeps what it lists', async () => {
@@ -386,17 +435,40 @@ describe('rows exported with other settings', () => {
     render(<ExportConfirm />);
     void openExportConfirm();
     expect(await screen.findByText('1 exported at -8.0 stay as they are.')).toBeInTheDocument();
-    expect(planned[0]?.fileIds).toEqual([1, 2]);
+    // Planned as they would go out: only the new row, until asked for the other.
+    expect(planned.at(-1)?.fileIds).toEqual([2]);
     const box = screen.getByRole('checkbox', { name: 'Export them again at -11.0' });
     expect(box).not.toBeChecked();
     expect(screen.getByRole('button', { name: 'Write 1 file' })).toBeEnabled();
 
     await userEvent.click(box);
-    expect(screen.getByRole('button', { name: 'Write 2 files' })).toBeEnabled();
-    await userEvent.click(box);
-    await userEvent.click(screen.getByRole('button', { name: 'Write 1 file' }));
+    expect(await screen.findByRole('button', { name: 'Write 2 files' })).toBeEnabled();
+    expect(planned.at(-1)?.fileIds).toEqual([1, 2]);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Export them again at -11.0' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Write 1 file' }));
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]?.fileIds).toEqual([2]);
+  });
+
+  it('with nothing else to do, the box is still there to tick', async () => {
+    add(1);
+    useLibrary.getState().beginExport([1], []);
+    useLibrary.getState().applyEvent({
+      type: 'exportDone',
+      jobId: 3,
+      fileId: 1,
+      row: doneRow({ exportedWith: { ...now, decide: { ...now.decide, target: -8 } } }),
+      inPlace: false,
+      update: null,
+    });
+    useLibrary.getState().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
+    const { planned } = backend(exportPreview([previewRow(1, cutRow)]));
+    render(<ExportConfirm />);
+    void openExportConfirm();
+    expect(await screen.findByRole('button', { name: 'Nothing to write' })).toBeDisabled();
+    expect(planned).toEqual([]);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Export them again at -11.0' }));
+    expect(await screen.findByRole('button', { name: 'Write 1 file' })).toBeEnabled();
   });
 
   it('go along when ticked', async () => {
@@ -405,9 +477,58 @@ describe('rows exported with other settings', () => {
     render(<ExportConfirm />);
     void openExportConfirm();
     await userEvent.click(await screen.findByRole('checkbox', { name: /Export them again/ }));
-    await userEvent.click(screen.getByRole('button', { name: 'Write 2 files' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Write 2 files' }));
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]?.fileIds).toEqual([1, 2]);
+  });
+});
+
+describe('a file changed after it was confirmed', () => {
+  it('fails, lights Analyse, and after a new analysis exports', async () => {
+    add(1);
+    const events: ((e: JobEvent) => void)[] = [];
+    const requests: string[] = [];
+    mockIPC((cmd, args) => {
+      requests.push(cmd);
+      const channel = (args as { onEvent?: { onmessage: (e: JobEvent) => void } }).onEvent;
+      if (channel) events.push((e) => channel.onmessage(e));
+      if (cmd === 'plan_export') return exportPreview([previewRow(1, cutRow)]);
+      return cmd === 'export' || cmd === 'analyze' ? 5 : undefined;
+    });
+    render(<ExportConfirm />);
+    void openExportConfirm();
+    await userEvent.click(await screen.findByRole('button', { name: 'Write 1 file' }));
+    await waitFor(() => expect(events).toHaveLength(1));
+    const job = events[0] as (e: JobEvent) => void;
+    act(() => {
+      job({
+        type: 'failed',
+        jobId: 5,
+        fileId: 1,
+        error: { kind: 'fileChanged', message: 'it changed since you confirmed', fileId: 1 },
+      });
+      job({ type: 'finished', jobId: 5, cancelled: false });
+    });
+    expect(useLibrary.getState().rows[1]?.state).toBe('failed');
+    expect(staleIds(useLibrary.getState(), useSettings.getState().bpmRange)).toEqual([1]);
+
+    // Analyse, as its button does: the row reads the file again and is no longer stale.
+    analyseStale();
+    await waitFor(() => expect(requests).toContain('analyze'));
+    const analysis = events[1] as (e: JobEvent) => void;
+    act(() => {
+      analysis(analysed(1));
+      analysis({ type: 'finished', jobId: 5, cancelled: false });
+    });
+    expect(useLibrary.getState().rows[1]?.state).toBe('analysed');
+    expect(staleIds(useLibrary.getState(), useSettings.getState().bpmRange)).toEqual([]);
+
+    // And Export works again.
+    requests.length = 0;
+    void openExportConfirm();
+    await userEvent.click(await screen.findByRole('button', { name: 'Write 1 file' }));
+    await waitFor(() => expect(requests).toContain('export'));
+    act(() => (events[2] as (e: JobEvent) => void)({ type: 'finished', jobId: 5, cancelled: false }));
   });
 });
 
@@ -415,6 +536,7 @@ describe('why Export cannot be pressed', () => {
   const work = {
     fresh: [1, 2],
     differing: [],
+    retry: [],
     along: [],
     needAnalyse: 0,
     anyExported: false,
@@ -438,12 +560,20 @@ describe('why Export cannot be pressed', () => {
     expect(exportBlock({ ...gate, work: { ...work, reverting: true } })).toMatch(/revert is running/);
     expect(exportBlock({ ...gate, xmlWriting: true })).toMatch(/XML/);
     expect(exportBlock({ ...gate, needsFolder: true })).toBe('Choose a folder');
+    // A folder is asked for only when it is all that stands in the way.
+    expect(exportBlock({ ...gate, needsFolder: true, busy: true })).toMatch(/job is running/);
+    expect(exportBlock({ ...gate, needsFolder: true, work: none })).toBe('Analyse the tracks first.');
+    expect(exportBlock({ ...gate, needsFolder: true, work: { ...work, needAnalyse: 1 } })).toMatch(/1 track needs Analyse/);
     expect(exportBlock({ ...gate, work: { ...work, needAnalyse: 3 } })).toBe('3 tracks need Analyse for this BPM range.');
     expect(exportBlock({ ...gate, work: none })).toBe('Analyse the tracks first.');
   });
 
   it('skipped rows alone do not make work', () => {
     expect(exportBlock({ ...gate, work: { ...none, along: [1] } })).toBe('Nothing new to export.');
+  });
+
+  it('rows that may no longer be skipped do', () => {
+    expect(exportBlock({ ...gate, work: { ...none, retry: [1] } })).toBeNull();
   });
 
   it('rows exported with other settings do', () => {

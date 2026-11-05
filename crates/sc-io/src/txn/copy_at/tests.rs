@@ -6,6 +6,17 @@ use crate::txn::fsx::{hash_file, hex};
 use crate::txn::journal::TxnKind;
 use crate::txn::sidecar::{FileHash, SidecarDoc, hash_of_path};
 
+thread_local! {
+    /// Runs right after a copy's bytes are hashed.
+    static AFTER_HASH: std::cell::Cell<Option<fn(&Path)>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn after_hash(target: &Path) {
+    if let Some(hook) = AFTER_HASH.get() {
+        hook(target);
+    }
+}
+
 /// What a sidecar next to `file` says it was made from.
 #[derive(Default)]
 struct MadeFrom {
@@ -191,4 +202,27 @@ fn an_unreadable_sidecar_is_foreign() {
     let c = case();
     std::fs::write(sidecar_path(&c.target), b"{").expect("written");
     assert_eq!(copy_at(&c.target, &c.source).unwrap(), CopyAt::Foreign);
+}
+
+#[test]
+fn a_copy_that_changes_while_it_is_read_is_not_proven_by_what_was_read() {
+    let c = case();
+    sidecar_of(&c.target, TxnKind::ToFolder, &by_path(&c));
+    assert_eq!(copy_at(&c.target, &c.source).unwrap(), CopyAt::Own);
+    AFTER_HASH.set(Some(|target| {
+        std::fs::write(target, b"copy, longer now").expect("edited");
+    }));
+    let found = copy_at(&c.target, &c.source).unwrap();
+    AFTER_HASH.set(None);
+    assert_eq!(found, CopyAt::Foreign);
+}
+
+#[test]
+fn the_identity_of_a_proven_copy_is_the_one_before_its_bytes_were_read() {
+    let c = case();
+    sidecar_of(&c.target, TxnKind::ToFolder, &by_path(&c));
+    let before = FileId::read(&c.target).unwrap();
+    let (found, identity) = proven_copy(&c.target, &c.source).unwrap();
+    assert_eq!(found, CopyAt::Own);
+    assert_eq!(identity, Some(before));
 }
