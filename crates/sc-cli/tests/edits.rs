@@ -49,6 +49,8 @@ fn sc_cli(dir: &Path, models: &Path, args: &[&str]) -> String {
         .expect("binary")
         .env("SC_CACHE_DIR", dir.join("cache"))
         .env("SC_EDITS_DIR", dir.join("edits"))
+        .env("SC_BACKUP_ROOT", dir.join("backups"))
+        .env("SC_EXPORTS_ROOT", dir.join("exports"))
         .env("SC_MODEL_DIR", models)
         .args(args)
         .output()
@@ -197,4 +199,60 @@ fn a_confirmed_start_fit_is_labelled_as_one() {
     // A steady track: the start fit gives the same tempo.
     assert!(row.starts_with("\"click, 124.wav\",124.00,"), "{row}");
     assert!(row.ends_with(",yes,start"), "{row}");
+}
+
+/// A plain click track's bar 1 is close to a tie for the beat model, so whether the written file's
+/// analysis agrees may differ across platforms: only what it may not read as is asserted.
+#[test]
+fn a_confirmed_grid_never_reads_as_a_failure_in_the_text_json_report_or_sidecar() {
+    let Some(models) = models() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let wav = click_wav(dir.path());
+    let file = wav.to_str().unwrap();
+    save(dir.path(), &wav, &GridEdit::default(), true);
+    let run = |folder: &str, json: bool| {
+        let out = dir.path().join(folder);
+        let mut args = vec![
+            "process",
+            file,
+            "--batch-mode",
+            "prepare",
+            "--bpm-range",
+            "130-180",
+            "--out",
+            out.to_str().unwrap(),
+        ];
+        if json {
+            args.push("--json");
+        }
+        (sc_cli(dir.path(), &models, &args), out)
+    };
+    const ADVISORY: &str = "the analysis reads this differently; your confirmed grid was written: ";
+
+    let (text, out) = run("text", false);
+    let line = text
+        .lines()
+        .find_map(|l| l.strip_prefix("  grid check: "))
+        .unwrap_or_else(|| panic!("no grid check line: {text}"));
+    assert!(
+        line.starts_with("pass (") || line.starts_with(ADVISORY),
+        "{line}"
+    );
+    let report = std::fs::read_to_string(out.join("grid-report.csv")).unwrap();
+    assert!(report.contains(line), "{report}");
+    let sidecar: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(out.join("click, 124.wav.soundcheck.json")).unwrap())
+            .unwrap();
+    assert_eq!(sidecar["export"]["grid"]["confirmed"], true);
+    let recorded = sidecar["export"]["gridCheck"]["result"].as_str().unwrap();
+    assert!(matches!(recorded, "pass" | "advisory"), "{recorded}");
+
+    let (json, _) = run("json", true);
+    let doc: serde_json::Value = serde_json::Deserializer::from_str(&json)
+        .into_iter()
+        .next()
+        .unwrap()
+        .unwrap();
+    let result = doc["written"]["gridCheck"]["result"].as_str().unwrap();
+    assert!(matches!(result, "pass" | "advisory"), "{json}");
 }
