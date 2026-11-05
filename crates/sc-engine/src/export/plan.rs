@@ -96,8 +96,8 @@ pub struct ExportInput<'a> {
 /// players refuse, more than two channels and silence are skipped; grid only needs a grid that
 /// does not need review (one that does would leave only an empty record), and leaves FLAC, sources it would requantise and files without a tag to the XML; with the XML
 /// off, what only the XML could carry is skipped; a Prepare cut in place of a file with Serato
-/// data, or whose tags could not be read to rule it out, is skipped (a cut copy of a file with
-/// Serato data gets a notice); everything else is written. That Serato skip is decided here
+/// data, or whose tags could not be read to rule it out, is skipped (a cut copy of either gets a
+/// notice); everything else is written. That Serato skip is decided here
 /// from the cut asked of the renderer; [`crate::plan_export_snapped`] decides it from the cut
 /// made, so a cut that snaps back to the first frame (nothing cut) is not skipped.
 #[must_use]
@@ -259,10 +259,16 @@ fn write_plan(
     let ExportInput { record, source, .. } = *input;
     let sample_rate_hz = record.spec.sample_rate;
     let mut notices = Vec::new();
-    if trim_frames > 0 && source.serato == SeratoPresence::Present {
+    if trim_frames > 0 {
         // A cut in place of such a file was skipped; this is a copy in a folder.
         let cut_s = SampleIndex(trim_frames).to_seconds(sample_rate_hz);
-        notices.push(ExportNotice::SeratoCuesShifted { cut_s });
+        match source.serato {
+            SeratoPresence::Present => notices.push(ExportNotice::SeratoCuesShifted { cut_s }),
+            SeratoPresence::Unknown => {
+                notices.push(ExportNotice::SeratoCuesMayHaveShifted { cut_s });
+            }
+            SeratoPresence::Absent => {}
+        }
     }
     let gain_db = if settings.grid_only {
         0.0

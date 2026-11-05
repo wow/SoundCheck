@@ -79,3 +79,38 @@ fn a_recovery_that_panics_still_opens_the_gate() {
     assert!(matches!(gate.status(), RecoveryStatus::Failed { .. }));
     gate.wait(&CancelToken::new()).expect("open");
 }
+
+#[test]
+fn updates_at_once_lose_nothing() {
+    use sc_core::ipc::PendingChange;
+    let change = |n: usize| PendingChange {
+        txn: format!("t{n}"),
+        path: format!("/p{n}"),
+        reason: "gone".to_owned(),
+    };
+    let gate = Arc::new(RecoveryGate::new(RecoveryStatus::Finished {
+        recovered: Vec::new(),
+        pending: (0..16).map(change).collect(),
+    }));
+    std::thread::scope(|scope| {
+        for n in 0..16 {
+            let gate = Arc::clone(&gate);
+            scope.spawn(move || {
+                gate.update(|status| {
+                    if let RecoveryStatus::Finished { pending, .. } = status {
+                        // A slow reader, as a change read, filtered and set back would be.
+                        std::thread::yield_now();
+                        pending.retain(|p| p.txn != format!("t{n}"));
+                    }
+                });
+            });
+        }
+    });
+    assert_eq!(
+        gate.status(),
+        RecoveryStatus::Finished {
+            recovered: Vec::new(),
+            pending: Vec::new()
+        }
+    );
+}

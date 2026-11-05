@@ -23,7 +23,7 @@
 pub const HEAD_SNAP_MAX_MS: u32 = 1;
 
 /// Length, ms, of the fade-in after a head cut.
-pub const HEAD_FADE_MS: u32 = 2;
+pub use sc_core::export::HEAD_FADE_MS;
 
 /// `ms` milliseconds in frames at `sample_rate_hz`, rounded half up.
 fn ms_frames(sample_rate_hz: u32, ms: u32) -> u64 {

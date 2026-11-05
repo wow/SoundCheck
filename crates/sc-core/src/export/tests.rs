@@ -31,18 +31,25 @@ fn settings_outside_their_limits_are_rejected() {
         };
         assert!(s.validate().is_ok(), "{depth}");
     }
-    for lead in [-1.0, 50.5, f64::NAN, f64::INFINITY] {
+    for lead in [-1.0, 0.0, 1.999, 50.5, f64::NAN, f64::INFINITY] {
         let s = ExportSettings {
             lead_ms: lead,
             ..base
         };
         assert!(s.validate().is_err(), "{lead}");
     }
-    let zero = ExportSettings {
-        lead_ms: 0.0,
-        ..base
-    };
-    assert!(zero.validate().is_ok());
+    for lead in [f64::from(HEAD_FADE_MS), 50.0] {
+        let s = ExportSettings {
+            lead_ms: lead,
+            ..base
+        };
+        assert!(s.validate().is_ok(), "{lead}");
+    }
+}
+
+#[test]
+fn the_lead_floor_is_the_fade_after_the_cut() {
+    assert!((LEAD_MS_RANGE.0 - f64::from(HEAD_FADE_MS)).abs() < f64::EPSILON);
 }
 
 #[test]

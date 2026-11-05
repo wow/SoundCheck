@@ -16,17 +16,14 @@ use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use sc_core::plan::{Codec, DecideSettings};
+use sc_core::plan::DecideSettings;
 use sc_core::{Bpm, Error};
-use sc_engine::export::{report_rows, xml_tracks};
-use sc_engine::{AnalyzeReport, BatchRow, XmlSelect, apply_saved, decide};
+use sc_engine::export::{XmlOutRefusal, analysed_row, report_rows, xml_tracks};
+use sc_engine::{BatchRow, XmlSelect};
 use sc_io::edits::EditStore;
 use sc_io::rekordbox::is_soundcheck_xml;
-use sc_io::txn::sidecar::{self, SidecarDoc};
-use sc_io::txn::{hash_file, hex};
 
 use crate::AnalysisArgs;
-use crate::process::UNVERIFIED;
 
 /// The flags of `xml`.
 #[derive(clap::Args)]
@@ -68,7 +65,7 @@ pub fn run_xml(args: &XmlArgs) -> anyhow::Result<usize> {
     let mut failed = 0;
     crate::run_in_order(&settings, &args.files, &mut |file, outcome| {
         rows.push(match outcome {
-            Ok(report) => row_of(file, report, &edits, &decide_settings),
+            Ok(report) => analysed_row(file, report, Some(&edits), &decide_settings),
             Err(err) => {
                 failed += 1;
                 failed_row(file, &err)
@@ -118,78 +115,21 @@ pub fn run_xml(args: &XmlArgs) -> anyhow::Result<usize> {
 /// Why `out` may not be written, and what to do: it does not end in `.xml`, or something that
 /// is not an XML SoundCheck wrote is there.
 fn out_refusal(out: &Path) -> Option<(String, String)> {
-    let is_xml = out
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("xml"));
-    if !is_xml {
-        return Some((
+    sc_engine::export::xml_out_refusal(out).map(|refusal| match refusal {
+        XmlOutRefusal::NotXml => (
             "the rekordbox XML is written only to a file ending in .xml".to_owned(),
             "name a file ending in .xml, for example --out soundcheck-rekordbox.xml".to_owned(),
-        ));
-    }
-    let meta = std::fs::symlink_metadata(out).ok()?;
-    let ours = meta.is_file()
-        && std::fs::File::open(out).is_ok_and(|f| {
-            use std::io::Read;
-            let mut head = Vec::new();
-            f.take(512).read_to_end(&mut head).is_ok() && is_soundcheck_xml(&head)
-        });
-    (!ours).then(|| {
-        (
+        ),
+        XmlOutRefusal::Taken => (
             "a file is already there that SoundCheck did not write; it is never replaced"
                 .to_owned(),
             "name a new file, or move that one away first".to_owned(),
-        )
+        ),
     })
-}
-
-/// The row of an analysed file: its saved edit when there is one, else its export's grid when
-/// the file is still what that export wrote, else its analysis.
-fn row_of(
-    file: &Path,
-    mut report: AnalyzeReport,
-    edits: &EditStore,
-    decide_settings: &DecideSettings,
-) -> BatchRow {
-    let edit = apply_saved(&mut report.record, edits);
-    let record = &report.record;
-    let codec = Codec::from_path(file);
-    let exported = sidecar_of(file);
-    let mut row = match &exported {
-        Some(doc) if !(edit.edited || edit.confirmed) => BatchRow::from_sidecar(file, doc, record),
-        _ => None,
-    }
-    .unwrap_or_else(|| {
-        let plan = decide(record, codec, decide_settings, edit.confirmed);
-        BatchRow::analysed(file, record, &plan, edit)
-    });
-    if edit.edited || edit.confirmed {
-        row.notes
-            .push("grid from the edit saved in the app".to_owned());
-    } else if exported.is_none() && sidecar::sidecar_path(file).exists() {
-        row.notes
-            .push("changed since its export; analysed again".to_owned());
-    }
-    if matches!(codec, Codec::Mp3 | Codec::Aac) {
-        row.notes.push(UNVERIFIED.to_owned());
-    }
-    row
-}
-
-/// The sidecar of `file` when SoundCheck exported it and the file is still the bytes that
-/// export wrote.
-fn sidecar_of(file: &Path) -> Option<SidecarDoc> {
-    let doc: SidecarDoc = sidecar::read(&sidecar::sidecar_path(file)).ok()?;
-    doc.export.as_ref()?;
-    let output = doc.output.as_ref()?;
-    let (bytes, hash) = hash_file(file).ok()?;
-    (bytes == output.bytes && hex(&hash) == output.blake3).then_some(doc)
 }
 
 /// A failed row, its error printed.
 fn failed_row(file: &Path, err: &Error) -> BatchRow {
     eprintln!("sc-cli: {}: {err}", file.display());
-    let mut row = BatchRow::failed(file, None);
-    row.notes.push(err.to_string());
-    row
+    sc_engine::export::failed_row(file, None, err)
 }

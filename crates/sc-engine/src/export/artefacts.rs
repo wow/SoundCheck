@@ -300,6 +300,11 @@ fn listing(row: &BatchRow, select: XmlSelect) -> Listing {
     Listing::Listed(tempo)
 }
 
+/// Whether the XML selected by `select` lists `row`.
+pub(super) fn is_listed(row: &BatchRow, select: XmlSelect) -> bool {
+    matches!(listing(row, select), Listing::Listed(_))
+}
+
 /// The XML's tracks, in the order of `rows`: every row `select` lists, at its path as its
 /// folders spell it (its absolute path when they cannot be read).
 #[must_use]

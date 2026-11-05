@@ -23,8 +23,8 @@ fn progress_event_stays_within_budget() {
     assert!(json_len(&ev) <= MAX_EVENT_BYTES, "{} bytes", json_len(&ev));
 }
 
-#[test]
-fn a_worst_case_analysed_row_stays_within_budget() {
+/// The largest analysed row with its plan.
+fn worst_case_row() -> (RowAnalysis, Plan) {
     use crate::analysis::Meter;
     use crate::plan::{GainPlan, ReviewReason};
     let grid = RowGrid {
@@ -87,6 +87,12 @@ fn a_worst_case_analysed_row_stays_within_budget() {
         ],
         status: JobStage::NeedsReview,
     };
+    (row, plan)
+}
+
+#[test]
+fn a_worst_case_analysed_row_stays_within_budget() {
+    let (row, plan) = worst_case_row();
     let ev = JobEvent::Analysed {
         job_id: u32::MAX,
         file_id: u32::MAX,
@@ -361,4 +367,136 @@ fn serato_names_map_to_kinds() {
         serde_json::to_string(&SeratoTag::BeatGrid).expect("json"),
         "\"beatGrid\""
     );
+}
+
+/// The largest row an export can send: the longest action, every note and label cut to its bound
+/// from text that takes the most JSON per character.
+fn worst_case_export_row() -> ExportRow {
+    use crate::SampleIndex;
+    use crate::analysis::Meter;
+    use crate::export::{Cut, ExportNotice, GridCheck};
+    let long = |unit: &str| unit.repeat(2000);
+    ExportRow {
+        stage: JobStage::Processing,
+        action: ExportAction::Write {
+            gain_db: -123.456_789_012_345_67,
+            cut: Cut::NotCut {
+                bar1: SampleIndex(u64::MAX),
+                bar1_s: Seconds(123_456.789_012_345_67),
+                first_bar_line: SampleIndex(u64::MAX),
+                first_bar_line_s: Seconds(123_456.789_012_345_67),
+            },
+        },
+        positions_shift: true,
+        grid_withheld: true,
+        notices: vec![
+            ExportNotice::SeratoCuesShifted {
+                cut_s: Seconds(0.123_456_789_012_345_67),
+            },
+            ExportNotice::SeratoCuesMayHaveShifted {
+                cut_s: Seconds(0.123_456_789_012_345_67),
+            },
+        ],
+        verification: Some(ExportVerification {
+            blocks: u32::MAX,
+            carried: u32::MAX,
+            patched: u32::MAX,
+            edited: u32::MAX,
+            replaced: u32::MAX,
+            dropped: u32::MAX,
+            tags_added: u32::MAX,
+            frames_in: u64::MAX,
+            frames_out: u64::MAX,
+            bits_out: 24,
+            exact: false,
+            dithered: true,
+            stale_loudness_tags: bounded_strings(
+                vec![long("\u{1}"), long("\u{1}")],
+                MAX_STALE_TAGS_JSON_BYTES,
+            ),
+        }),
+        grid_check: Some(GridCheck::MeterDiffers {
+            found: Meter::ten_eight(),
+        }),
+        edit_carried: true,
+        revertible: true,
+        notes: bounded_strings(
+            vec![long("\""), long("\u{1f3a7}")],
+            MAX_ROW_NOTES_JSON_BYTES,
+        ),
+    }
+}
+
+#[test]
+fn a_worst_case_export_row_stays_within_budget() {
+    let row = worst_case_export_row();
+    assert!(json_len(&row) <= MAX_ROW_BYTES, "{} bytes", json_len(&row));
+    let ev = JobEvent::Written {
+        job_id: u32::MAX,
+        file_id: u32::MAX,
+        row: Box::new(row),
+    };
+    assert!(json_len(&ev) <= MAX_ROW_BYTES, "{} bytes", json_len(&ev));
+}
+
+#[test]
+fn a_worst_case_export_done_stays_within_budget() {
+    let (row, plan) = worst_case_row();
+    let ev = JobEvent::ExportDone {
+        job_id: u32::MAX,
+        file_id: u32::MAX,
+        row: Box::new(worst_case_export_row()),
+        in_place: true,
+        update: Some(Box::new(RowUpdate {
+            file_id: u32::MAX,
+            row: Box::new(row),
+            plan,
+            revision: u32::MAX,
+        })),
+    };
+    assert!(
+        json_len(&ev) <= MAX_EXPORT_DONE_BYTES,
+        "{} bytes",
+        json_len(&ev)
+    );
+}
+
+#[test]
+fn bounded_strings_stay_within_their_json_bytes() {
+    let json = |items: &[String]| serde_json::to_string(items).expect("serialisable").len();
+    let kinds = ["plain", "\"quote", "\u{1}control", "\u{1f3a7}emoji", "\n"];
+    for budget in [0, 1, 2, 3, 4, 5, 6, 7, 10, 40, 41, 100, 300, 800] {
+        for kind in kinds {
+            let items = vec![kind.repeat(50), kind.repeat(3), kind.repeat(50)];
+            let bounded = bounded_strings(items, budget);
+            assert!(
+                json(&bounded) <= budget.max(2),
+                "{kind:?} in {budget}: {} bytes: {bounded:?}",
+                json(&bounded)
+            );
+        }
+    }
+    let short = vec!["one".to_owned(), "two".to_owned()];
+    assert_eq!(
+        bounded_strings(short.clone(), 800),
+        short,
+        "kept as they are"
+    );
+    let cut = bounded_strings(vec!["abcdefghij".to_owned(), "next".to_owned()], 11);
+    assert_eq!(cut, ["abc..."], "cut, marked, and nothing after it");
+}
+
+#[test]
+fn an_export_row_crosses_with_camel_case_keys() {
+    let row = worst_case_export_row();
+    let text = serde_json::to_string(&row).expect("serialisable");
+    assert!(text.contains(r#""positionsShift":true"#), "{text}");
+    assert!(text.contains(r#""gridWithheld":true"#), "{text}");
+    assert!(text.contains(r#""stage":"processing""#), "{text}");
+    let back: ExportRow = serde_json::from_str(&text).expect("reads back");
+    assert_eq!(back, row);
+    let kind = serde_json::to_string(&IpcErrorKind::RecoveryRunning).expect("serialisable");
+    assert_eq!(kind, r#""recoveryRunning""#);
+    let kind = serde_json::to_string(&IpcErrorKind::Busy).expect("serialisable");
+    assert_eq!(kind, r#""busy""#);
 }

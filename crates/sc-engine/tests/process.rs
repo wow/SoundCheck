@@ -350,3 +350,39 @@ fn a_file_changed_since_it_was_planned_is_not_written() {
     };
     apply_file(&path, &request, &opts, &CancelToken::new()).expect("written");
 }
+
+#[test]
+fn a_file_that_changes_during_its_analysis_is_refused_not_written_from_a_stale_plan() {
+    let lib = Lib::new();
+    let music = lib.music();
+    let path = common::tone_wav(&music, "a.wav", 20.0, 0.1);
+    // Another program writes the file once its analysis is under way.
+    let other = common::tone_wav(&lib.dir.path().join("music"), "other.wav", 20.0, 0.3);
+    let s = settings(
+        &lib,
+        common::loudness_only(),
+        process(&lib, BatchMode::Library, None),
+    );
+    let mut swapped = false;
+    let mut failed = None;
+    run_batch(
+        &batch(std::slice::from_ref(&path)),
+        &s,
+        &CancelToken::new(),
+        &mut |event| match event {
+            EngineEvent::Progress { .. } if !swapped => {
+                swapped = true;
+                std::fs::rename(&other, &path).expect("swap");
+            }
+            EngineEvent::Failed { error, .. } => failed = Some(error),
+            _ => {}
+        },
+    )
+    .expect("batch starts");
+    assert!(swapped, "the analysis reported progress");
+    let error = failed.expect("refused");
+    assert!(
+        matches!(error, Error::FileChanged { .. }),
+        "the plan was made from other bytes: {error}"
+    );
+}

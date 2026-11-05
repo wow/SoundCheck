@@ -37,10 +37,7 @@ fn kick_track(dir: &Path, name: &str, bpm: f64, beats: u32, lead_s: f64) -> Path
     kick_track_with(dir, name, bpm, beats, lead_s, ACCENTS)
 }
 
-/// Kick and click levels on bar 1 and on the other beats. With these the beat tracker puts bar 1
-/// on the accented beat wherever the track starts; a much stronger accent makes it read the
-/// accented beat as the last of the bar (confidently), a weaker one leaves the bar to chance.
-const ACCENTS: [f64; 4] = [0.6, 0.3, 0.5, 0.35];
+const ACCENTS: [f64; 4] = sc_core::testsig::KICK_CLICK_ACCENTS;
 
 /// [`kick_track`] with the accents `a`: kick on bar 1, kick elsewhere, click on bar 1, click
 /// elsewhere.
@@ -53,34 +50,7 @@ fn kick_track_with(
     a: [f64; 4],
 ) -> PathBuf {
     let path = dir.join(name);
-    let rate = f64::from(RATE);
-    let beat = 60.0 / bpm;
-    let total = lead_s + beat * f64::from(beats) + 0.2;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let frames = (total * rate) as usize;
-    // A quiet noise floor (-50 dBFS), as music has between its kicks.
-    let floor = sc_core::testsig::seeded_noise(sc_core::AudioSpec::new(RATE, 1), 7, 0.003, total);
-    let mut mono: Vec<f64> = floor.data.iter().map(|&x| f64::from(x)).collect();
-    mono.resize(frames, 0.0);
-    for i in 0..beats {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let start = ((lead_s + beat * f64::from(i)) * rate).round() as usize;
-        let tick = if i % 4 == 0 { a[2] } else { a[3] };
-        let accent = if i % 4 == 0 { a[0] } else { a[1] };
-        for n in 0..(0.08 * rate) as usize {
-            #[allow(clippy::cast_precision_loss)]
-            let t = n as f64 / rate;
-            let kick = accent * (std::f64::consts::TAU * 60.0 * t).sin() * (-t / 0.03).exp();
-            let click = if t < 0.015 {
-                tick * (std::f64::consts::TAU * 1000.0 * t).sin()
-            } else {
-                0.0
-            };
-            if let Some(s) = mono.get_mut(start + n) {
-                *s += kick + click;
-            }
-        }
-    }
+    let mono = sc_core::testsig::kick_click_track(bpm, beats, lead_s, a);
     let spec = hound::WavSpec {
         channels: 2,
         sample_rate: RATE,

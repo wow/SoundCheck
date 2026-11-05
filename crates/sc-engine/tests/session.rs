@@ -112,6 +112,12 @@ fn a_job_streams_rows_with_plans_and_ends_with_finished() {
         | JobEvent::Cancelled { job_id, .. }
         | JobEvent::Batch { job_id, .. }
         | JobEvent::Aborted { job_id, .. }
+        | JobEvent::Processing { job_id, .. }
+        | JobEvent::Written { job_id, .. }
+        | JobEvent::ExportSkipped { job_id, .. }
+        | JobEvent::ExportDone { job_id, .. }
+        | JobEvent::Artefacts { job_id, .. }
+        | JobEvent::ArtefactsFailed { job_id, .. }
         | JobEvent::Finished { job_id, .. } => *job_id == job,
     }));
 

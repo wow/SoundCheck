@@ -305,3 +305,30 @@ fn a_journal_failure_after_the_rename_is_a_note_not_an_error() {
     assert_eq!(entries.len(), 1);
     assert!(matches!(entries[0].state, State::Recovered | State::Done));
 }
+
+#[test]
+fn a_folder_on_a_rekordbox_export_is_refused_whether_it_exists_or_not() {
+    use crate::txn::volume::{Volume, VolumeProvider};
+    struct OneVolume(PathBuf);
+    impl VolumeProvider for OneVolume {
+        fn volume_of(&self, _: &Path) -> sc_core::Result<Volume> {
+            Ok(Volume {
+                root: self.0.clone(),
+                name: "STICK".to_owned(),
+                id: 1,
+                free_bytes: u64::MAX,
+            })
+        }
+    }
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolves");
+    let volumes = OneVolume(root.clone());
+    let out = root.join("not/yet/there");
+    crate::txn::check_folder_not_rekordbox(&out, &volumes).expect("no PIONEER folder");
+    std::fs::create_dir(root.join("PIONEER")).expect("PIONEER");
+    let refused = crate::txn::check_folder_not_rekordbox(&out, &volumes).expect_err("refused");
+    assert!(
+        matches!(refused, Error::RekordboxUsbExport { .. }),
+        "{refused}"
+    );
+}

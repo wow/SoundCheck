@@ -242,7 +242,7 @@ fn export_flags_need_a_batch_mode_and_a_lead_in_range() {
             "80",
         ],
     );
-    assert!(!ok && text.contains("outside 0 to 50 ms"), "{text}");
+    assert!(!ok && text.contains("outside 2 to 50 ms"), "{text}");
     // Loudness only: without a grid there is nothing to cut to.
     let (ok, text) = plan(
         dir.path(),

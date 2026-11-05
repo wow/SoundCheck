@@ -20,6 +20,7 @@ use sc_core::export::{
 };
 use sc_core::plan::Codec;
 use sc_core::{Error, Seconds};
+use sc_engine::export::wording::UNVERIFIED;
 use sc_engine::{
     Artefacts, BatchFile, BatchRow, BatchSettings, CancelToken, EngineEvent, Place, ProcessDone,
     ProcessSettings, RecoveryGate, RowAction, Task, XmlSelect, check_inputs, default_workers,
@@ -83,7 +84,7 @@ pub struct ProcessArgs {
     /// Output bits per sample.
     #[arg(long, value_enum, default_value = "source")]
     depth: DepthArg,
-    /// Time a Prepare cut leaves before bar 1, milliseconds (0 to 50).
+    /// Time a Prepare cut leaves before bar 1, milliseconds (2, the fade after the cut, to 50).
     #[arg(long, default_value_t = DEFAULT_LEAD_MS, value_parser = parse_lead_ms)]
     lead_ms: f64,
     /// Do not write the tempo tag (it is written in Prepare mode by default, never in Library).
@@ -285,35 +286,19 @@ fn refuse_foreign_artefact(out: Option<&Path>) -> bool {
     true
 }
 
-/// Recognises a file SoundCheck wrote from its first bytes.
-type IsOurs = fn(&[u8]) -> bool;
-
 /// An artefact name in the `--out` folder taken by a file SoundCheck did not write, and why it
 /// blocks the batch.
 fn foreign_artefact(out: &Path) -> Option<(PathBuf, String)> {
-    use sc_io::artefacts::check_replaceable;
-    let checks: [(&str, IsOurs); 2] = [
-        (
-            sc_io::rekordbox::XML_FILE_NAME,
-            sc_io::rekordbox::is_soundcheck_xml,
-        ),
-        (
-            sc_io::report::REPORT_FILE_NAME,
-            sc_io::report::is_soundcheck_report,
-        ),
-    ];
-    checks.into_iter().find_map(|(name, is_ours)| {
-        let path = out.join(name);
-        check_replaceable(&path, is_ours).err().map(|e| {
-            let why = match e {
-                Error::AlreadyExists { .. } => format!(
-                    "the batch writes its {name} here, and a file SoundCheck did not write is \
-                     already there; it is never replaced"
-                ),
-                other => format!("it could not be read to check it: {other}"),
-            };
-            (path, why)
-        })
+    sc_engine::export::artefact_conflict(out).map(|conflict| {
+        let why = match conflict.error {
+            Error::AlreadyExists { .. } => format!(
+                "the batch writes its {} here, and a file SoundCheck did not write is already \
+                 there; it is never replaced",
+                conflict.name
+            ),
+            other => format!("it could not be read to check it: {other}"),
+        };
+        (conflict.path, why)
     })
 }
 
@@ -534,56 +519,19 @@ fn written_text(report: &TxnReport, done: &ProcessDone) -> String {
     s
 }
 
-/// The note on an MP3 or AAC file the XML carries.
-pub(crate) const UNVERIFIED: &str = "in the rekordbox XML its bar 1 is not yet verified \
-    against the encoder delay rekordbox applies to MP3 and AAC";
-
 /// The artefact row of one file, with its notes worded as the lines are.
 fn row_of(file: &Path, result: &FileResult, mode: BatchMode) -> BatchRow {
     match result {
         FileResult::Written { plan, report, done } => {
-            let mut row = BatchRow::written(
-                file,
-                mode,
-                plan,
-                &done.output,
-                report.render.frames_out,
-                report.render.sample_rate_hz,
-                done.xml.clone(),
-            );
-            row.grid_check = Some(done.grid_check.clone());
-            row.notes
-                .extend(plan.notices.iter().map(|n| notice_text(*n)));
-            if plan.grid_withheld {
-                row.notes.push(GRID_WITHHELD.to_owned());
-            }
-            if let Some(why) = &report.render.tags_not_added {
-                row.notes.push(format!("tags not added: {why}"));
-            }
-            row.notes
-                .extend(report.notes.iter().chain(&done.notes).cloned());
-            row
+            sc_engine::export::written_row(file, mode, plan, report, done)
         }
         FileResult::NotWritten {
             outcome,
             duration,
             codec,
             xml,
-        } => {
-            let mut row =
-                BatchRow::not_written(file, mode, outcome, *duration, *codec, (**xml).clone());
-            match **outcome {
-                ExportOutcome::XmlOnly { reason } => row.notes.push(xml_only_text(reason)),
-                ExportOutcome::Skip { reason } => row.notes.push(skip_text(reason).0),
-                ExportOutcome::Write { .. } => {}
-            }
-            row
-        }
-        FileResult::Failed(err) => {
-            let mut row = BatchRow::failed(file, Some(mode));
-            row.notes.push(err.to_string());
-            row
-        }
+        } => sc_engine::export::not_written_row(file, mode, outcome, *duration, *codec, xml),
+        FileResult::Failed(err) => sc_engine::export::failed_row(file, Some(mode), err),
     }
 }
 

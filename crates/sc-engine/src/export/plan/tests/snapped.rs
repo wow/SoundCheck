@@ -70,7 +70,7 @@ fn bar1_lands_within_1ms_and_a_sample_after_the_lead_for_every_snap() {
         (48_000, 174.5, 10_001),
         (48_000, 122.37, 17_001),
     ] {
-        for lead_ms in [0.0, 5.0, 12.3] {
+        for lead_ms in [sc_core::export::LEAD_MS_RANGE.0, 5.0, 12.3] {
             let mut r = record(rate, anchor);
             r.grid.as_mut().expect("grid").bpm = Bpm(bpm);
             let (plan, settings, export) = prepared(&r, lead_ms);
@@ -90,6 +90,10 @@ fn bar1_lands_within_1ms_and_a_sample_after_the_lead_for_every_snap() {
                     at >= lead && at < lead + one_ms + 1.0,
                     "{rate} Hz {bpm} BPM lead {lead_ms} ms snap {s}: bar 1 at {at}"
                 );
+                // At every lead allowed, bar 1's attack starts after the fade-in has ended.
+                #[allow(clippy::cast_precision_loss)]
+                let fade = sc_io::render::head_fade_frames(rate) as f64;
+                assert!(at >= fade, "{rate} Hz lead {lead_ms} ms: bar 1 at {at}");
                 assert_eq!(p.trim_frames, s);
                 assert_eq!(p.trim_snapped_from_frames, Some(requested));
                 assert_eq!(p.expect_frames, r.frames - s);

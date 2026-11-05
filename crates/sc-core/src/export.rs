@@ -33,8 +33,13 @@ pub use xml_grid::{XmlGrid, XmlTrackInfo};
 /// DJ apps' own analysis.
 pub const DEFAULT_LEAD_MS: f64 = 5.0;
 
-/// Leads a user may set, milliseconds.
-pub const LEAD_MS_RANGE: (f64, f64) = (0.0, 50.0);
+/// Length of the fade-in after a head cut, milliseconds.
+pub const HEAD_FADE_MS: u32 = 2;
+
+/// Leads a user may set, milliseconds. The floor is the fade-in after the cut: with a shorter
+/// lead, bar 1's attack would sit inside the fade and lose its level.
+#[allow(clippy::cast_lossless)] // `f64::from` is not available in a constant.
+pub const LEAD_MS_RANGE: (f64, f64) = (HEAD_FADE_MS as f64, 50.0);
 
 /// Output depths an export may force, bits; `None` keeps the source's.
 pub const EXPORT_DEPTHS: [u8; 2] = [16, 24];
@@ -225,6 +230,13 @@ pub enum ExportNotice {
     /// A cut copy of a file with Serato data: its Serato cue points and beat grid are carried
     /// byte for byte, so in Serato they sit `cut_s` late in the copy (the original keeps them).
     SeratoCuesShifted {
+        /// The cut, seconds.
+        cut_s: Seconds,
+    },
+    /// A cut copy of a file whose tags could not be read, so Serato data cannot be ruled out: if
+    /// it holds Serato cue points or a beat grid, they are carried byte for byte and may sit
+    /// `cut_s` late in the copy (the original keeps them).
+    SeratoCuesMayHaveShifted {
         /// The cut, seconds.
         cut_s: Seconds,
     },

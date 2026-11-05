@@ -2,7 +2,7 @@
 //!
 //! [`analyze`] runs one file end to end (decode, loudness, beats, onsets, meter, grid, tags,
 //! cache); [`batch`] runs many on worker threads with progress and cancellation, analysing or
-//! exporting them; [`edits`] applies the user's saved grid edits and carries them over to
+//! exporting them (for the app, [`export::run_export_job`] over a [`Session`]); [`edits`] applies the user's saved grid edits and carries them over to
 //! exported files; [`decide`] says what processing would do to an analysed file and [`export`]
 //! what exporting does to it; [`track`] holds the track open in the grid view and [`player`]
 //! plays it with a click; [`txn`] writes a processed file through the write transaction and
@@ -32,9 +32,9 @@ pub use decide::decide;
 pub use edits::{EditState, apply_saved, carry_edit, fit_choice, save_edit};
 pub use expand::{collect_audio_files, probe_all};
 pub use export::{
-    Artefacts, BatchRow, ExportInput, ExportSource, ProcessDone, ProcessSettings, RowAction,
-    RowTrack, SeratoPresence, XmlSelect, plan_export, plan_export_snapped, plan_snapped_cut,
-    write_artefacts,
+    Artefacts, BatchRow, ExportInput, ExportJob, ExportSource, ProcessDone, ProcessSettings,
+    RowAction, RowTrack, SeratoPresence, XmlSelect, plan_export, plan_export_snapped,
+    plan_snapped_cut, run_export_job, write_artefacts,
 };
 pub use session::{Session, run_job};
 pub use track::{Track, TrackProgress};

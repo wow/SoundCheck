@@ -1,10 +1,13 @@
 //! PROCESS: exporting one file end to end, as a batch's worker runs it ([`crate::batch::Task`]).
 //!
-//! 1. The analysis (from the cache when current), with the user's saved grid edit applied, and
-//!    the plan under the batch's loudness settings ([`crate::decide()`]).
-//! 2. The source read again ([`ExportSource::read`]: headers, chunks, Serato data, hashed),
-//!    never taken from an older probe, and the export planned from the cut the renderer makes
-//!    ([`super::plan_export_snapped`]). A file that is not written ends here.
+//! 1. The source read ([`ExportSource::read`]: headers, chunks, Serato data, hashed), never taken
+//!    from an older probe.
+//! 2. The analysis (from the cache when current), with the user's saved grid edit applied, the
+//!    plan under the batch's loudness settings ([`crate::decide()`]), and the export planned from
+//!    the cut the renderer makes ([`super::plan_export_snapped`]). A file that is not written ends
+//!    here. A cut snaps with the render's own parser before the Serato skip is decided, so a
+//!    container the render cannot parse fails with the render's error, not as a guess about
+//!    Serato.
 //! 3. The write ([`crate::apply_file`]): in place after a backup, or a copy into a folder;
 //!    asked to cut exactly the planned (snapped) cut, and refused before anything is replaced
 //!    unless the output has the planned frame count (Library: the source's; Prepare: the
@@ -134,6 +137,12 @@ pub(crate) fn process_file(
     progress: Option<&Progress>,
     send: &dyn Fn(EngineEvent),
 ) -> Result<EngineEvent> {
+    // Hashed before the analysis, so the plan and the hash the write checks describe the same
+    // bytes: a file that changes during the analysis is refused, not written from a stale plan.
+    let mut source = ExportSource::read(path);
+    if source.codec.is_writable() {
+        source.blake3 = Some(sc_io::txn::hash_file(path)?.1);
+    }
     let mut record = analyzer
         .analyze_with(path, &mut Timings::default(), progress)?
         .record;
@@ -146,10 +155,6 @@ pub(crate) fn process_file(
         .as_ref()
         .map(|store| apply_saved(&mut record, store))
         .unwrap_or_default();
-    let mut source = ExportSource::read(path);
-    if source.codec.is_writable() {
-        source.blake3 = Some(sc_io::txn::hash_file(path)?.1);
-    }
     let decided = decide(&record, source.codec, &settings.decide, edit.confirmed);
     let input = ExportInput {
         record: &record,

@@ -1,4 +1,6 @@
 //! Unit tests of `crates/sc-cli/src/export_plan.rs`: the text of every outcome.
+use sc_core::export::{ExportNotice, XmlOnlyReason};
+
 use super::*;
 use sc_core::plan::Codec;
 use sc_core::{SampleIndex, Seconds, Tag};
@@ -217,5 +219,16 @@ fn a_withheld_grid_is_noted() {
     assert!(
         t.contains("why: grid only, and its grid needs review"),
         "{t}"
+    );
+}
+
+#[test]
+fn a_cut_copy_of_a_file_with_unread_tags_says_its_cues_may_have_shifted() {
+    let text = notice_text(ExportNotice::SeratoCuesMayHaveShifted {
+        cut_s: Seconds(0.25),
+    });
+    assert!(
+        text.contains("may have shifted") && text.contains("0.25 s"),
+        "{text}"
     );
 }

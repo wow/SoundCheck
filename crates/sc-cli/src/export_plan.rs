@@ -6,9 +6,10 @@ use std::io::Write;
 
 use clap::ValueEnum;
 use sc_core::export::{
-    BatchMode, Cut, DEFAULT_LEAD_MS, ExportNotice, ExportOutcome, ExportPlan, ExportSettings,
-    ExportSkip, LEAD_MS_RANGE, XmlOnlyReason,
+    BatchMode, Cut, DEFAULT_LEAD_MS, ExportOutcome, ExportPlan, ExportSettings, ExportSkip,
+    LEAD_MS_RANGE,
 };
+pub(crate) use sc_engine::export::wording::{GRID_WITHHELD, notice_text, skip_why, xml_only_text};
 
 #[derive(Clone, Copy, ValueEnum)]
 pub enum BatchModeArg {
@@ -28,7 +29,7 @@ pub struct ExportArgs {
     /// Change no audio: no gain and no cut; only tags and the XML carry the grid.
     #[arg(long, requires = "batch_mode")]
     grid_only: bool,
-    /// Time a Prepare cut leaves before bar 1, milliseconds (0 to 50).
+    /// Time a Prepare cut leaves before bar 1, milliseconds (2, the fade after the cut, to 50).
     #[arg(long, requires = "batch_mode", default_value_t = DEFAULT_LEAD_MS, value_parser = parse_lead_ms)]
     lead_ms: f64,
     /// No rekordbox XML for the batch: a file only the XML could carry has nothing to write.
@@ -104,10 +105,6 @@ pub fn write_outcome(
     }
 }
 
-/// The note on a written file whose grid needs review and was not confirmed.
-pub const GRID_WITHHELD: &str =
-    "its BPM and bar 1 are not written, because the grid needs review (confirm it in the app)";
-
 /// `Gain -2.0 dB, Cut 0.29 s; tags BPM, ...`.
 pub(crate) fn write_text(plan: &ExportPlan) -> String {
     let gain = if plan.gain_db.abs() < sc_core::plan::NEGLIGIBLE_DB {
@@ -164,121 +161,34 @@ pub(crate) fn write_text(plan: &ExportPlan) -> String {
     format!("{head}{depth}; tags {}", names.join(", "))
 }
 
-pub(crate) fn notice_text(notice: ExportNotice) -> String {
-    match notice {
-        ExportNotice::SeratoCuesShifted { cut_s } => format!(
-            "the copy keeps its Serato cue points and beat grid as they are, so in Serato they sit \
-             {:.2} s late; the original is unchanged",
-            cut_s.0
-        ),
-    }
-}
-
-pub(crate) fn xml_only_text(reason: XmlOnlyReason) -> String {
-    match reason {
-        XmlOnlyReason::Mp3OrAac { codec } => {
-            format!("{} (file writes arrive later)", codec.label())
-        }
-        XmlOnlyReason::GridOnlyFlac => {
-            "grid only on FLAC (writing tags alone to FLAC arrives later)".to_owned()
-        }
-        XmlOnlyReason::GridOnlyWouldRequantise { float, bits } => {
-            let bits = bits.map_or_else(String::new, |b| format!("{b}-bit "));
-            let kind = if float { "float" } else { "integer" };
-            format!("grid only would change the samples of this {bits}{kind} file")
-        }
-        XmlOnlyReason::NoTagToWriteGridOnly => {
-            "grid only, and the file has no tag to write into".to_owned()
-        }
-    }
-}
-
-/// Why a file is skipped, and what to do.
+/// Why a file is skipped, and what to do with this command line.
 pub(crate) fn skip_text(reason: ExportSkip) -> (String, String) {
+    (skip_why(reason), what_to_do(reason).to_owned())
+}
+
+/// What to do about a skipped file, in this command line's flags.
+fn what_to_do(reason: ExportSkip) -> &'static str {
     match reason {
-        ExportSkip::SeratoInPlaceCut { cut_s } => (
-            format!(
-                "cutting {:.2} s in place would move its Serato cue points, which are stored as \
-                 positions in the audio",
-                cut_s.0
-            ),
+        ExportSkip::SeratoInPlaceCut { .. } => {
             "export it to a folder (the original keeps its cues), or use --batch-mode library"
-                .to_owned(),
-        ),
-        ExportSkip::SeratoUnknownInPlaceCut { cut_s } => (
-            format!(
-                "its tags could not be read to rule out Serato data, and cutting {:.2} s in place \
-                 would move Serato cue points if it has any",
-                cut_s.0
-            ),
+        }
+        ExportSkip::SeratoUnknownInPlaceCut { .. } => {
             "export it to a folder (the original stays as it is), or use --batch-mode library"
-                .to_owned(),
-        ),
-        ExportSkip::NotDjSafeRate { sample_rate_hz } => (
-            format!(
-                "its sample rate, {sample_rate_hz} Hz, is not one DJ players accept (44.1 or 48 kHz)"
-            ),
-            "convert it to 44.1 or 48 kHz in an audio editor first".to_owned(),
-        ),
-        ExportSkip::UnsupportedChannels { channels } => (
-            format!(
-                "it has {channels} channels; DJ players and SoundCheck write mono or stereo only"
-            ),
-            "export a stereo version first".to_owned(),
-        ),
-        ExportSkip::NothingToWrite { reason } => (
-            format!(
-                "only the rekordbox XML could carry its grid ({}), and the XML is off",
-                xml_only_text(reason)
-            ),
-            "run it again without --no-xml".to_owned(),
-        ),
-        ExportSkip::Unsupported { codec } => (
-            format!(
-                "{} files are analysed only; SoundCheck does not write them",
-                codec.label()
-            ),
-            "convert it to AIFF, WAV or FLAC first".to_owned(),
-        ),
-        ExportSkip::Silent => (
-            "it has no audio above the -70 LUFS gate, so there is no loudness to align".to_owned(),
-            "check that it is the right file".to_owned(),
-        ),
-        ExportSkip::NoGrid => (
-            "grid only, and no beats were found, so there is no grid to write".to_owned(),
-            "set the grid in the app, or export without --grid-only".to_owned(),
-        ),
-        ExportSkip::XmlNoGrid { codec } => (
-            format!(
-                "{} files are carried by the rekordbox XML alone, and no beats were found, so it \
-                 would carry nothing",
-                codec.label()
-            ),
-            "set the grid in the app first".to_owned(),
-        ),
-        ExportSkip::XmlGridNeedsReview { codec } => (
-            format!(
-                "{} files are carried by the rekordbox XML alone, and its grid needs review, so \
-                 it is not written and the XML would carry nothing",
-                codec.label()
-            ),
-            "check and confirm the grid in the app".to_owned(),
-        ),
-        ExportSkip::XmlNotOptedIn { codec } => (
-            format!(
-                "{} files are carried by the rekordbox XML alone, and in Library mode the XML \
-                 lists a track only once its grid is confirmed (importing it replaces the DJ \
-                 app's own grid)",
-                codec.label()
-            ),
-            "confirm the grid in the app to include it, or use --batch-mode prepare".to_owned(),
-        ),
-        ExportSkip::GridNeedsReview => (
-            "grid only, and its grid needs review, so it is not written and there is nothing \
-             else to write"
-                .to_owned(),
-            "check and confirm the grid in the app, or export without --grid-only".to_owned(),
-        ),
+        }
+        ExportSkip::NotDjSafeRate { .. } => "convert it to 44.1 or 48 kHz in an audio editor first",
+        ExportSkip::UnsupportedChannels { .. } => "export a stereo version first",
+        ExportSkip::NothingToWrite { .. } => "run it again without --no-xml",
+        ExportSkip::Unsupported { .. } => "convert it to AIFF, WAV or FLAC first",
+        ExportSkip::Silent => "check that it is the right file",
+        ExportSkip::NoGrid => "set the grid in the app, or export without --grid-only",
+        ExportSkip::XmlNoGrid { .. } => "set the grid in the app first",
+        ExportSkip::XmlGridNeedsReview { .. } => "check and confirm the grid in the app",
+        ExportSkip::XmlNotOptedIn { .. } => {
+            "confirm the grid in the app to include it, or use --batch-mode prepare"
+        }
+        ExportSkip::GridNeedsReview => {
+            "check and confirm the grid in the app, or export without --grid-only"
+        }
     }
 }
 

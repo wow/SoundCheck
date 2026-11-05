@@ -4,12 +4,18 @@
 //! type here has a byte budget that tests enforce. `#[ts(export)]` writes the TypeScript bindings
 //! into `src/lib/ipc/generated/` when `cargo test -p sc-core` runs.
 
+mod export;
 mod recovery;
 mod track;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+pub use export::{
+    ExportAction, ExportArtefacts, ExportRequest, ExportRow, ExportVerification, ForgetResult,
+    MAX_ROW_NOTES_JSON_BYTES, MAX_STALE_TAGS_JSON_BYTES, RevertResult, WriteXmlRequest,
+    XmlNotListed, XmlWritten, bounded_strings,
+};
 pub use recovery::{PendingChange, RecoveredChange, RecoveryOutcome, RecoveryStatus};
 pub use track::{
     FitChoice, GridFitHeader, Listen, MeterFrame, RowUpdate, TrackEvent, TrackOpened, Version,
@@ -23,8 +29,11 @@ use crate::units::{Bpm, DbTp, Lu, Lufs, Seconds};
 /// Largest JSON encoding allowed for a progress event or meter frame.
 pub const MAX_EVENT_BYTES: usize = 256;
 
-/// Largest JSON encoding allowed for one analysed row with its plan.
+/// Largest JSON encoding allowed for one analysed row with its plan, and for one export row.
 pub const MAX_ROW_BYTES: usize = 2048;
+
+/// Largest JSON encoding allowed for an `exportDone` event, which holds both of those.
+pub const MAX_EXPORT_DONE_BYTES: usize = 2 * MAX_ROW_BYTES;
 
 /// A batch job, unique within a session.
 pub type JobId = u32;
@@ -319,6 +328,11 @@ pub struct SessionRow {
     pub row: Option<Box<RowAnalysis>>,
     /// Its plan, when analysed.
     pub plan: Option<Plan>,
+    /// Where the latest export of it stands, until it is reverted or exported again.
+    pub export: Option<Box<ExportRow>>,
+    /// A change of it is in effect that `revert_file` can put back: also true with no `export`
+    /// after a revert that left an earlier change standing.
+    pub revertible: bool,
 }
 
 /// Everything the session holds, in the order the files were added.
@@ -357,6 +371,10 @@ pub struct AnalyzeRequest {
 /// What a batch job reports to the UI, in order: per file `started`, `progress` at most every
 /// 100 ms, then exactly one of `analysed`, `failed` or `cancelled`; a `batch` summary at most
 /// every 500 ms; `finished` last. A job that cannot start sends `aborted` and then `finished`.
+///
+/// An export job's files go `started`, `progress`, then `processing`, `written` and `exportDone`,
+/// or `exportSkipped`, or `failed` or `cancelled` from any point before the file is replaced; its
+/// `artefacts` (or `artefactsFailed`) come after every file and before `finished`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(
@@ -423,6 +441,68 @@ pub enum JobEvent {
         /// Seconds of audio per second of wall time so far.
         realtime_x: Option<f32>,
     },
+    /// Export: the file is analysed and planned, and its write starts (row stage `processing`).
+    Processing {
+        /// The job.
+        job_id: JobId,
+        /// The file.
+        file_id: u32,
+        /// What the row shows (boxed, as `analysed`'s row is).
+        row: Box<ExportRow>,
+    },
+    /// Export: the output is in place and verified; its own analysis and grid check are running
+    /// (row stage `writing`).
+    Written {
+        /// The job.
+        job_id: JobId,
+        /// The file.
+        file_id: u32,
+        /// What the row shows, now with what was verified.
+        row: Box<ExportRow>,
+    },
+    /// Export: the file is not written, because it is skipped or left to the rekordbox XML
+    /// (row stage `skipped`).
+    ExportSkipped {
+        /// The job.
+        job_id: JobId,
+        /// The file.
+        file_id: u32,
+        /// What the row shows, with why.
+        row: Box<ExportRow>,
+    },
+    /// Export: the file is written and its grid checked (row stage `done`).
+    ExportDone {
+        /// The job.
+        job_id: JobId,
+        /// The file.
+        file_id: u32,
+        /// What the row shows, now with the grid check and any notes.
+        row: Box<ExportRow>,
+        /// The file was replaced in place (not copied to a folder).
+        in_place: bool,
+        /// The row's analysis and plan after an export in place: the written file's own, with
+        /// the grid edit carried over. `null` means two different things. With `inPlace` false
+        /// (a copy in a folder) the source did not change and the row stays as it is. With
+        /// `inPlace` true the written file's analysis did not finish (`row.notes` say why): the
+        /// numbers the row shows describe audio that is gone, so clear them and analyse the row
+        /// again. The session has already dropped them.
+        update: Option<Box<RowUpdate>>,
+    },
+    /// Export: the batch's rekordbox XML and grid report are written, after its last file.
+    Artefacts {
+        /// The job.
+        job_id: JobId,
+        /// Where they are.
+        artefacts: ExportArtefacts,
+    },
+    /// Export: the batch's files stand as their events say, but its rekordbox XML or grid report
+    /// could not be written.
+    ArtefactsFailed {
+        /// The job.
+        job_id: JobId,
+        /// Why.
+        error: IpcError,
+    },
     /// The job could not start (for example, the beat model is missing); no file was touched.
     Aborted {
         /// The job.
@@ -484,6 +564,14 @@ pub enum IpcErrorKind {
     ListedTwice,
     /// See [`crate::Error::SameOutputName`].
     SameOutputName,
+    /// The start-up recovery is still running, and it may be about to repair the file: an
+    /// export, a revert, a rekordbox XML and forgetting a change wait until it ends (analysing a
+    /// row and opening it in the grid view do not). Nothing was done; asking again once it ends
+    /// works.
+    RecoveryRunning,
+    /// Another job or command is working on the file (`file_id`): exporting it, reverting it,
+    /// or, for a change of it, analysing it. Nothing was done; asking again once that ends works.
+    Busy,
 }
 
 /// An error crossing IPC: a class the UI can branch on plus a human-readable message.

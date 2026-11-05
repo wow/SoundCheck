@@ -77,6 +77,54 @@ pub fn click_track(spec: AudioSpec, bpm: Bpm, beats: u32, click_ms: f64) -> Audi
     buf
 }
 
+/// Kick and click levels of [`kick_click_track`]: kick on bar 1, kick elsewhere, click on bar 1,
+/// click elsewhere. With these the beat tracker puts bar 1 on the accented beat wherever the track
+/// starts; a much stronger accent makes it read the accented beat as the last of the bar
+/// (confidently), a weaker one leaves the bar to chance.
+pub const KICK_CLICK_ACCENTS: [f64; 4] = [0.6, 0.3, 0.5, 0.35];
+
+/// Sample rate of [`kick_click_track`], Hz.
+pub const KICK_CLICK_RATE_HZ: u32 = 44_100;
+
+/// Mono samples at [`KICK_CLICK_RATE_HZ`]: `lead_s` of a quiet noise floor (-50 dBFS), then `beats`
+/// beats at `bpm`: on each a 60 Hz kick (80 ms, decaying) and a 1 kHz click (15 ms), at the levels
+/// `accents` ([`KICK_CLICK_ACCENTS`] makes bar 1 unambiguous), with the first of every four the
+/// bar 1 accent. In `f64`, so a caller quantises it once.
+#[must_use]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)] // small counts and sample positions
+pub fn kick_click_track(bpm: f64, beats: u32, lead_s: f64, accents: [f64; 4]) -> Vec<f64> {
+    let rate = f64::from(KICK_CLICK_RATE_HZ);
+    let beat = 60.0 / bpm;
+    let total = lead_s + beat * f64::from(beats) + 0.2;
+    let frames = (total * rate) as usize;
+    // A quiet noise floor, as music has between its kicks.
+    let floor = seeded_noise(AudioSpec::new(KICK_CLICK_RATE_HZ, 1), 7, 0.003, total);
+    let mut mono: Vec<f64> = floor.data.iter().map(|&x| f64::from(x)).collect();
+    mono.resize(frames, 0.0);
+    for i in 0..beats {
+        let start = ((lead_s + beat * f64::from(i)) * rate).round() as usize;
+        let tick = if i % 4 == 0 { accents[2] } else { accents[3] };
+        let accent = if i % 4 == 0 { accents[0] } else { accents[1] };
+        for n in 0..(0.08 * rate) as usize {
+            let t = n as f64 / rate;
+            let kick = accent * (std::f64::consts::TAU * 60.0 * t).sin() * (-t / 0.03).exp();
+            let click = if t < 0.015 {
+                tick * (std::f64::consts::TAU * 1000.0 * t).sin()
+            } else {
+                0.0
+            };
+            if let Some(s) = mono.get_mut(start + n) {
+                *s += kick + click;
+            }
+        }
+    }
+    mono
+}
+
 /// Uniform white noise in `-amplitude..amplitude` from a seeded generator.
 #[must_use]
 pub fn seeded_noise(spec: AudioSpec, seed: u64, amplitude: f32, seconds: f64) -> AudioBuffer {

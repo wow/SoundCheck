@@ -5,9 +5,10 @@
 mod common;
 
 use common::export::*;
+use sc_core::Error;
 use sc_core::analysis::GridEdit;
 use sc_core::export::{BatchMode, Cut};
-use sc_engine::{Analyzer, CancelToken, apply_saved, save_edit};
+use sc_engine::{Analyzer, CancelToken, EngineEvent, apply_saved, save_edit};
 
 #[test]
 fn prepare_puts_bar_1_at_the_lead() {
@@ -233,4 +234,82 @@ fn bar_1_inside_the_cut_is_refused() {
     )
     .expect_err("refused");
     assert!(matches!(err, sc_core::Error::InvalidArgument(_)), "{err}");
+}
+
+/// `path`, 16-bit stereo, rewritten as G.711 mu-law: decoders play it, but the render does not
+/// parse its format, and so no tag can be read from it to rule out Serato data.
+fn as_mu_law(path: &std::path::Path) {
+    let mut reader = hound::WavReader::open(path).expect("wav");
+    let spec = reader.spec();
+    let encoded: Vec<u8> = reader
+        .samples::<i16>()
+        .map(|s| mu_law(s.expect("sample")))
+        .collect();
+    drop(reader);
+    let len = u32::try_from(encoded.len()).expect("a short file");
+    let mut bytes = Vec::with_capacity(encoded.len() + 46);
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(len + 38).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&18_u32.to_le_bytes());
+    bytes.extend_from_slice(&7_u16.to_le_bytes());
+    bytes.extend_from_slice(&spec.channels.to_le_bytes());
+    bytes.extend_from_slice(&spec.sample_rate.to_le_bytes());
+    bytes.extend_from_slice(&(spec.sample_rate * u32::from(spec.channels)).to_le_bytes());
+    bytes.extend_from_slice(&spec.channels.to_le_bytes());
+    bytes.extend_from_slice(&8_u16.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&len.to_le_bytes());
+    bytes.extend_from_slice(&encoded);
+    std::fs::write(path, bytes).expect("write");
+}
+
+/// One G.711 mu-law byte.
+fn mu_law(sample: i16) -> u8 {
+    const BIAS: i32 = 0x84;
+    let sign: u8 = if sample < 0 { 0x80 } else { 0 };
+    let magnitude = i32::from(sample).abs().min(32_635) + BIAS;
+    // The highest bit set is 7 to 14: the segment, with the four bits below it the step.
+    let exponent = 31 - i32::try_from(magnitude.leading_zeros()).expect("few") - 7;
+    let mantissa = (magnitude >> (exponent + 3)) & 0x0F;
+    let code = u8::try_from((exponent << 4) | mantissa).expect("seven bits");
+    !(sign | code)
+}
+
+#[test]
+fn a_container_the_render_cannot_parse_fails_with_its_error_not_about_serato() {
+    if !common::have_models() {
+        return;
+    }
+    let lib = Lib::new();
+    let path = click(&lib);
+    as_mu_law(&path);
+    assert!(
+        sc_io::probe(&path).serato_unknown,
+        "Serato data cannot be ruled out"
+    );
+    // Its grid confirmed, the plan alone would cut it, and so skip the file in place with the
+    // Serato wording; the export's snap of that cut reads the container first.
+    let record = analysed(&lib, &path);
+    let bpm_range = common::with_grid().bpm_range;
+    save_edit(&lib.edits(), &record, bpm_range, &GridEdit::default(), true).expect("saved");
+    let before = hash(&path);
+    let s = settings(
+        &lib,
+        common::with_grid(),
+        process(&lib, BatchMode::Prepare, None),
+    );
+    let events = run(&batch(std::slice::from_ref(&path)), &s, &CancelToken::new());
+    assert_eq!(names(&events, 1), ["started", "failed"]);
+    let error = events
+        .iter()
+        .find_map(|e| match e {
+            EngineEvent::Failed { error, .. } => Some(error),
+            _ => None,
+        })
+        .expect("failed");
+    assert!(matches!(error, Error::UnsupportedFormat { .. }), "{error}");
+    assert!(!error.to_string().contains("Serato"), "{error}");
+    assert_eq!(hash(&path), before);
 }
