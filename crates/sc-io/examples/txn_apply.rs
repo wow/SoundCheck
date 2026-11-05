@@ -5,6 +5,7 @@
 //! Usage:
 //! - `txn_apply apply <file> <backup root>`: change the file in place by -3 dB;
 //! - `txn_apply folder <file> <backup root> <folder>`: write it changed into the folder;
+//! - `txn_apply replace <file> <backup root> <folder>`: write it at -6 dB over its earlier copy there;
 //! - `txn_apply undo <file> <backup root>`: undo its newest change.
 //!
 //! Prints the BLAKE3 of the file written.
@@ -21,7 +22,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let arg = |i: usize| args.get(i).map(PathBuf::from);
     let (Some(mode), Some(file), Some(root)) = (args.first(), arg(1), arg(2)) else {
-        eprintln!("usage: txn_apply apply|folder|undo <file> <backup root> [folder]");
+        eprintln!("usage: txn_apply apply|folder|replace|undo <file> <backup root> [folder]");
         return ExitCode::from(2);
     };
     let req = RenderRequest {
@@ -33,6 +34,17 @@ fn main() -> ExitCode {
     let hash = match (mode.as_str(), arg(3)) {
         ("apply", _) => apply_in_place(&file, &req, &opts, &cancel).map(|r| r.output_blake3),
         ("folder", Some(out)) => {
+            apply_to_folder(&file, &out, &req, &opts, &cancel).map(|r| r.output_blake3)
+        }
+        ("replace", Some(out)) => {
+            let req = RenderRequest {
+                gain_db: -6.0,
+                ..RenderRequest::default()
+            };
+            let opts = TxnOptions {
+                replace_own_copy: true,
+                ..opts
+            };
             apply_to_folder(&file, &out, &req, &opts, &cancel).map(|r| r.output_blake3)
         }
         ("undo", _) => undo(&file, &root).map(|r| r.restored_blake3),

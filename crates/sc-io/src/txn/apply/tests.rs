@@ -332,3 +332,143 @@ fn a_folder_on_a_rekordbox_export_is_refused_whether_it_exists_or_not() {
         "{refused}"
     );
 }
+
+/// A copy of `s.path` in `music/../out`, and the options that may replace it.
+fn copied(s: &Scene) -> (PathBuf, PathBuf, TxnOptions) {
+    let out = s.music.with_file_name("out");
+    let opts = TxnOptions {
+        replace_own_copy: true,
+        ..TxnOptions::new(&s.backups)
+    };
+    let req = RenderRequest {
+        gain_db: -2.0,
+        ..RenderRequest::default()
+    };
+    Transaction::default()
+        .apply_to_folder(&s.path, &out, &req, &opts, &AtomicBool::new(false))
+        .expect("the first copy");
+    let copy = out.join("a.wav");
+    (out, copy, opts)
+}
+
+fn copy_again(
+    s: &Scene,
+    out: &Path,
+    opts: &TxnOptions,
+    hooks: Hooks,
+) -> sc_core::Result<crate::txn::TxnReport> {
+    let tx = Transaction {
+        hooks,
+        ..Transaction::default()
+    };
+    let req = RenderRequest {
+        gain_db: -4.0,
+        ..RenderRequest::default()
+    };
+    tx.apply_to_folder(&s.path, out, &req, opts, &AtomicBool::new(false))
+}
+
+fn write_over_copy_before_rename(_temp: &Path, target: &Path) {
+    std::fs::write(target, b"edited while the new copy was being written").expect("edited");
+}
+
+#[test]
+fn a_copy_changed_while_its_replacement_is_written_is_left_as_it_is() {
+    let s = scene();
+    let (out, copy, opts) = copied(&s);
+    let hooks = Hooks {
+        before_rename: Some(write_over_copy_before_rename),
+        ..Hooks::default()
+    };
+    match copy_again(&s, &out, &opts, hooks) {
+        Err(Error::AlreadyExists { path }) => assert_eq!(path, copy),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        std::fs::read(&copy).expect("copy"),
+        b"edited while the new copy was being written"
+    );
+    assert_eq!(std::fs::read(&s.path).expect("source"), s.bytes);
+    let temps = others(&out)
+        .into_iter()
+        .filter(|n| n.contains(crate::txn::TEMP_MARKER))
+        .count();
+    assert_eq!(temps, 0, "no temp left");
+}
+
+/// The copy the next [`edit_copy_after_check`] changes.
+static COPY_TO_EDIT: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+fn edit_copy_after_check() {
+    let copy = COPY_TO_EDIT.lock().expect("path").clone().expect("set");
+    std::fs::write(&copy, b"edited while waiting for the lock").expect("edited");
+}
+
+#[test]
+fn a_copy_changed_while_waiting_for_its_lock_is_left_as_it_is() {
+    let s = scene();
+    let (out, copy, opts) = copied(&s);
+    *COPY_TO_EDIT.lock().expect("path") = Some(copy.clone());
+    let hooks = Hooks {
+        after_check: Some(edit_copy_after_check),
+        ..Hooks::default()
+    };
+    assert!(
+        matches!(
+            copy_again(&s, &out, &opts, hooks),
+            Err(Error::AlreadyExists { .. })
+        ),
+        "refused"
+    );
+    assert_eq!(
+        std::fs::read(&copy).expect("copy"),
+        b"edited while waiting for the lock"
+    );
+}
+
+#[test]
+fn a_transaction_not_asked_to_replace_leaves_its_copy() {
+    let s = scene();
+    let (out, copy, _) = copied(&s);
+    let first = std::fs::read(&copy).expect("copy");
+    let opts = TxnOptions::new(&s.backups);
+    assert!(matches!(
+        copy_again(&s, &out, &opts, Hooks::default()),
+        Err(Error::AlreadyExists { .. })
+    ));
+    assert_eq!(std::fs::read(&copy).expect("copy"), first);
+}
+
+#[test]
+fn a_copy_of_a_link_is_a_copy_of_its_file_named_as_the_link() {
+    let s = scene();
+    let link = s.music.join("link.wav");
+    std::os::unix::fs::symlink(&s.path, &link).expect("link");
+    let out = s.music.with_file_name("out");
+    let opts = TxnOptions::new(&s.backups);
+    let req = RenderRequest {
+        gain_db: -2.0,
+        ..RenderRequest::default()
+    };
+    Transaction::default()
+        .apply_to_folder(&link, &out, &req, &opts, &AtomicBool::new(false))
+        .expect("an unchanged link is written");
+    assert!(out.join("link.wav").is_file());
+    assert_eq!(std::fs::read(&s.path).expect("source"), s.bytes);
+}
+
+#[test]
+fn a_copy_records_where_it_came_from_as_a_hash_never_the_path() {
+    let s = scene();
+    let (_, copy, _) = copied(&s);
+    let text = std::fs::read_to_string(sidecar_path(&copy)).expect("sidecar");
+    assert!(
+        text.contains(&crate::txn::sidecar::hash_of_path(&s.path)),
+        "{text}"
+    );
+    assert!(!text.contains(s.path.to_str().expect("utf-8")), "{text}");
+    // An export in place records no such thing.
+    let report = run(&s, Hooks::default()).expect("in place");
+    let text = std::fs::read_to_string(sidecar_path(&report.output)).expect("sidecar");
+    assert!(!text.contains("source_path_hash"), "{text}");
+}

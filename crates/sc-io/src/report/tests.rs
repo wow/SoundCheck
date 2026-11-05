@@ -100,3 +100,26 @@ fn another_shape_of_report_is_not_read() {
     assert_eq!(read_rows(b"file,mode\r\n"), None);
     assert_eq!(read_rows(b"\xEF\xBB\xBFfile,mode\r\n"), None);
 }
+
+#[test]
+fn a_report_cut_short_or_damaged_is_not_an_empty_one() {
+    let rows = [ReportRow {
+        file: "/a, \"b\".wav".to_owned(),
+        gain_db: Some(-1.0),
+        ..ReportRow::default()
+    }];
+    let bytes = csv_bytes(&rows);
+    assert!(read_rows(&bytes).is_some());
+    assert_eq!(
+        read_rows(&bytes[..bytes.len() - 6]),
+        None,
+        "a row cut short"
+    );
+    let quote = bytes.iter().rposition(|b| *b == b'"').unwrap();
+    assert_eq!(read_rows(&bytes[..quote]), None, "cut in a quoted field");
+    let mut short = bytes.clone();
+    short.extend_from_slice(b"just one field\r\n");
+    assert_eq!(read_rows(&short), None, "a row with too few fields");
+    let text = String::from_utf8(bytes).unwrap().replace("-1.00", "oops");
+    assert_eq!(read_rows(text.as_bytes()), None, "a number that is none");
+}

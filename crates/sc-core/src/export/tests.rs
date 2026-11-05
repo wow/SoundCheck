@@ -93,3 +93,60 @@ fn outcomes_serialise_as_tagged_unions() {
         r#"{"batchMode":"prepare","place":"folder","depth":null,"gridOnly":false,"tbpm":true,"xml":true,"leadMs":5.0}"#
     );
 }
+
+#[test]
+fn a_skip_says_what_could_cure_it() {
+    use crate::Seconds;
+    use crate::plan::Codec;
+    let cases = [
+        (
+            ExportSkip::NotDjSafeRate {
+                sample_rate_hz: 96_000,
+            },
+            SkipCure::File,
+        ),
+        (
+            ExportSkip::UnsupportedChannels { channels: 6 },
+            SkipCure::File,
+        ),
+        (
+            ExportSkip::Unsupported { codec: Codec::Alac },
+            SkipCure::File,
+        ),
+        (ExportSkip::Silent, SkipCure::File),
+        (ExportSkip::NoGrid, SkipCure::Grid),
+        (ExportSkip::GridNeedsReview, SkipCure::Grid),
+        (ExportSkip::XmlNoGrid { codec: Codec::Mp3 }, SkipCure::Grid),
+        (
+            ExportSkip::XmlGridNeedsReview { codec: Codec::Mp3 },
+            SkipCure::Grid,
+        ),
+        (
+            ExportSkip::XmlNotOptedIn { codec: Codec::Mp3 },
+            SkipCure::Grid,
+        ),
+        (
+            ExportSkip::SeratoInPlaceCut {
+                cut_s: Seconds(0.1),
+            },
+            SkipCure::Settings,
+        ),
+        (
+            ExportSkip::SeratoUnknownInPlaceCut {
+                cut_s: Seconds(0.1),
+            },
+            SkipCure::Settings,
+        ),
+        (
+            ExportSkip::NothingToWrite {
+                reason: XmlOnlyReason::GridOnlyFlac,
+            },
+            SkipCure::Settings,
+        ),
+        (ExportSkip::OtherFileInFolder, SkipCure::Disk),
+        (ExportSkip::CopyOfOtherTrack, SkipCure::Disk),
+    ];
+    for (skip, cure) in cases {
+        assert_eq!(skip.cure(), cure, "{skip:?}");
+    }
+}

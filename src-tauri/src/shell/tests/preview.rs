@@ -431,3 +431,129 @@ fn a_cancelled_file_is_not_counted_as_failed() {
     assert_eq!((summary.written, summary.failed), (0, 0));
     assert!(summary.cancelled);
 }
+
+#[test]
+fn an_artefact_of_ours_that_cannot_be_read_refuses_the_plan_and_the_job() {
+    let lib = Lib::new();
+    let a = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&a]);
+    let out = lib.base().join("copies");
+    export(&shell, request(&ids, in_folder(prepare()), Some(&out)));
+    let report = out.join(sc_io::report::REPORT_FILE_NAME);
+    let mut bytes = std::fs::read(&report).unwrap();
+    bytes.extend_from_slice(b"a,short,row\r\n");
+    std::fs::write(&report, &bytes).unwrap();
+
+    let req = request(&ids, in_folder(prepare()), Some(&out));
+    for refused in [
+        shell.plan_export(&req).unwrap_err(),
+        shell.export(req.clone(), |_| {}).unwrap_err(),
+    ] {
+        assert_eq!(refused.kind, IpcErrorKind::Corrupt, "{refused:?}");
+        assert!(refused.message.contains("grid-report.csv"), "{refused:?}");
+        assert!(
+            refused.message.contains("choose another folder"),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(std::fs::read(&report).unwrap(), bytes, "left as it is");
+}
+
+#[test]
+fn an_artefact_that_turns_unreadable_during_the_job_is_failed_not_written_over() {
+    let lib = Lib::new();
+    let a = lib.tone("a.wav", 0.1);
+    let b = lib.tone("b.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&a, &b]);
+    let out = lib.base().join("copies");
+    export(&shell, request(&ids[..1], in_folder(prepare()), Some(&out)));
+    let report = out.join(sc_io::report::REPORT_FILE_NAME);
+
+    let held = held_at(
+        &shell,
+        request(&ids[1..], in_folder(prepare()), Some(&out)),
+        at_written,
+    );
+    let mut bytes = std::fs::read(&report).unwrap();
+    bytes.extend_from_slice(b"a,short,row\r\n");
+    std::fs::write(&report, &bytes).unwrap();
+    let events = held.finish();
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, JobEvent::ArtefactsFailed { .. })),
+        "{events:?}"
+    );
+    assert_eq!(std::fs::read(&report).unwrap(), bytes, "left as it is");
+    assert!(
+        steps(&events, ids[1]).contains(&"exportDone"),
+        "the file is written all the same"
+    );
+}
+
+#[test]
+fn an_unchanged_link_exports_and_a_changed_target_is_refused() {
+    let lib = Lib::new();
+    let real = lib.tone("real.wav", 0.1);
+    let link = lib.music().join("link.wav");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&link]);
+    let out = lib.base().join("copies");
+
+    let req = request(&ids, in_folder(prepare()), Some(&out));
+    let preview = shell.plan_export(&req).unwrap();
+    assert!(preview.rows[0].row.is_some(), "{:?}", preview.rows[0]);
+    let (_, events) = export(&shell, confirmed_of(req.clone(), &preview));
+    assert!(steps(&events, ids[0]).contains(&"exportDone"), "{events:?}");
+    assert!(out.join("link.wav").is_file());
+
+    // The file the link points at changes: the link itself does not.
+    let preview = shell.plan_export(&req).unwrap();
+    rewrite(&real);
+    let before = sha256(&out.join("link.wav"));
+    let (_, events) = export(&shell, confirmed_of(req, &preview));
+    let failed = events.iter().find_map(|e| match e {
+        JobEvent::Failed { error, .. } => Some(error.clone()),
+        _ => None,
+    });
+    assert_eq!(failed.expect("refused").kind, IpcErrorKind::FileChanged);
+    assert_eq!(sha256(&out.join("link.wav")), before, "left as it is");
+}
+
+#[test]
+fn a_link_to_its_own_copy_never_counts_as_replacing_it() {
+    let lib = Lib::new();
+    let real = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&real]);
+    let out = lib.base().join("copies");
+    export(&shell, request(&ids, in_folder(prepare()), Some(&out)));
+    let copy = out.join("a.wav");
+    let before = sha256(&copy);
+
+    let links = lib.base().join("links");
+    std::fs::create_dir_all(&links).unwrap();
+    let link = links.join("a.wav");
+    std::os::unix::fs::symlink(&copy, &link).unwrap();
+    let ids = analysed(&shell, &[&link]);
+    let req = request(&ids, in_folder(prepare()), Some(&out));
+
+    let preview = shell.plan_export(&req).unwrap();
+    assert!(!preview.rows[0].replaces_copy, "{:?}", preview.rows[0]);
+    assert_eq!(
+        preview.rows[0].row.as_ref().unwrap().action,
+        ExportAction::Skip {
+            reason: ExportSkip::OtherFileInFolder
+        }
+    );
+    let (_, events) = export(&shell, req);
+    assert!(
+        steps(&events, ids[0]).contains(&"exportSkipped"),
+        "{events:?}"
+    );
+    assert_eq!(sha256(&copy), before, "left as it is");
+}

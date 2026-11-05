@@ -359,3 +359,91 @@ fn a_foreign_xml_there_is_neither_read_nor_replaced() {
     );
     assert_eq!(std::fs::read_to_string(&xml).unwrap(), foreign);
 }
+
+/// Writes `a.wav`'s artefacts, damages `name` with `damage`, and returns its damaged bytes.
+fn damaged(dir: &Path, name: &str, damage: fn(Vec<u8>) -> Vec<u8>) -> Vec<u8> {
+    let a = written_in(dir, "a.wav");
+    write_artefacts(dir, &[a], XmlSelect::Batch, "p").expect("written");
+    let path = dir.join(name);
+    let bytes = damage(std::fs::read(&path).expect("read"));
+    std::fs::write(&path, &bytes).expect("damaged");
+    bytes
+}
+
+fn refused_and_left(dir: &Path, name: &str, bytes: &[u8]) {
+    let other = std::fs::read(dir.join(if name == sc_io::report::REPORT_FILE_NAME {
+        sc_io::rekordbox::XML_FILE_NAME
+    } else {
+        sc_io::report::REPORT_FILE_NAME
+    }))
+    .expect("the other file");
+    let conflict = crate::export::artefact_conflict(dir).expect("refused before the job");
+    assert_eq!(conflict.name, name);
+    let text = conflict.error.to_string();
+    assert!(
+        text.contains(name) && text.contains("choose another folder"),
+        "{text}"
+    );
+
+    let b = written_in(dir, "b.wav");
+    let refused = write_artefacts(dir, &[b], XmlSelect::Batch, "p");
+    assert!(
+        matches!(refused, Err(sc_core::Error::Corrupt { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(
+        std::fs::read(dir.join(name)).expect("read"),
+        bytes,
+        "left as it is"
+    );
+    // Nothing half done: the other file is not written either.
+    let name_of_other = if name == sc_io::report::REPORT_FILE_NAME {
+        sc_io::rekordbox::XML_FILE_NAME
+    } else {
+        sc_io::report::REPORT_FILE_NAME
+    };
+    assert_eq!(std::fs::read(dir.join(name_of_other)).expect("read"), other);
+}
+
+#[test]
+fn an_xml_of_ours_cut_short_is_refused_and_left() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let bytes = damaged(dir.path(), sc_io::rekordbox::XML_FILE_NAME, |b| {
+        b[..b.len() - 40].to_vec()
+    });
+    refused_and_left(dir.path(), sc_io::rekordbox::XML_FILE_NAME, &bytes);
+}
+
+#[test]
+fn an_xml_of_ours_with_a_track_without_a_tempo_is_refused_and_left() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let bytes = damaged(dir.path(), sc_io::rekordbox::XML_FILE_NAME, |b| {
+        String::from_utf8(b)
+            .unwrap()
+            .replace(
+                "</COLLECTION>",
+                "  <TRACK TrackID=\"9\" Name=\"x\" TotalTime=\"1\" Location=\"file://localhost/x.wav\"></TRACK>\n  </COLLECTION>",
+            )
+            .into_bytes()
+    });
+    refused_and_left(dir.path(), sc_io::rekordbox::XML_FILE_NAME, &bytes);
+}
+
+#[test]
+fn a_report_of_ours_with_a_short_row_is_refused_and_left() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let bytes = damaged(dir.path(), sc_io::report::REPORT_FILE_NAME, |mut b| {
+        b.extend_from_slice(b"a,b\r\n");
+        b
+    });
+    refused_and_left(dir.path(), sc_io::report::REPORT_FILE_NAME, &bytes);
+}
+
+#[test]
+fn nothing_there_is_no_conflict() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    assert!(crate::export::artefact_conflict(dir.path()).is_none());
+    let a = written_in(dir.path(), "a.wav");
+    write_artefacts(dir.path(), &[a], XmlSelect::Batch, "p").expect("written");
+    assert!(crate::export::artefact_conflict(dir.path()).is_none());
+}
