@@ -229,6 +229,7 @@ describe('why Export cannot be pressed', () => {
   const gate = {
     exportable: 2,
     hasRows: true,
+    anyExported: false,
     busy: false,
     reverting: false,
     xmlWriting: false,
@@ -242,7 +243,8 @@ describe('why Export cannot be pressed', () => {
     expect(exportBlock({ ...gate, busy: true })).toMatch(/job is running/);
     expect(exportBlock({ ...gate, reverting: true })).toMatch(/revert is running/);
     expect(exportBlock({ ...gate, xmlWriting: true })).toMatch(/XML/);
-    expect(exportBlock({ ...gate, exportable: 0 })).toMatch(/Revert a track, or save its grid/);
+    expect(exportBlock({ ...gate, exportable: 0 })).toBe('Analyse the tracks first.');
+    expect(exportBlock({ ...gate, exportable: 0, anyExported: true })).toMatch(/Revert a track, or save its grid/);
     expect(exportBlock({ ...gate, needsFolder: true })).toMatch(/Choose a folder/);
   });
 });

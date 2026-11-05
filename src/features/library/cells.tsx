@@ -80,12 +80,12 @@ export function StatusPill({ row }: { row: Row }) {
   return (
     <span
       className={cn(
-        'inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded-md border px-2 text-xs font-medium',
+        'inline-flex h-[22px] min-w-0 items-center gap-1 whitespace-nowrap rounded-md border px-2 text-xs font-medium',
         row.reverting ? REVERTING : PILL[row.state],
       )}
     >
       {row.reverting && <RevertSpinner />}
-      {statusLabel(row)}
+      <span className="truncate">{statusLabel(row)}</span>
     </span>
   );
 }

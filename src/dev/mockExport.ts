@@ -155,87 +155,81 @@ function preview(session: MockSession, req: ExportRequest): ExportPreview {
 const cancelled = new Set<number>();
 let nextJob = 1000;
 
-function runExport(session: MockSession, jobId: number, req: ExportRequest, channel: unknown) {
-  const send = (event: JobEvent) => (channel as Channel<JobEvent>).onmessage(event);
+const wait = (ms: number) => new Promise((go) => setTimeout(go, ms));
+
+/** One file, in the order the job sends its events; a cancel stops it only before it is written. */
+async function exportOne(session: MockSession, jobId: number, fileId: number, req: ExportRequest, send: (e: JobEvent) => void) {
+  const s = session.entries.get(fileId);
+  if (!s) return;
   const place = req.settings.place;
-  const inPlace = place === 'inPlace';
-  let done = 0;
-  const total = req.fileIds.length;
-  const after = (ms: number, then: () => void) =>
-    setTimeout(() => {
-      if (!cancelled.has(jobId)) then();
-    }, ms);
-  const fileDone = () => {
-    done += 1;
-    send({ type: 'batch', jobId, done, total, etaMs: (total - done) * STEP_MS * 4, realtimeX: 60 });
+  const stopped = () => {
+    const stop = cancelled.has(jobId);
+    if (stop) send({ type: 'cancelled', jobId, fileId });
+    return stop;
   };
-  const steps = req.fileIds.map((fileId) => () => {
-    const s = session.entries.get(fileId);
-    if (!s) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      const planned = plannedFor(s, req);
-      send({ type: 'started', jobId, fileId });
-      after(STEP_MS, () => {
-        if (planned.action.type !== 'write') {
-          send({ type: 'exportSkipped', jobId, fileId, row: row(planned, 'skipped', place) });
-          fileDone();
-          resolve();
-          return;
-        }
-        send({ type: 'processing', jobId, fileId, row: row(planned, 'processing', place) });
-        after(STEP_MS, () => {
-          if (s.title === 'Breakbeat Tool') {
-            send({
-              type: 'failed',
-              jobId,
-              fileId,
-              error: { kind: 'verifyFailed', message: 'the written file does not match its plan; the original was kept', fileId },
-            });
-            fileDone();
-            resolve();
-            return;
-          }
-          const written = { ...row(planned, 'writing', place), verification: verification(s) };
-          send({ type: 'written', jobId, fileId, row: written });
-          after(STEP_MS, () => {
-            const check: GridCheck =
-              CHECKS[s.title] ??
-              (s.meter
-                ? { result: 'notChecked', reason: { type: 'oddMeter', meter: meter(6, [3, 3]) } }
-                : { result: 'pass', offsetMs: 1.1, bpmDiff: 0 });
-            const finished = { ...written, stage: 'done' as const, gridCheck: check, editCarried: false };
-            const update = inPlace ? updateAfter(session, s, fileId) : null;
-            send({ type: 'exportDone', jobId, fileId, row: finished, inPlace, update });
-            fileDone();
-            resolve();
-          });
-        });
-      });
-    });
+  if (stopped()) return;
+  send({ type: 'started', jobId, fileId });
+  await wait(STEP_MS);
+  if (stopped()) return;
+  const planned = plannedFor(s, req);
+  if (planned.action.type !== 'write') {
+    send({ type: 'exportSkipped', jobId, fileId, row: row(planned, 'skipped', place) });
+    return;
+  }
+  send({ type: 'processing', jobId, fileId, row: row(planned, 'processing', place) });
+  await wait(STEP_MS);
+  if (stopped()) return;
+  if (s.title === 'Breakbeat Tool') {
+    const message = 'the written file does not match its plan; the original was kept';
+    send({ type: 'failed', jobId, fileId, error: { kind: 'verifyFailed', message, fileId } });
+    return;
+  }
+  const written = { ...row(planned, 'writing', place), verification: verification(s) };
+  send({ type: 'written', jobId, fileId, row: written });
+  await wait(STEP_MS);
+  const gridCheck: GridCheck =
+    CHECKS[s.title] ??
+    (s.meter
+      ? { result: 'notChecked', reason: { type: 'oddMeter', meter: meter(6, [3, 3]) } }
+      : { result: 'pass', offsetMs: 1.1, bpmDiff: 0 });
+  const inPlace = place === 'inPlace';
+  send({
+    type: 'exportDone',
+    jobId,
+    fileId,
+    row: { ...written, stage: 'done', gridCheck },
+    inPlace,
+    update: inPlace ? updateAfter(session, s, fileId) : null,
   });
-  void (async () => {
-    for (const step of steps) {
-      await step();
-      if (cancelled.has(jobId)) {
-        for (const fileId of req.fileIds.slice(done)) send({ type: 'cancelled', jobId, fileId });
-        break;
-      }
-    }
-    if (req.settings.xml) {
-      const folder = req.outDir ?? `${EXPORTS}/2026-11-05 14.05.33`;
-      send({
-        type: 'artefacts',
-        jobId,
-        artefacts: {
-          folder,
-          xml: `${folder}/soundcheck-rekordbox.xml`,
-          report: `${folder}/grid-report.csv`,
-          listed: Math.max(0, done - 1),
-        },
-      });
-    }
-    send({ type: 'finished', jobId, cancelled: cancelled.has(jobId) });
-  })();
+}
+
+async function runExport(session: MockSession, jobId: number, req: ExportRequest, channel: unknown) {
+  const send = (event: JobEvent) => (channel as Channel<JobEvent>).onmessage(event);
+  const total = req.fileIds.length;
+  let done = 0;
+  let listed = 0;
+  for (const fileId of req.fileIds) {
+    await exportOne(session, jobId, fileId, req, (event) => {
+      if (event.type === 'exportDone') listed += 1;
+      send(event);
+    });
+    done += 1;
+    send({ type: 'batch', jobId, done, total, etaMs: (total - done) * STEP_MS * 3, realtimeX: 60 });
+  }
+  if (req.settings.xml) {
+    const folder = req.outDir ?? `${EXPORTS}/2026-11-05 14.05.33`;
+    send({
+      type: 'artefacts',
+      jobId,
+      artefacts: {
+        folder,
+        xml: `${folder}/soundcheck-rekordbox.xml`,
+        report: `${folder}/grid-report.csv`,
+        listed,
+      },
+    });
+  }
+  send({ type: 'finished', jobId, cancelled: cancelled.has(jobId) });
 }
 
 /** The row after an in-place export: at the target, its bar 1 moved. */
@@ -303,7 +297,7 @@ export function exportCommand(cmd: string, a: Record<string, unknown>, session: 
         if (s && !originals.has(id)) originals.set(id, s);
       }
       const jobId = nextJob++;
-      runExport(session, jobId, req, a.onEvent);
+      void runExport(session, jobId, req, a.onEvent);
       return jobId;
     }
     case 'cancel_job':

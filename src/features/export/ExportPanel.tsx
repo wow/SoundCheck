@@ -135,6 +135,7 @@ export function ExportAction() {
   const running = useSelector(pipeline(), (p) => p.value !== 'idle');
   const exportable = useLibrary((l) => exportableIds(l).length);
   const hasRows = useLibrary((l) => l.order.length > 0);
+  const anyExported = useLibrary((l) => l.order.some((id) => l.rows[id]?.export?.stage === 'done'));
   const reverting = useLibrary((l) => l.order.some((id) => l.rows[id]?.reverting));
   const xmlWriting = useLibrary((l) => l.xmlWriting);
   const recoveryRunning = useRecovery((r) => r.running);
@@ -144,6 +145,7 @@ export function ExportAction() {
   const block = exportBlock({
     exportable,
     hasRows,
+    anyExported,
     busy: running,
     reverting,
     xmlWriting,

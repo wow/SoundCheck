@@ -153,7 +153,7 @@ export function Footer({
             {job.realtimeX !== null && ` · ${Math.round(job.realtimeX)}× real time`}
           </span>
           <div
-            className="h-1 w-48 shrink-[2] overflow-hidden rounded-sm bg-bg-3"
+            className="h-1 w-48 min-w-12 shrink-[2] overflow-hidden rounded-sm bg-bg-3"
             role="progressbar"
             aria-label="Batch progress"
             aria-valuemin={0}
@@ -187,7 +187,8 @@ export function Footer({
         <span className="truncate">Open source · MIT OR Apache-2.0</span>
       )}
       <div className="flex-1" />
-      <XmlButton idle={idle} />
+      {/* While a job runs it cannot be pressed, and a narrow footer needs the room for progress. */}
+      {!(narrow && job) && <XmlButton idle={idle} />}
       <span className="shrink-0 font-mono" data-testid="version">
         {version ? `v${version}` : ''}
       </span>

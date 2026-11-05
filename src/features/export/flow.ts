@@ -29,6 +29,8 @@ export const useExportFlow = create<ExportFlow>()(() => CLOSED);
 export interface ExportGate {
   exportable: number;
   hasRows: boolean;
+  /** Some row's file is exported, and only a revert or a saved grid would export it again. */
+  anyExported: boolean;
   busy: boolean;
   reverting: boolean;
   xmlWriting: boolean;
@@ -43,7 +45,11 @@ export function exportBlock(g: ExportGate): string | null {
   if (g.reverting) return 'A revert is running.';
   if (g.xmlWriting) return 'The rekordbox XML is being written.';
   if (!g.hasRows) return null;
-  if (g.exportable === 0) return 'Nothing new to export. Revert a track, or save its grid, to export it again.';
+  if (g.exportable === 0) {
+    return g.anyExported
+      ? 'Nothing new to export. Revert a track, or save its grid, to export it again.'
+      : 'Analyse the tracks first.';
+  }
   if (g.needsFolder) return 'Choose a folder first.';
   return null;
 }
