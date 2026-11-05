@@ -52,12 +52,18 @@ export interface ExportDifference {
 
 /**
  * How a row's export differs from one made now; `null` when it does not. A file only the XML
- * carries has no gain or depth to differ, only a place to be listed in.
+ * carries has no gain or depth to differ, only a place to be listed in. A file skipped because only
+ * the XML could carry it differs when the XML does.
  */
 export function exportDifference(row: Row, now: ExportNow): ExportDifference | null {
   const was = row.export?.exportedWith;
   if (!was || row.export?.stage === 'processing' || row.export?.stage === 'writing') return null;
-  return differenceOf(was, now, row.export?.action.type === 'xmlOnly');
+  const action = row.export?.action;
+  if (action?.type === 'skip' && action.reason.type === 'nothingToWrite' && was.settings.xml !== now.settings.xml) {
+    const text = was.settings.xml ? 'Exported with the rekordbox XML' : 'Exported without the rekordbox XML';
+    return differenceOf(was, now, false) ?? { kind: 'other', text };
+  }
+  return differenceOf(was, now, action?.type === 'xmlOnly');
 }
 
 function differenceOf(was: ExportedWith, now: ExportNow, xmlOnly: boolean): ExportDifference | null {
@@ -108,7 +114,8 @@ export function againCopy(rows: Row[], now: ExportNow): { stays: string; offer: 
 /**
  * What could make a skipped file writable, as `ExportSkip::cure` says in the engine. `file`: nothing
  * here, it is about the file itself. `grid`: a saved or confirmed grid. `settings`: other export
- * settings. `disk`: what is in the folder, which can change with no word to the app.
+ * settings. `disk`: what is in the folder or goes along in the batch, which can change with no word
+ * to the row.
  */
 export type SkipCure = 'file' | 'grid' | 'settings' | 'disk';
 
@@ -131,6 +138,7 @@ export function skipCure(reason: ExportSkip): SkipCure {
       return 'settings';
     case 'otherFileInFolder':
     case 'copyOfOtherTrack':
+    case 'sameNameInBatch':
       return 'disk';
     default: {
       const unhandled: never = reason;

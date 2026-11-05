@@ -10,7 +10,7 @@ use sc_io::render::{BlockFate, RenderReport};
 use sc_io::txn::{TxnKind, TxnReport};
 
 use super::ProcessDone;
-use super::wording::{GRID_WITHHELD, notice_text, skip_why, xml_only_text};
+use super::wording::{GRID_WITHHELD, notice_text, skip_note, xml_only_text};
 
 /// What the plan says the user should know, in words, for the row's notes.
 fn plan_notes(plan: &ExportPlan) -> Vec<String> {
@@ -53,7 +53,7 @@ pub(crate) fn skipped(outcome: &ExportOutcome, revertible: bool) -> Box<ExportRo
             ExportAction::Skip { reason: *reason },
             Vec::new(),
             false,
-            vec![skip_why(*reason)],
+            vec![skip_note(*reason)],
         ),
         // A batch reports a written file through its other events.
         ExportOutcome::Write { plan } => (

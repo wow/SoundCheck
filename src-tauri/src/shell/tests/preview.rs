@@ -254,6 +254,7 @@ fn confirmed_of(mut req: ExportRequest, preview: &ExportPreview) -> ExportReques
             .map(|r| ConfirmedFile {
                 file_id: r.file_id,
                 identity: r.identity.clone().expect("planned"),
+                same_name: false,
             })
             .collect(),
     });

@@ -16,8 +16,8 @@ fileId: number,
  */
 row: ExportRow | null, 
 /**
- * Why it could not be planned: not analysed yet, changed since it was analysed, or its start
- * could not be read.
+ * Why it could not be planned: not analysed yet, changed since it was analysed, its start
+ * could not be read, or an export in place would refuse it.
  */
 error: IpcError | null, 
 /**

@@ -81,7 +81,7 @@ export function plan(overrides: Partial<Plan> = {}): Plan {
 }
 
 export function analysed(fileId: number, p: Plan = plan(), a: RowAnalysis = analysis()): JobEvent {
-  return { type: 'analysed', jobId: 1, fileId, row: a, plan: p, revision: 0 };
+  return { type: 'analysed', jobId: 1, fileId, row: a, plan: p, revision: 0, exportStale: false };
 }
 
 export function verification(overrides: Partial<ExportVerification> = {}): ExportVerification {

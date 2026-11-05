@@ -12,6 +12,7 @@ use sc_core::{AudioSpec, Bpm, testsig};
 use super::*;
 
 mod commands;
+mod confirm;
 mod export;
 mod grid;
 mod holds;

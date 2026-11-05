@@ -1,8 +1,13 @@
-import type { Cut, ExportPreview, ExportPreviewRow, ExportRow } from '@/lib/ipc';
+import type { Cut, ExportPreview, ExportPreviewRow, ExportRow, IpcError } from '@/lib/ipc';
 import { NEGLIGIBLE_DB } from './text';
 
 function cutSeconds(cut: Cut): number | null {
   return cut.type === 'cut' ? cut.seconds : null;
+}
+
+/** Whether the plan found an export in place would refuse the file, rather than not read it. */
+export function isRefusal(error: IpcError): boolean {
+  return error.kind === 'inPlaceRefused' || error.kind === 'rekordboxUsbExport';
 }
 
 export interface ExportCounts {
@@ -17,6 +22,8 @@ export interface ExportCounts {
   skipped: number;
   /** Files that could not be planned; they are left out of the job. */
   unreadable: number;
+  /** Files an export in place refuses; they are left out of the job too. */
+  refused: number;
   /** The longest cut, seconds. */
   longestCutS: number;
   /** Files that would be written. */
@@ -25,8 +32,10 @@ export interface ExportCounts {
   replacing: number;
   /** Files skipped because the folder holds another file of that name. */
   foreign: number;
-  /** Files skipped because a copy of another track has that name. */
+  /** Files skipped because a copy SoundCheck made from another file has that name. */
   otherTrack: number;
+  /** Files skipped because a file earlier in the batch takes that name. */
+  sameName: number;
   /** Files only the XML carries that are new work: those going along again are not. */
   xmlOnlyNew: number;
 }
@@ -42,16 +51,19 @@ export function countPreview(rows: ExportPreviewRow[], along: number[] = []): Ex
     xmlOnly: 0,
     skipped: 0,
     unreadable: 0,
+    refused: 0,
     longestCutS: 0,
     written: 0,
     replacing: 0,
     foreign: 0,
     otherTrack: 0,
+    sameName: 0,
     xmlOnlyNew: 0,
   };
-  for (const { row, fileId, replacesCopy } of rows) {
+  for (const { row, error, fileId, replacesCopy } of rows) {
     if (!row) {
-      c.unreadable += 1;
+      if (error && isRefusal(error)) c.refused += 1;
+      else c.unreadable += 1;
       continue;
     }
     switch (row.action.type) {
@@ -80,6 +92,7 @@ export function countPreview(rows: ExportPreviewRow[], along: number[] = []): Ex
         c.skipped += 1;
         if (row.action.reason.type === 'otherFileInFolder') c.foreign += 1;
         if (row.action.reason.type === 'copyOfOtherTrack') c.otherTrack += 1;
+        if (row.action.reason.type === 'sameNameInBatch') c.sameName += 1;
         break;
     }
   }
@@ -106,6 +119,7 @@ export function summaryLine(
     c.xmlOnly > 0 && `${c.xmlOnly} XML only`,
     c.skipped > 0 && `${c.skipped} skipped`,
     c.unreadable > 0 && `${c.unreadable} unreadable`,
+    c.refused > 0 && `${c.refused} refused`,
   ].filter(Boolean);
   const files = `${c.files} ${c.files === 1 ? 'file' : 'files'}`;
   const where = preview.backupFolder

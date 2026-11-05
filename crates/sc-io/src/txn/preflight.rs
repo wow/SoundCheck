@@ -22,7 +22,7 @@ use sc_core::{Error, InPlaceRefusal, RenderRequest, Result};
 
 use super::fsx::io_err;
 use super::meta::{effective_uid, has_acl, is_locked, owned_by_other};
-use super::volume::{Volume, VolumeProvider};
+use super::volume::{SystemVolumes, Volume, VolumeProvider};
 use crate::{flac, iff};
 
 /// Free space every volume written to keeps after the write, bytes (64 MiB).
@@ -327,6 +327,20 @@ pub(crate) fn check_in_place(
         return Err(refuse(path, InPlaceRefusal::ReadOnlyFolder));
     }
     Ok(volume)
+}
+
+/// What a write in place of `path` would be refused with, for saying so before it is asked for:
+/// the refusals [`crate::txn::apply_in_place`] starts with, on the system's volumes. It only looks;
+/// free space, which depends on the output, is left to the write.
+///
+/// # Errors
+/// [`Error::InPlaceRefused`], [`Error::RekordboxUsbExport`], [`Error::InvalidArgument`] for a file
+/// inside `backup_root` or not a regular file, [`Error::Io`].
+pub fn check_writable_in_place(path: &Path, backup_root: &Path) -> Result<()> {
+    let (full, dir, _) = resolve(path)?;
+    check_outside_backups(&full, backup_root)?;
+    check_in_place(&full, &dir, &SystemVolumes)?;
+    Ok(())
 }
 
 /// [`Error::RekordboxUsbExport`] when `volume` is a rekordbox USB export.

@@ -85,3 +85,22 @@ describe('the confirm step numbers', () => {
     expect(shortPath('/Volumes/USB/Music')).toBe('/Volumes/USB/Music');
   });
 });
+
+describe('rows an export in place refuses', () => {
+  const refused = (kind: 'inPlaceRefused' | 'rekordboxUsbExport' | 'io', fileId: number): ExportPreviewRow => ({
+    fileId,
+    row: null,
+    error: { kind, message: 'no', fileId },
+    identity: null,
+    replacesCopy: false,
+  });
+
+  it('are counted as refused, not as unreadable', () => {
+    const rows = [refused('inPlaceRefused', 1), refused('rekordboxUsbExport', 2), refused('io', 3)];
+    const counts = countPreview(rows);
+    expect(counts.refused).toBe(2);
+    expect(counts.unreadable).toBe(1);
+    expect(counts.written).toBe(0);
+    expect(summaryLine(rows, { backupFolder: '/b' }, null)).toBe('3 files: 1 unreadable, 2 refused; backups in /b');
+  });
+});

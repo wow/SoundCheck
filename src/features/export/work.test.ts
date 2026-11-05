@@ -186,3 +186,46 @@ describe('what the confirm step says about rows that stay', () => {
     });
   });
 });
+
+describe('a row skipped because only the XML could carry its grid', () => {
+  const nothing = (w: ExportedWith) =>
+    row(
+      exportRow({
+        stage: 'skipped',
+        action: { type: 'skip', reason: { type: 'nothingToWrite', reason: { type: 'gridOnlyFlac' } } },
+        exportedWith: w,
+      }),
+    );
+  const xmlOff = { ...same, settings: { ...same.settings, xml: false } };
+
+  it('comes back when the XML is turned on', () => {
+    expect(exportDifference(nothing(xmlOff), now)?.text).toBe('Exported without the rekordbox XML');
+    const found = work([nothing(xmlOff)]);
+    expect(found.retry).toEqual([1]);
+    expect(found.along).toEqual([]);
+  });
+
+  it('goes along while the XML stays off', () => {
+    const off = { ...now, settings: { ...now.settings, xml: false } };
+    expect(exportDifference(nothing(xmlOff), off)).toBeNull();
+    expect(exportWork([nothing(xmlOff)], [1], off).along).toEqual([1]);
+  });
+
+  it('says the difference that matters most when there is another', () => {
+    const elsewhere = { ...xmlOff, outDir: '/Users/dj/Old' };
+    expect(exportDifference(nothing(elsewhere), now)?.text).toBe('Exported to ~/Old');
+  });
+
+  it('the XML does not bring back a row skipped for anything else', () => {
+    expect(exportDifference(skip(xmlOff), now)).toBeNull();
+    expect(exportDifference(done(xmlOff), now)).toBeNull();
+  });
+});
+
+describe('a name taken in the batch', () => {
+  it('is planned again, since what else goes along can change with no word to the row', () => {
+    expect(skipCure({ type: 'sameNameInBatch' })).toBe('disk');
+    const taken = row(exportRow({ stage: 'skipped', action: { type: 'skip', reason: { type: 'sameNameInBatch' } }, exportedWith: same }));
+    expect(work([taken]).retry).toEqual([1]);
+  });
+});

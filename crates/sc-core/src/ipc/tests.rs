@@ -99,6 +99,7 @@ fn a_worst_case_analysed_row_stays_within_budget() {
         row: Box::new(row),
         plan,
         revision: u32::MAX,
+        export_stale: false,
     };
     assert!(json_len(&ev) <= MAX_ROW_BYTES, "{} bytes", json_len(&ev));
 }

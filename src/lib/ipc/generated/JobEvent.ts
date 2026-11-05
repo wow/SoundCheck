@@ -55,7 +55,11 @@ plan: Plan,
 /**
  * The settings revision `plan` was decided with; a newer replan wins.
  */
-revision: number, } | { "type": "failed", 
+revision: number, 
+/**
+ * The file's export no longer stands for it, as the session now says.
+ */
+exportStale: boolean, } | { "type": "failed", 
 /**
  * The job.
  */

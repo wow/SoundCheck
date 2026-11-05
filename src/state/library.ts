@@ -169,9 +169,9 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
       row: update.row,
       plan: update.plan,
       revision: update.revision,
+      // The engine says whether the saved grid differs from what the export wrote.
+      exportStale: update.exportStale,
     });
-    // The engine says whether the saved grid differs from what the export wrote.
-    set({ rows: one(get().rows, update.fileId, () => ({ exportStale: update.exportStale })) });
   },
   applyEvent(event) {
     const { rows, job } = get();
@@ -203,8 +203,8 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
             return {
               state: restingState(plan, row.export),
               progress: 1,
-              // Read again: what its export wrote was made of what the file was before.
-              ...(row.changedOnDisk && row.export ? { exportStale: true } : {}),
+              // The engine says whether what its export wrote still stands for the file.
+              exportStale: event.exportStale,
               changedOnDisk: false,
               analysis: event.row,
               plan,
@@ -335,6 +335,14 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
   },
   markChanged(fileIds) {
     set({ rows: patchRows(get().rows, fileIds.map((id) => [id, () => ({ changedOnDisk: true })])) });
+  },
+  markRefused(refusals) {
+    set({
+      rows: patchRows(
+        get().rows,
+        refusals.map(({ fileId, error }) => [fileId, () => ({ state: 'failed', progress: 0, exportError: error })]),
+      ),
+    });
   },
   setNotice(notice) {
     set({ notice });

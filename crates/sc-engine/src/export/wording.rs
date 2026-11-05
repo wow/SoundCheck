@@ -1,5 +1,6 @@
 //! What a plan did, in words: the grid report's notes, the command line's lines and the row
-//! notes the app shows. Only the "why"; what to do about it depends on where it is shown.
+//! notes the app shows. [`skip_why`] is only the "why", since what to do about it depends on where
+//! it is shown; [`skip_note`] is the app's row.
 
 use sc_core::export::{ExportNotice, ExportSkip, XmlOnlyReason};
 
@@ -47,6 +48,18 @@ pub fn xml_only_text(reason: XmlOnlyReason) -> String {
         XmlOnlyReason::NoTagToWriteGridOnly => {
             "grid only, and the file has no tag to write into".to_owned()
         }
+    }
+}
+
+/// A skipped row's note in the app: why, with what to do when no other part of the app says it.
+#[must_use]
+pub fn skip_note(reason: ExportSkip) -> String {
+    let why = skip_why(reason);
+    match reason {
+        ExportSkip::CopyOfOtherTrack | ExportSkip::SameNameInBatch => {
+            format!("{why}; rename one, or choose another folder")
+        }
+        _ => why,
     }
 }
 
@@ -108,7 +121,12 @@ pub fn skip_why(reason: ExportSkip) -> String {
                 .to_owned()
         }
         ExportSkip::CopyOfOtherTrack => {
-            "a copy of another track already has this name in the folder".to_owned()
+            "the folder has a copy of this name that SoundCheck made from another file, or from \
+             this one before it was moved and changed"
+                .to_owned()
+        }
+        ExportSkip::SameNameInBatch => {
+            "a file earlier in this export takes this name in the folder".to_owned()
         }
         ExportSkip::GridNeedsReview => {
             "grid only, and its grid needs review, so it is not written and there is nothing \
@@ -117,3 +135,6 @@ pub fn skip_why(reason: ExportSkip) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

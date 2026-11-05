@@ -426,6 +426,8 @@ pub enum JobEvent {
         plan: Plan,
         /// The settings revision `plan` was decided with; a newer replan wins.
         revision: u32,
+        /// The file's export no longer stands for it, as the session now says.
+        export_stale: bool,
     },
     /// The file could not be analysed; the job goes on.
     Failed {

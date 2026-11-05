@@ -6,7 +6,7 @@ use std::time::Duration;
 use sc_core::ipc::{IpcError, JobEvent, JobId};
 
 use super::{Session, row_of};
-use crate::analyze::CacheStatus;
+use crate::analyze::{AnalyzeReport, CacheStatus};
 use crate::batch::EngineEvent;
 use crate::decide::decide;
 use crate::edits::EditState;
@@ -29,35 +29,7 @@ impl Session {
                 file_id,
                 report,
                 edit,
-            } => {
-                let identity = report.identity;
-                let bpm_range = report.bpm_range;
-                let mut record = report.record;
-                record.evidence = None;
-                let codec = self
-                    .files
-                    .get(&file_id)
-                    .map_or(sc_core::plan::Codec::Other, |t| t.entry.info.codec);
-                let row = Box::new(row_of(&record, edit, report.cache == CacheStatus::Hit));
-                let plan = decide(&record, codec, &self.settings, edit.confirmed);
-                if let Some(t) = self.files.get_mut(&file_id) {
-                    t.record = Some(record);
-                    t.edit = edit;
-                    // The file changed since what stands was made of it.
-                    if t.export.is_some() && t.identity.is_some() && identity != t.identity {
-                        t.export_stale = true;
-                    }
-                    t.identity = identity;
-                    t.analysed_range = Some(bpm_range);
-                }
-                JobEvent::Analysed {
-                    job_id,
-                    file_id,
-                    row,
-                    plan,
-                    revision: self.revision,
-                }
-            }
+            } => self.on_analysed(job_id, file_id, *report, edit),
             EngineEvent::Failed { file_id, error } => {
                 self.end_running_export(file_id);
                 failed_event(job_id, file_id, error)
@@ -119,6 +91,46 @@ impl Session {
             }
             EngineEvent::Done { file_id, done } => return self.on_done(job_id, file_id, *done),
         })
+    }
+
+    /// A file is analysed: the row and its plan, and whether its export still stands for it.
+    fn on_analysed(
+        &mut self,
+        job_id: JobId,
+        file_id: u32,
+        report: AnalyzeReport,
+        edit: EditState,
+    ) -> JobEvent {
+        let identity = report.identity;
+        let bpm_range = report.bpm_range;
+        let mut record = report.record;
+        record.evidence = None;
+        let codec = self
+            .files
+            .get(&file_id)
+            .map_or(sc_core::plan::Codec::Other, |t| t.entry.info.codec);
+        let row = Box::new(row_of(&record, edit, report.cache == CacheStatus::Hit));
+        let plan = decide(&record, codec, &self.settings, edit.confirmed);
+        let mut export_stale = false;
+        if let Some(t) = self.files.get_mut(&file_id) {
+            t.record = Some(record);
+            t.edit = edit;
+            // The file changed since what stands was made of it.
+            if t.export.is_some() && t.identity.is_some() && identity != t.identity {
+                t.export_stale = true;
+            }
+            t.identity = identity;
+            t.analysed_range = Some(bpm_range);
+            export_stale = t.export_stale;
+        }
+        JobEvent::Analysed {
+            job_id,
+            file_id,
+            row,
+            plan,
+            revision: self.revision,
+            export_stale,
+        }
     }
 
     /// A file's export ended without changing it: its last export stands.

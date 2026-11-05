@@ -145,6 +145,7 @@ fn a_skip_says_what_could_cure_it() {
         ),
         (ExportSkip::OtherFileInFolder, SkipCure::Disk),
         (ExportSkip::CopyOfOtherTrack, SkipCure::Disk),
+        (ExportSkip::SameNameInBatch, SkipCure::Disk),
     ];
     for (skip, cure) in cases {
         assert_eq!(skip.cure(), cure, "{skip:?}");

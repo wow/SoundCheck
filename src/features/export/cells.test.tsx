@@ -121,6 +121,17 @@ describe('the Action column of an export', () => {
     expect(screen.getByText('The file was not changed')).toBeInTheDocument();
   });
 
+  it('a row an export in place would refuse says why, once the confirm step is closed', () => {
+    useLibrary.getState().add([entry(1)]);
+    useLibrary.getState().markRefused([
+      { fileId: 1, error: { kind: 'inPlaceRefused', message: '/music/Track 1.wav is a symbolic link', fileId: 1 } },
+    ]);
+    const refused = useLibrary.getState().rows[1] as Row;
+    render(<ActionCell row={{ ...refused, plan: plan(), analysis: analysis() }} bpmRange={[70, 180]} />);
+    expect(screen.getByText(/is a symbolic link/)).toBeInTheDocument();
+    expect(screen.getByText('The file was not changed')).toBeInTheDocument();
+  });
+
   it('before any export it still shows the plan', () => {
     render(<ActionCell row={row({ state: 'analysed' })} bpmRange={[70, 180]} />);
     expect(screen.getByText('Gain −3.2 dB')).toBeInTheDocument();
@@ -260,6 +271,21 @@ describe('a row exported with other settings', () => {
     );
     expect(screen.getByText('Exported at -11.0')).toBeInTheDocument();
     expect(screen.queryByText(/^Verified/)).toBeNull();
+  });
+
+  it('a skipped row keeps its reason, never saying how it was exported', () => {
+    const xmlOff = { ...now, settings: { ...now.settings, xml: false } };
+    const nothing = exportRow({
+      stage: 'skipped',
+      action: { type: 'skip', reason: { type: 'nothingToWrite', reason: { type: 'gridOnlyFlac' } } },
+      positionsShift: false,
+      exportedWith: xmlOff,
+      notes: ['only the rekordbox XML could carry its grid, and the XML is off'],
+    });
+    render(<ActionCell row={row({ state: 'skipped', export: nothing })} bpmRange={[70, 180]} now={now} />);
+    expect(screen.getByText('Skipped')).toBeInTheDocument();
+    expect(screen.getByText('Only the rekordbox XML could carry its grid, and the XML is off')).toBeInTheDocument();
+    expect(screen.queryByText(/^Exported/)).toBeNull();
   });
 
   it('says nothing when it matches, and shows what was verified', () => {

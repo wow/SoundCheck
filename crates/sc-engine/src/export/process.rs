@@ -64,8 +64,9 @@ pub struct ProcessSettings {
     /// Each file as the user confirmed it, by id: a file that is no longer that one fails before
     /// anything is written. `None` checks nothing.
     pub confirmed: Option<BTreeMap<u32, String>>,
-    /// Files whose copy would take a name an earlier file of this batch takes: skipped, the first
-    /// in the list being written. By id.
+    /// Files skipped because a file earlier in the batch writes under the name theirs would have,
+    /// by id: what the confirm step decided, when there was one, since only a row that plans a
+    /// write takes a name and the plans are known there.
     pub same_name: BTreeSet<u32>,
 }
 
@@ -285,8 +286,8 @@ fn check_confirmed(file_id: u32, path: &Path, settings: &ProcessSettings) -> Res
     })
 }
 
-/// `outcome`, given what is at the path a copy would take in `out_dir`, and whether an earlier file
-/// of the batch takes that name (`same_name`): anything of that name but this file's own earlier
+/// `outcome`, given what is at the path a copy would take in `out_dir`, and whether a file earlier
+/// in the batch writes under that name (`same_name`): anything of that name but this file's own earlier
 /// copy keeps the file from being written. Also says whether the write replaces that copy.
 ///
 /// # Errors
@@ -304,7 +305,7 @@ pub(super) fn gate_folder(
     };
     let skip = |reason| (ExportOutcome::Skip { reason }, false);
     if same_name {
-        return Ok(skip(ExportSkip::CopyOfOtherTrack));
+        return Ok(skip(ExportSkip::SameNameInBatch));
     }
     Ok(match copy_at(&dir.join(name), path)? {
         CopyAt::Nothing => (outcome, false),

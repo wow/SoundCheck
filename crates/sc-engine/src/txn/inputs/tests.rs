@@ -106,3 +106,16 @@ fn a_name_is_compared_as_the_volume_compares_it() {
         super::name_key("S\u{327}arkı.wav", false)
     );
 }
+
+#[test]
+fn a_name_is_claimed_once_as_the_folder_compares_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut names = super::FolderNames::new(&dir.path().join("not yet"));
+    let folds = sc_io::txn::folder_folds_case(&dir.path().join("not yet"));
+    assert!(names.claim(std::ffi::OsStr::new("Track.wav")));
+    assert!(!names.claim(std::ffi::OsStr::new("Track.wav")), "taken");
+    assert_eq!(names.claim(std::ffi::OsStr::new("TRACK.wav")), !folds);
+    // The same name in another Unicode form, on any volume.
+    assert!(names.claim(std::ffi::OsStr::new("caf\u{e9}.wav")));
+    assert!(!names.claim(std::ffi::OsStr::new("cafe\u{301}.wav")));
+}
