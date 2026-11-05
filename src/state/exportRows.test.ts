@@ -163,6 +163,17 @@ describe('rows during an export', () => {
   });
 });
 
+describe('a row outside the running batch', () => {
+  it('keeps its saved grid and its own analysis', () => {
+    exporting(1);
+    lib().add([entry(2)]);
+    lib().applyEvent(analysed(2));
+    expect(row(2).state).toBe('analysed');
+    lib().applyRowUpdate({ ...update(2), row: analysis({ edited: true }) });
+    expect(row(2).analysis?.edited).toBe(true);
+  });
+});
+
 describe('exportDone by case', () => {
   it('in place with an update: the row is the written file', () => {
     exporting(1);

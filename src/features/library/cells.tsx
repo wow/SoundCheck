@@ -355,7 +355,7 @@ export function ActionCell({
         {action.main}
       </div>
       {detail && (
-        <div className="truncate text-[11px] text-fg-2" title={detail}>
+        <div className="truncate text-[12px] text-fg-2" title={detail}>
           {detail}
         </div>
       )}

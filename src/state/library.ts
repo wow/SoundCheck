@@ -161,8 +161,9 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
   },
   applyEvent(event) {
     const { rows, job } = get();
-    // A file event of a running export; `job` is null once the list was cleared.
-    if (job?.kind === 'export' && 'fileId' in event) {
+    // A file event of a running export; `job` is null once the list was cleared. A row outside the
+    // batch (added since, its grid saved meanwhile) goes on as any other.
+    if (job?.kind === 'export' && 'fileId' in event && job.fileIds.includes(event.fileId)) {
       set({
         rows: one(rows, event.fileId, (row) => exportPatch(row, event)),
         job: job.jobId === null ? { ...job, jobId: event.jobId } : job,
