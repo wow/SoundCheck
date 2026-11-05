@@ -7,6 +7,7 @@
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { gridCommand } from './mockGrid';
 import { exportCommand } from './mockExport';
+import { mockRecovery, recoveryDemoOf, type RecoveryDemo } from './mockRecovery';
 import type { Channel } from '@tauri-apps/api/core';
 import type {
   Codec,
@@ -94,7 +95,8 @@ function fileEntry(s: Synthetic, folder: string, fileId: number): FileEntry {
       album: null,
       djUnsafe: s.float ? 'float' : null,
       serato: s.serato ?? false,
-      seratoTags: s.serato ? ['markers', 'beatGrid'] : [],
+      // Analysed in Serato: its auto gain too.
+      seratoTags: s.serato ? ['markers', 'beatGrid', 'autotags'] : [],
       seratoUnknown: false,
       soundcheck: null,
       soundcheckUnreadable: null,
@@ -204,7 +206,9 @@ function runJob(jobId: number, fileIds: number[], channel: unknown) {
 /** Where the mock keeps the monitor volume between reloads. */
 const MONITOR_KEY = 'soundcheck-mock-monitor';
 
-export function installMockBackend(): void {
+/** `recovery`: which start-up recovery to show (see `mockRecovery.ts`); the page's URL by default. */
+export function installMockBackend(recovery: RecoveryDemo = recoveryDemoOf(globalThis.location?.search ?? '')): void {
+  const recovered = mockRecovery(recovery);
   const session = {
     decide: () => settings,
     analysed,
@@ -247,7 +251,9 @@ export function installMockBackend(): void {
       case 'restore_session':
         return { revision, rows: [], runningJobs: [], artefacts: null, artefactsFailed: null, lastExport: null };
       case 'recovery_status':
-        return { state: 'finished', recovered: [], pending: [] };
+        return recovered.status();
+      case 'forget_pending':
+        return recovered.forget(a.txn as string);
       case 'clear_session':
         analysed.clear();
         entries.clear();
