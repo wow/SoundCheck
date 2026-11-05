@@ -255,6 +255,32 @@ fn the_hold_is_released_after_a_failed_or_cancelled_job_before_finished_goes_out
 }
 
 #[test]
+fn a_caller_that_has_seen_finished_finds_the_files_free() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let at_finished = shell.clone();
+    let path = wav.clone();
+    let id = ids[0];
+    shell
+        .export(request(&ids, prepare(), None), move |e| {
+            if matches!(e, JobEvent::Finished { .. }) {
+                // Asked in the very event, while the job's thread still runs.
+                let free = at_finished
+                    .inner
+                    .holds
+                    .acquire(&[(id, path.as_path())], HoldKind::Revert)
+                    .is_ok();
+                tx.send(free).unwrap();
+            }
+        })
+        .unwrap();
+    assert!(rx.recv_timeout(Duration::from_secs(60)).unwrap());
+}
+
+#[test]
 fn a_job_that_panics_releases_its_files() {
     let lib = Lib::new();
     let wav = lib.tone("a.wav", 0.1);

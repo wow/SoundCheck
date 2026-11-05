@@ -87,9 +87,10 @@ export function analyze(req: AnalyzeRequest, onEvent: (event: JobEvent) => void)
 
 /**
  * Starts exporting; resolves to the job id at once while events arrive on `onEvent`, `finished`
- * last. Rejects with `recoveryRunning` while the start-up recovery runs, with `listedTwice` or
- * `sameOutputName` for a file a request names twice, and with `invalidArgument` for settings out
- * of their limits. Cancel with `cancelJob`.
+ * last. Rejects with `recoveryRunning` while the start-up recovery runs, with `busy` while another
+ * job or command is working on a file, with `listedTwice` or `sameOutputName` for a file a request
+ * names twice, and with `invalidArgument` for settings out of their limits. Cancel with
+ * `cancelJob`.
  */
 export function exportFiles(req: ExportRequest, onEvent: (event: JobEvent) => void): Promise<number> {
   const channel = new Channel<JobEvent>();
@@ -99,7 +100,8 @@ export function exportFiles(req: ExportRequest, onEvent: (event: JobEvent) => vo
 
 /**
  * Puts a file's original back, analyses it and refreshes its row. Rejects with `nothingToUndo`
- * for a file with no change to revert and `fileChanged` for one edited since it was written.
+ * for a file with no change to revert, `fileChanged` for one edited since it was written and
+ * `busy` while another job or command is working on it.
  */
 export function revertFile(fileId: number): Promise<RevertResult> {
   return invoke<RevertResult>('revert_file', { fileId });
