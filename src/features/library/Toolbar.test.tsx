@@ -4,6 +4,7 @@ import App from '@/App';
 import { useLibrary } from '@/state/library';
 import { usePanels } from '@/state/panels';
 import { entry } from '@/test/fixtures';
+import { Toolbar } from './Toolbar';
 
 /** A window narrower than 1000 px. */
 function narrowWindow() {

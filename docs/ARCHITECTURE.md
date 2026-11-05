@@ -157,7 +157,7 @@ RENDER (streamed)
              declared by ID3v2.3/2.4 plus iTunes' own, and labels with `:`, refused); `undo_file`; `recover_at_start(root) -> RecoveryStatus` (never fails: an unreadable journal is `failed`), which the
              desktop shell runs on a background thread at start behind a `RecoveryGate` guard, keeping the result for the `recovery_status` command and logging it, and which
              `sc-cli process`/`apply`/`undo` run before writing; `collect_audio_files` never lists a file in the backup root (resolved once per call);
-             copy-to-folder mode: same steps, no backup, never replaces a file. Crash matrix behind the test-only `crash-test` feature
+             copy-to-folder mode: same steps, no backup, replaces only a copy SoundCheck wrote there when asked to and its sidecar proves it. Crash matrix behind the test-only `crash-test` feature
   batch artefacts (`sc_engine::export::artefacts`): one BatchRow per file in the order given (Written from the plan, the TxnReport and ProcessDone.grid;
              XmlOnly/Skipped from EngineEvent::ExportSkipped{outcome, duration, codec, grid}; Failed; Exported from a sidecar whose output hash still matches;
              Analysed), each with an XmlGrid{Grid{ExportedGrid, sample_rate} | NeedsReview | Absent} in the file's samples

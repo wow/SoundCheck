@@ -283,3 +283,59 @@ fn out_and_in_place_are_one_choice() {
     assert_eq!(run.code, Some(2), "{}", run.text());
     assert!(!out.exists());
 }
+
+#[test]
+fn a_second_export_to_one_folder_replaces_its_copy_and_keeps_the_rest_of_the_report() {
+    let lib = Library::new();
+    let a = tone(&lib, "a.wav", 44_100);
+    let b = tone(&lib, "b.wav", 44_100);
+    let out = lib.base.join("out");
+    let batch = |file: &Path, target: &str| {
+        process(
+            &lib,
+            &[
+                arg(file),
+                "--batch-mode",
+                "prepare",
+                "--out",
+                arg(&out),
+                "--target",
+                target,
+            ],
+        )
+    };
+    let first = batch(&a, "-11");
+    assert!(first.ok, "{}", first.text());
+    let copy = out.join("a.wav");
+    let before = bytes(&copy);
+    let source = bytes(&a);
+
+    let other = batch(&b, "-11");
+    assert!(other.ok, "{}", other.text());
+    let again = batch(&a, "-16");
+    assert!(again.ok, "{}", again.text());
+
+    assert_ne!(bytes(&copy), before, "the copy was replaced");
+    assert_eq!(bytes(&a), source, "the source is untouched");
+    let report = String::from_utf8(bytes(&out.join("grid-report.csv"))).expect("text");
+    assert!(
+        report.contains("a.wav") && report.contains("b.wav"),
+        "{report}"
+    );
+}
+
+#[test]
+fn a_file_in_the_folder_it_did_not_write_is_left_alone() {
+    let lib = Library::new();
+    let a = tone(&lib, "a.wav", 44_100);
+    let out = lib.base.join("out");
+    std::fs::create_dir_all(&out).expect("folder");
+    std::fs::write(out.join("a.wav"), b"someone else's").expect("written");
+    let run = process(
+        &lib,
+        &[arg(&a), "--batch-mode", "prepare", "--out", arg(&out)],
+    );
+    assert_eq!(bytes(&out.join("a.wav")), b"someone else's");
+    assert!(run.stdout.contains("skipped"), "{}", run.text());
+    assert!(run.stdout.contains("move that file away"), "{}", run.text());
+}

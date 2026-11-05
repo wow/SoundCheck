@@ -1,7 +1,7 @@
 import { Loader2 } from 'lucide-react';
 import { useSelector } from '@xstate/react';
 import { Modal } from '@/components/Modal';
-import { sentence, type DecideSettings, type ExportPreviewRow, type ExportRequest } from '@/lib/ipc';
+import { rowErrorCopy, sentence, type DecideSettings, type ExportPreviewRow, type ExportRequest } from '@/lib/ipc';
 import { displayTitle, level } from '@/lib/format';
 import { pipeline } from '@/features/pipeline/actions';
 import { Toggle } from '@/features/settings/controls';
@@ -50,7 +50,10 @@ function Particulars({ rows: planned }: { rows: ExportPreviewRow[] }) {
   const items = planned.flatMap(({ fileId, row, error }) => {
     const entry = rows[fileId]?.entry;
     const name = entry ? displayTitle(entry.info, entry.path) : `Track ${fileId}`;
-    if (error) return [{ fileId, name, head: 'Cannot be planned', text: sentence(error.message) }];
+    if (error) {
+      const text = entry ? rowErrorCopy(error, entry.path) : sentence(error.message);
+      return [{ fileId, name, head: 'Cannot be planned', text }];
+    }
     if (!row) return [];
     const text = sentence(row.notes.join(' '));
     if (row.action.type === 'skip') return [{ fileId, name, head: 'Skipped', text }];

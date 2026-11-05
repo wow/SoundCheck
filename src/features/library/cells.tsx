@@ -1,5 +1,5 @@
 import { Ear } from 'lucide-react';
-import { errorCopy, type Codec, type Confidence } from '@/lib/ipc';
+import { rowErrorCopy, type Codec, type Confidence } from '@/lib/ipc';
 import {
   CODEC_LABEL,
   DJ_UNSAFE_TEXT,
@@ -340,7 +340,7 @@ export function ActionCell({
     return (
       <div className="min-w-0">
         <div className="truncate text-[12.5px] font-medium text-err" title={row.exportError?.message}>
-          {row.exportError ? errorCopy(row.exportError) : 'Could not export'}
+          {row.exportError ? rowErrorCopy(row.exportError, row.entry.path) : 'Could not export'}
         </div>
         <div className="truncate text-[12px] text-fg-2">The file was not changed</div>
       </div>

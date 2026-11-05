@@ -1,4 +1,4 @@
-import { errorCopy, ipcErrorOf } from './errors';
+import { errorCopy, ipcErrorOf, rowErrorCopy } from './errors';
 
 describe('rejected commands', () => {
   it('keeps the typed error Rust sent, with its kind', () => {
@@ -22,5 +22,11 @@ describe('rejected commands', () => {
     expect(recovery).not.toContain('raw');
     expect(errorCopy({ kind: 'corrupt', message: 'truncated', fileId: 1 })).toBe('Truncated');
     expect(errorCopy({ kind: 'settingsChanged', message: 'raw', fileId: null })).toMatch(/Press Export again/);
+  });
+
+  it('on a file\'s own row, says it of this file rather than its long path', () => {
+    const error = { kind: 'fileChanged' as const, message: '/music/a.wav changed since you confirmed the export', fileId: 1 };
+    expect(rowErrorCopy(error, '/music/a.wav')).toBe('This file changed since you confirmed the export');
+    expect(rowErrorCopy(error, '/other.wav')).toBe('/music/a.wav changed since you confirmed the export');
   });
 });

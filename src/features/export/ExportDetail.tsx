@@ -1,5 +1,5 @@
 import { useLibrary, isLocked, type Row } from '@/state/library';
-import { errorCopy, sentence } from '@/lib/ipc';
+import { rowErrorCopy, sentence } from '@/lib/ipc';
 import { useRecovery } from '@/state/recovery';
 import { revert, revertBlock } from './actions';
 import { GridCheckBadge } from './ExportCells';
@@ -19,7 +19,7 @@ function Told({ row, now }: { row: Row; now: ExportNow }) {
     return (
       <>
         <Line tone="font-medium text-err">Failed</Line>
-        <Line tone="text-fg-1">{errorCopy(row.exportError)}</Line>
+        <Line tone="text-fg-1">{rowErrorCopy(row.exportError, row.entry.path)}</Line>
         <Line>The file was not changed.</Line>
       </>
     );
@@ -92,7 +92,7 @@ export function ExportDetail() {
             Reverting: restoring the original and analysing it again…
           </p>
         )}
-        {row.revertError && <Line tone="text-err">{errorCopy(row.revertError)}</Line>}
+        {row.revertError && <Line tone="text-err">{rowErrorCopy(row.revertError, row.entry.path)}</Line>}
         {row.revertNotes?.map((note) => (
           <Line key={note}>{note}</Line>
         ))}

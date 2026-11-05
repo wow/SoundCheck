@@ -34,3 +34,9 @@ export function errorCopy(error: IpcError): string {
       return sentence(error.message);
   }
 }
+
+/** {@link errorCopy} on a file's own row, where its long path would push out what it says. */
+export function rowErrorCopy(error: IpcError, path: string): string {
+  const copy = errorCopy(error);
+  return copy.startsWith(path) ? `This file${copy.slice(path.length)}` : copy;
+}
