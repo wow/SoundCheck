@@ -374,7 +374,7 @@ fn serato_names_map_to_kinds() {
 fn worst_case_export_row() -> ExportRow {
     use crate::SampleIndex;
     use crate::analysis::Meter;
-    use crate::export::{Cut, ExportNotice, GridCheck};
+    use crate::export::{Cut, ExportNotice, GridCheck, GridDisagreement};
     let long = |unit: &str| unit.repeat(2000);
     ExportRow {
         stage: JobStage::Processing,
@@ -415,8 +415,10 @@ fn worst_case_export_row() -> ExportRow {
                 MAX_STALE_TAGS_JSON_BYTES,
             ),
         }),
-        grid_check: Some(GridCheck::MeterDiffers {
-            found: Meter::ten_eight(),
+        grid_check: Some(GridCheck::Advisory {
+            disagreement: GridDisagreement::MeterDiffers {
+                found: Meter::ten_eight(),
+            },
         }),
         edit_carried: true,
         revertible: true,

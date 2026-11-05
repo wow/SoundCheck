@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use sc_core::Seconds;
 use sc_core::export::{
-    Cut, ExportNotice, ExportOutcome, ExportPlan, ExportSkip, GridCheck, GridCheckSkip, XmlGrid,
-    XmlTrackInfo,
+    Cut, ExportNotice, ExportOutcome, ExportPlan, ExportSkip, GridCheck, GridCheckSkip,
+    GridDisagreement, XmlGrid, XmlTrackInfo,
 };
 use sc_core::ipc::{ExportRow, JobStage, MAX_ROW_BYTES};
 use sc_io::render::RenderReport;
@@ -156,4 +156,44 @@ fn an_earlier_change_stays_revertible_through_a_skip_or_a_copy() {
     );
     let in_place = report(TxnKind::InPlace, vec![], vec![]);
     assert!(written(planned(&plan(), false), &in_place).revertible);
+}
+
+#[test]
+fn the_row_tells_the_grid_check_outcomes_apart_by_type_alone() {
+    let row_with = |grid_check: GridCheck| {
+        let written = written(
+            planned(&plan(), true),
+            &report(TxnKind::InPlace, vec![], vec![]),
+        );
+        let row = done(
+            written,
+            &ProcessDone {
+                grid_check,
+                ..process_done(vec![])
+            },
+        );
+        serde_json::to_value(&row).expect("serialisable")["gridCheck"].clone()
+    };
+    let advisory = row_with(GridCheck::Advisory {
+        disagreement: GridDisagreement::OffBy {
+            offset_ms: -416.7,
+            bpm_diff: 0.0,
+        },
+    });
+    assert_eq!(advisory["result"], "advisory");
+    assert_eq!(advisory["disagreement"]["kind"], "offBy");
+    assert_eq!(advisory["disagreement"]["offsetMs"], -416.7);
+    let check_bar_1 = row_with(GridCheck::CheckBar1 {
+        offset_ms: -416.7,
+        bpm_diff: 0.0,
+        beats: -1,
+    });
+    assert_eq!(check_bar_1["result"], "checkBar1");
+    assert_eq!(check_bar_1["beats"], -1);
+    let reported = row_with(GridCheck::OffBy {
+        offset_ms: 7.2,
+        bpm_diff: 0.0,
+    });
+    assert_eq!(reported["result"], "offBy");
+    assert_eq!(reported["offsetMs"], 7.2);
 }
