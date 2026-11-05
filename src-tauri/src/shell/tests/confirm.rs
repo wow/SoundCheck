@@ -301,6 +301,8 @@ fn regression_the_plan_says_what_an_export_in_place_would_refuse_and_changes_not
     );
 }
 
+// `chflags` and the flags it sets are macOS only.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_locked_file_is_refused_in_the_plan() {
     let run = |args: &[&str]| {
