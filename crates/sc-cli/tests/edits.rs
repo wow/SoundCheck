@@ -202,7 +202,7 @@ fn a_confirmed_start_fit_is_labelled_as_one() {
 }
 
 /// How `process` opens a disagreement on a confirmed grid.
-const ADVISORY: &str = "the analysis reads this differently; your confirmed grid was written: ";
+const ADVISORY: &str = "the analysis reads this differently; your confirmed grid was kept: ";
 
 /// A plain click track's bar 1 is close to a tie for the beat model, so whether the written file's
 /// analysis agrees may differ across platforms: only what it may not read as is asserted.

@@ -17,14 +17,15 @@
 //!
 //! A disagreement says the detector reads the written audio differently, not that the file is
 //! wrong: a gain change alone can move its bar 1 by a whole beat. So on a grid the user confirmed
-//! any disagreement is advisory; on another grid, bar lines a whole number of beats away ask the
-//! user to check bar 1, and the rest are reported with their numbers. None of them fails the
-//! export.
+//! any disagreement is advisory; on another grid, bar lines a whole number of the meter's beats
+//! away ask the user to check bar 1, and the rest are reported with their numbers. None of them
+//! fails the export. The price is that on a confirmed grid a real misplacement would show only as
+//! an advisory with its numbers.
 //!
 //! Comparing modulo the bar means a cut off by a whole bar agrees: the detector cannot tell which
-//! of two identical-looking downbeats is bar 1, so the check cannot either. The cut itself is
+//! of two identical-looking downbeats is bar 1, so the check cannot either. How much was cut is
 //! pinned elsewhere: the write is refused unless the output has exactly the planned frame count
-//! (the source's minus the planned cut).
+//! (the source's minus the planned cut). That compares counts, not where the music landed.
 
 use sc_core::Bpm;
 use sc_core::analysis::{AnalysisRecord, Grid, GridEdit};
@@ -170,6 +171,7 @@ fn measure(exported: &ExportedGrid, found: Option<&Grid>, sample_rate: u32) -> G
     if found.meter != exported.meter {
         return GridCheck::MeterDiffers {
             found: found.meter.clone(),
+            exported: Some(exported.meter.clone()),
         };
     }
     let expected_bpm = exported.detector_bpm.unwrap_or(exported.bpm_exact);
@@ -192,7 +194,11 @@ fn measure(exported: &ExportedGrid, found: Option<&Grid>, sample_rate: u32) -> G
             bpm_diff,
         };
     }
-    let beat_ms = found.samples_per_beat(sample_rate.max(1)) * 1000.0 / rate;
+    // A beat of the meter is one of its groups: three pulses in 6/8, one in 4/4. A regular meter's
+    // groups are all the same length.
+    let pulses_per_beat = found.meter.grouping.first().map_or(1, |&g| g.max(1));
+    let beat_ms =
+        found.samples_per_beat(sample_rate.max(1)) * f64::from(pulses_per_beat) * 1000.0 / rate;
     match whole_beats(offset_ms, beat_ms) {
         Some(beats) => GridCheck::CheckBar1 {
             offset_ms,

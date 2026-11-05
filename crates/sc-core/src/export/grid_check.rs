@@ -16,19 +16,22 @@
 //!
 //! It is the same detector reading the written audio again, and that detector is not stable
 //! under a gain change or a sub-millisecond shift: gain alone can move the beat model's downbeat
-//! votes, and with them its bar 1 by a whole beat, while no sample moved in time. What pins the
-//! cut is the write itself, refused unless the output has exactly the planned frame count. So:
+//! votes, and with them its bar 1 by a whole beat, while no sample moved in time. The write is
+//! refused unless the output has exactly the planned frame count, which pins how much was cut,
+//! not where the music landed: it compares counts only. So:
 //!
 //! - agreement ([`GridCheck::Pass`]) says the detector still reads the grid where the export put
 //!   it; it does not prove that another application's analysis agrees;
-//! - disagreement does not mean the file is wrong. It says the detector reads this audio
-//!   differently now, and how much the user should trust the grid depends on who chose it.
+//! - disagreement does not show the file is wrong, and it cannot rule that out either. It says
+//!   the detector reads this audio differently now. On a confirmed grid a real misplacement
+//!   would show only as an advisory with its numbers.
 //!
 //! # The outcomes of a check that ran
 //!
 //! - A grid the user confirmed by ear: a disagreement of any kind is [`GridCheck::Advisory`],
 //!   holding what was measured. The user's ear outranks the detector.
-//! - A grid not confirmed, whose bar lines sit a whole number of beats from the expected place:
+//! - A grid not confirmed, whose bar lines sit a whole number of beats from the expected place
+//!   (a beat being a group of the meter: a quarter note in 4/4, three eighth notes in 6/8):
 //!   [`GridCheck::CheckBar1`]. The beats still line up, so the question is which beat is bar 1,
 //!   and that is what the detector is least sure of.
 //! - A grid not confirmed, any other disagreement: [`GridCheck::OffBy`],
@@ -109,6 +112,9 @@ pub enum GridDisagreement {
     MeterDiffers {
         /// The fresh meter.
         found: Meter,
+        /// The exported meter; absent in results recorded before it was.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exported: Option<Meter>,
     },
     /// The written file's own analysis found no grid.
     NoGridFound,
@@ -133,22 +139,23 @@ pub enum GridCheck {
         bpm_diff: f64,
     },
     /// The grid is the one the user confirmed, and the analysis reads the file differently. The
-    /// confirmed grid was written; this is information, not a fault.
+    /// confirmed grid was kept. A real misplacement would read the same way, so the numbers are
+    /// here to look at.
     Advisory {
         /// What was measured.
         disagreement: GridDisagreement,
     },
     /// The grid was not confirmed, the tempo agrees, and the nearest bar line sits a whole number
-    /// of beats from the expected place, within [`GRID_CHECK_OFFSET_MS`]: the beats line up, but
-    /// the analysis puts bar 1 on another beat, so the user should check which beat it is.
+    /// of the meter's beats (its groups: three eighth notes in 6/8) from the expected place, within
+    /// [`GRID_CHECK_OFFSET_MS`]: the beats line up, but the analysis puts bar 1 on another beat,
+    /// so the user should check which beat it is.
     CheckBar1 {
         /// The fresh grid's bar line nearest the expected place minus that place,
         /// milliseconds.
         offset_ms: f64,
         /// The fresh tempo minus the expected one, BPM.
         bpm_diff: f64,
-        /// `offset_ms` in beats at the meter's unit; never 0. Positive: the analysis puts bar 1
-        /// later.
+        /// `offset_ms` in the meter's beats; never 0. Positive: the analysis puts bar 1 later.
         beats: i32,
     },
     /// The grid was not confirmed, the tempo agrees, but the nearest line is more than
@@ -173,6 +180,9 @@ pub enum GridCheck {
     MeterDiffers {
         /// The fresh meter.
         found: Meter,
+        /// The exported meter; absent in results recorded before it was.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exported: Option<Meter>,
     },
     /// The grid was not confirmed, and the written file's own analysis found no grid.
     NoGridFound,
@@ -225,7 +235,9 @@ impl GridCheck {
             Self::BpmDiffers { bpm_diff, found } => {
                 GridDisagreement::BpmDiffers { bpm_diff, found }
             }
-            Self::MeterDiffers { found } => GridDisagreement::MeterDiffers { found },
+            Self::MeterDiffers { found, exported } => {
+                GridDisagreement::MeterDiffers { found, exported }
+            }
             Self::NoGridFound => GridDisagreement::NoGridFound,
             other @ (Self::Pass { .. } | Self::Advisory { .. } | Self::NotChecked { .. }) => {
                 return other;
@@ -249,7 +261,7 @@ impl fmt::Display for GridCheckSkip {
 
 impl fmt::Display for GridDisagreement {
     /// `off by +7.2 ms (BPM +0.0003)`, `BPM differs by +0.0120 (found 128.012)`, `meter differs
-    /// (found 3/4)`, `no grid found in the written file`.
+    /// (found 3/4, exported 4/4)`, `no grid found in the written file`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::OffBy {
@@ -267,7 +279,7 @@ impl fmt::Display for GridDisagreement {
                 tidy(*bpm_diff, 4),
                 found.0
             ),
-            Self::MeterDiffers { found } => write!(f, "meter differs (found {found})"),
+            Self::MeterDiffers { found, exported } => meter_differs(f, found, exported.as_ref()),
             Self::NoGridFound => f.write_str("no grid found in the written file"),
         }
     }
@@ -275,10 +287,10 @@ impl fmt::Display for GridDisagreement {
 
 impl fmt::Display for GridCheck {
     /// The grid report's and `sc-cli process`'s wording: `pass (bar line +0.4 ms, BPM +0.0003)`;
-    /// `the analysis reads this differently; your confirmed grid was written: off by -416.7 ms
+    /// `the analysis reads this differently; your confirmed grid was kept: off by -416.7 ms
     /// (BPM +0.0000)`; `check bar 1: the analysis reads it 1 beat earlier (bar line -416.7 ms, BPM
     /// +0.0000)`; `off by +7.2 ms (...)`, `BPM differs by +0.0120 (found 128.012)`, `meter differs
-    /// (found 3/4)`, `no grid found in the written file`; `not checked: <why>`.
+    /// (found 3/4, exported 4/4)`, `no grid found in the written file`; `not checked: <why>`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Pass {
@@ -292,7 +304,7 @@ impl fmt::Display for GridCheck {
             ),
             Self::Advisory { disagreement } => write!(
                 f,
-                "the analysis reads this differently; your confirmed grid was written: \
+                "the analysis reads this differently; your confirmed grid was kept: \
                  {disagreement}"
             ),
             Self::CheckBar1 {
@@ -321,10 +333,23 @@ impl fmt::Display for GridCheck {
                 found: *found,
             }
             .fmt(f),
-            Self::MeterDiffers { found } => write!(f, "meter differs (found {found})"),
+            Self::MeterDiffers { found, exported } => meter_differs(f, found, exported.as_ref()),
             Self::NoGridFound => GridDisagreement::NoGridFound.fmt(f),
             Self::NotChecked { reason } => write!(f, "not checked: {reason}"),
         }
+    }
+}
+
+/// `meter differs (found 3/4, exported 4/4)`, without the exported meter in a result recorded
+/// before it was.
+fn meter_differs(
+    f: &mut fmt::Formatter<'_>,
+    found: &Meter,
+    exported: Option<&Meter>,
+) -> fmt::Result {
+    match exported {
+        Some(exported) => write!(f, "meter differs (found {found}, exported {exported})"),
+        None => write!(f, "meter differs (found {found})"),
     }
 }
 

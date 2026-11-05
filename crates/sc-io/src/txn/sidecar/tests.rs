@@ -330,6 +330,7 @@ fn an_older_reader_sees_the_new_outcomes_as_absent_and_keeps_the_rest_of_the_sid
         GridCheck::Advisory {
             disagreement: GridDisagreement::MeterDiffers {
                 found: Meter::three_four(),
+                exported: Some(Meter::four_four()),
             },
         },
         GridCheck::Advisory {
@@ -362,6 +363,11 @@ fn an_older_reader_sees_the_new_outcomes_as_absent_and_keeps_the_rest_of_the_sid
         GridCheck::BpmDiffers {
             bpm_diff: 0.006,
             found: Bpm(120.006),
+        },
+        // The exported meter is a field it ignores.
+        GridCheck::MeterDiffers {
+            found: Meter::three_four(),
+            exported: Some(Meter::four_four()),
         },
         GridCheck::NoGridFound,
     ] {

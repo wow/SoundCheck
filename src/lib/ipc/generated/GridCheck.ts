@@ -32,8 +32,7 @@ offsetMs: number,
  */
 bpmDiff: number, 
 /**
- * `offset_ms` in beats at the meter's unit; never 0. Positive: the analysis puts bar 1
- * later.
+ * `offset_ms` in the meter's beats; never 0. Positive: the analysis puts bar 1 later.
  */
 beats: number, } | { "result": "offBy", 
 /**
@@ -56,7 +55,11 @@ found: Bpm, } | { "result": "meterDiffers",
 /**
  * The fresh meter.
  */
-found: Meter, } | { "result": "noGridFound" } | { "result": "notChecked", 
+found: Meter, 
+/**
+ * The exported meter; absent in results recorded before it was.
+ */
+exported?: Meter | null, } | { "result": "noGridFound" } | { "result": "notChecked", 
 /**
  * Why.
  */

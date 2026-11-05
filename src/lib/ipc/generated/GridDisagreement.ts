@@ -26,4 +26,8 @@ found: Bpm, } | { "kind": "meterDiffers",
 /**
  * The fresh meter.
  */
-found: Meter, } | { "kind": "noGridFound" };
+found: Meter, 
+/**
+ * The exported meter; absent in results recorded before it was.
+ */
+exported?: Meter | null, } | { "kind": "noGridFound" };

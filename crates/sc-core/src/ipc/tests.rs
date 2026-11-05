@@ -418,6 +418,7 @@ fn worst_case_export_row() -> ExportRow {
         grid_check: Some(GridCheck::Advisory {
             disagreement: GridDisagreement::MeterDiffers {
                 found: Meter::ten_eight(),
+                exported: Some(Meter::ten_eight()),
             },
         }),
         edit_carried: true,

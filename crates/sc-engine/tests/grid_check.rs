@@ -277,8 +277,8 @@ fn an_extra_20_ms_cut_is_reported_and_an_extra_beat_asks_to_check_bar_1() {
         "{check:?}"
     );
     assert!((offset(&check) + 20.0).abs() <= 2.0, "{check:?}");
-    // A whole beat more: a beat off, modulo the bar. The frame count a real write is held to
-    // pins the cut, so the check only asks which beat bar 1 is.
+    // A whole beat more: a beat off, modulo the bar. On a grid not confirmed the check asks which
+    // beat bar 1 is.
     let beat = lib.dir.path().join("beat.wav");
     cut_more(&path, BEAT_FRAMES, &beat);
     let beat_ms = 60_000.0 / BPM;

@@ -111,7 +111,7 @@ fn a_disagreement_on_a_confirmed_grid_prints_as_advisory_with_its_numbers() {
     });
     assert_eq!(
         line,
-        "the analysis reads this differently; your confirmed grid was written: \
+        "the analysis reads this differently; your confirmed grid was kept: \
          off by -416.7 ms (BPM +0.0000)"
     );
     assert_eq!(
@@ -124,19 +124,21 @@ fn a_disagreement_on_a_confirmed_grid_prints_as_advisory_with_its_numbers() {
     let (line, json) = outputs(&GridCheck::Advisory {
         disagreement: GridDisagreement::MeterDiffers {
             found: Meter::three_four(),
+            exported: Some(Meter::four_four()),
         },
     });
     assert!(
-        line.ends_with("written: meter differs (found 3/4)"),
+        line.ends_with("kept: meter differs (found 3/4, exported 4/4)"),
         "{line}"
     );
     assert_eq!(json["disagreement"]["kind"], "meterDiffers");
     assert_eq!(json["disagreement"]["found"]["beatsPerBar"], 3);
+    assert_eq!(json["disagreement"]["exported"]["beatsPerBar"], 4);
     let (line, json) = outputs(&GridCheck::Advisory {
         disagreement: GridDisagreement::NoGridFound,
     });
     assert!(
-        line.ends_with("written: no grid found in the written file"),
+        line.ends_with("kept: no grid found in the written file"),
         "{line}"
     );
     assert_eq!(json["disagreement"]["kind"], "noGridFound");

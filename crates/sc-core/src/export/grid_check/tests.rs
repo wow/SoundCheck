@@ -23,10 +23,11 @@ fn wording() {
     assert!(bpm.failed());
     assert_eq!(
         GridCheck::MeterDiffers {
-            found: Meter::three_four()
+            found: Meter::three_four(),
+            exported: Some(Meter::four_four()),
         }
         .to_string(),
-        "meter differs (found 3/4)"
+        "meter differs (found 3/4, exported 4/4)"
     );
     assert_eq!(
         GridCheck::NoGridFound.to_string(),
@@ -110,8 +111,9 @@ fn a_disagreement_on_a_confirmed_grid_is_advisory_and_keeps_its_numbers() {
         (
             GridCheck::MeterDiffers {
                 found: Meter::three_four(),
+                exported: Some(Meter::four_four()),
             },
-            "meter differs (found 3/4)",
+            "meter differs (found 3/4, exported 4/4)",
         ),
         (GridCheck::NoGridFound, "no grid found in the written file"),
     ] {
@@ -123,9 +125,7 @@ fn a_disagreement_on_a_confirmed_grid_is_advisory_and_keeps_its_numbers() {
         assert!(!advisory.failed() && !advisory.passed(), "{advisory:?}");
         assert_eq!(
             advisory.to_string(),
-            format!(
-                "the analysis reads this differently; your confirmed grid was written: {detail}"
-            )
+            format!("the analysis reads this differently; your confirmed grid was kept: {detail}")
         );
     }
 }
@@ -199,6 +199,7 @@ fn the_outcomes_differ_by_their_result_alone() {
         .on_confirmed_grid(),
         GridCheck::MeterDiffers {
             found: Meter::three_four(),
+            exported: Some(Meter::four_four()),
         }
         .on_confirmed_grid(),
         GridCheck::NoGridFound.on_confirmed_grid(),
@@ -210,4 +211,21 @@ fn the_outcomes_differ_by_their_result_alone() {
             "{json}"
         );
     }
+}
+
+#[test]
+fn a_meter_result_recorded_without_the_exported_meter_still_reads_and_says_what_it_knows() {
+    let found = serde_json::to_string(&Meter::three_four()).expect("serialises");
+    let json = format!(r#"{{"result":"meterDiffers","found":{found}}}"#);
+    let check: GridCheck = serde_json::from_str(&json).expect("reads");
+    assert_eq!(
+        check,
+        GridCheck::MeterDiffers {
+            found: Meter::three_four(),
+            exported: None,
+        }
+    );
+    assert_eq!(check.to_string(), "meter differs (found 3/4)");
+    // Written back, it stays as it was recorded.
+    assert_eq!(serde_json::to_string(&check).expect("serialises"), json);
 }

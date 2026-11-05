@@ -96,7 +96,7 @@ PROCESS (`run_batch` with `Task::Process(ProcessSettings{decide, export, out_dir
   expected to give a bar line within 5 ms of bar1 + detector_offset_ms modulo the bar and a tempo within 0.005 BPM of detector_bpm (for an
   unedited grid: the exported bar 1 and bpm_exact themselves); it reports, it gates nothing, because the detector is not stable under gain:
   agreement -> Pass; ExportedGrid.confirmed + any disagreement -> Advisory{disagreement: OffBy|BpmDiffers|MeterDiffers|NoGridFound}; not
-  confirmed + bar lines a whole number of beats away within 5 ms -> CheckBar1{offset_ms, bpm_diff, beats}; not confirmed + anything else ->
+  confirmed + bar lines a whole number of the meter's beats (its groups: 3 pulses in 6/8) away within 5 ms -> CheckBar1{offset_ms, bpm_diff, beats}; not confirmed + anything else ->
   OffBy | BpmDiffers | MeterDiffers | NoGridFound (`GridCheck::failed`); odd meters, no grid, a withheld grid, an unfinished analysis ->
   NotChecked{reason}. The `result` tag alone tells them apart: the UI matches on it and never parses the text, and a reader that does not know
   a value reads the check as absent (the sidecar and journal readers drop it), so adding an outcome needs no schema bump; `sidecar::read` reads

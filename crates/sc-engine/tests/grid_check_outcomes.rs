@@ -50,7 +50,7 @@ fn the_grid_report_cell_keeps_the_numbers_of_every_outcome() {
     let report = report_with(&off.clone().on_confirmed_grid());
     assert!(
         report.contains(
-            ",the analysis reads this differently; your confirmed grid was written: \
+            ",the analysis reads this differently; your confirmed grid was kept: \
              off by -416.7 ms (BPM +0.0002),"
         ),
         "{report}"
@@ -83,9 +83,19 @@ fn the_grid_report_cell_keeps_the_numbers_of_every_outcome() {
     );
     let meter = GridCheck::MeterDiffers {
         found: sc_core::analysis::Meter::three_four(),
+        exported: Some(sc_core::analysis::Meter::four_four()),
     };
+    // Both meters, in either state; quoted, as the wording holds a comma.
+    let report = report_with(&meter);
+    assert!(
+        report.contains(r#","meter differs (found 3/4, exported 4/4)""#),
+        "{report}"
+    );
     let report = report_with(&meter.on_confirmed_grid());
-    assert!(report.contains(": meter differs (found 3/4),"), "{report}");
+    assert!(
+        report.contains(": meter differs (found 3/4, exported 4/4)\""),
+        "{report}"
+    );
 }
 
 /// A tone exported in Library mode: its path, and its sidecar as JSON.
