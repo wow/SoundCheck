@@ -1,5 +1,5 @@
 import type { EditFit, Grid, Meter } from '@/lib/ipc';
-import { useLibrary } from '@/state/library';
+import { isLocked, useLibrary } from '@/state/library';
 import { useMonitor } from '@/state/monitor';
 import {
   NO_EDIT,
@@ -204,6 +204,8 @@ export function openInGridView(fileId: number): void {
   const row = lib.rows[fileId];
   if (!row?.analysis) return;
   lib.select(fileId);
+  // A running batch holds all its files until it ends, and a revert holds its file.
+  if (isLocked(lib.locked, fileId) || row.reverting) return;
   void useTrack.getState().open(fileId);
 }
 

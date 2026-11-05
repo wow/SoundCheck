@@ -289,6 +289,104 @@ fn an_export_reads_the_file_again_so_serato_data_added_since_the_row_was_probed_
 }
 
 #[test]
+fn the_confirm_step_plans_the_cut_the_job_makes() {
+    if !have_models() {
+        return;
+    }
+    let lib = Lib::new();
+    let wav = lib.music().join("click.wav");
+    click_wav(&wav);
+    let shell = lib.shell(1);
+    let id = analysed_click(&shell, &wav);
+    confirm(&shell, id);
+    shell.close_track();
+
+    let preview = shell.plan_export(&request(&[id], prepare(), None)).unwrap();
+    let row = preview.rows[0].row.as_ref().expect("planned");
+    assert!(row.positions_shift, "{row:?}");
+    assert!(matches!(
+        row.action,
+        ExportAction::Write {
+            cut: Cut::Cut { .. },
+            ..
+        }
+    ));
+
+    let (_, events) = export(&shell, request(&[id], prepare(), None));
+    let planned = events.iter().find_map(|e| match e {
+        JobEvent::Processing { row, .. } => Some(row.action.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        planned.as_ref(),
+        Some(&row.action),
+        "the cut, to the sample"
+    );
+}
+
+#[test]
+fn the_xml_button_lists_an_exported_copy_where_it_is() {
+    if !have_models() {
+        return;
+    }
+    let lib = Lib::new();
+    let wav = lib.music().join("click.wav");
+    click_wav(&wav);
+    let shell = lib.shell(1);
+    let id = analysed_click(&shell, &wav);
+    confirm(&shell, id);
+    shell.close_track();
+    let out = lib.base().join("copies");
+    let (_, events) = export(&shell, request(&[id], in_folder(prepare()), Some(&out)));
+    assert!(steps(&events, id).contains(&"exportDone"), "{events:?}");
+
+    let xml = lib.base().join("rebuilt.xml");
+    let written = shell
+        .write_xml(WriteXmlRequest {
+            file_ids: vec![id],
+            out: Some(xml.display().to_string()),
+        })
+        .unwrap();
+
+    assert_eq!(written.artefacts.listed, 1);
+    let text = std::fs::read_to_string(&xml).unwrap();
+    assert!(text.contains("copies/click.wav"), "{text}");
+    assert!(!text.contains("music/click.wav"), "{text}");
+}
+
+#[test]
+fn a_saved_grid_marks_the_export_stale_only_when_it_differs() {
+    if !have_models() {
+        return;
+    }
+    let lib = Lib::new();
+    let wav = lib.music().join("click.wav");
+    click_wav(&wav);
+    let shell = lib.shell(1);
+    let id = analysed_click(&shell, &wav);
+    assert!(!confirm(&shell, id).export_stale, "no export yet");
+    shell.close_track();
+    let out = lib.base().join("copies");
+    export(&shell, request(&[id], in_folder(prepare()), Some(&out)));
+    assert!(!shell.restore().rows[0].export_stale);
+
+    // Confirmed again as it was: nothing new to write.
+    assert!(!confirm(&shell, id).export_stale);
+    shell.close_track();
+    assert!(!shell.restore().rows[0].export_stale);
+
+    // Another bar 1: the export no longer says what the row says, also after a reload.
+    shell.open_track(id, |_| {}).unwrap();
+    let edit = GridEdit {
+        anchor: Some(sc_core::SampleIndex(20_000)),
+        ..GridEdit::default()
+    };
+    assert!(shell.commit(id, &edit, true).unwrap().export_stale);
+    shell.close_track();
+    assert!(shell.restore().rows[0].export_stale);
+}
+
+#[test]
 fn a_grid_view_opens_during_a_copy_to_a_folder_whose_source_does_not_change() {
     if !have_models() {
         return;

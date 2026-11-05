@@ -2,6 +2,7 @@
 import type { ExportAction } from "./ExportAction";
 import type { ExportNotice } from "./ExportNotice";
 import type { ExportVerification } from "./ExportVerification";
+import type { ExportedWith } from "./ExportedWith";
 import type { GridCheck } from "./GridCheck";
 import type { JobStage } from "./JobStage";
 
@@ -49,6 +50,10 @@ editCarried: boolean,
  * a folder leaves the original as it was: nothing to revert.
  */
 revertible: boolean, 
+/**
+ * The settings it was made with; absent where the row was not made by a job or a preview.
+ */
+exportedWith: ExportedWith | null, 
 /**
  * What did not work after the write (the file stays written) and what the render could not
  * do, in order; bounded to [`MAX_ROW_NOTES_JSON_BYTES`], so the grid report holds the rest.

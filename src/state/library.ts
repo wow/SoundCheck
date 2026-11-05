@@ -1,165 +1,22 @@
 import { create } from 'zustand';
-import type {
-  FileEntry,
-  IpcError,
-  JobEvent,
-  Plan,
-  Replan,
-  RowAnalysis,
-  RowUpdate,
-  SessionSnapshot,
-} from '@/lib/ipc';
+import {
+  exportEnded,
+  exportPatch,
+  exportQueued,
+  isExporting,
+  newJob,
+  restingState,
+  revertedPatch,
+  rowFromSession,
+  tallied,
+  writtenWithoutAnalysis,
+} from './exportRows';
+import { visibleIds } from './librarySelectors';
+import type { LibraryState, Row } from './libraryTypes';
 
-/** Where a row stands, as the Status column shows it. */
-export type RowState =
-  | 'queued'
-  | 'analysing'
-  | 'analysed'
-  | 'needsReview'
-  | 'skipped'
-  | 'error'
-  | 'cancelled';
-
-export interface Row {
-  entry: FileEntry;
-  state: RowState;
-  /** Analysis progress while analysing, 0..1. */
-  progress: number;
-  analysis?: RowAnalysis;
-  plan?: Plan;
-  /** The settings revision `plan` was decided with; a newer plan always wins. */
-  planRevision?: number;
-  error?: IpcError;
-  /** The BPM range the row was last analysed with, to know when it is stale. */
-  analysedRange?: [number, number];
-}
-
-export type Filter = 'all' | 'review' | 'short' | 'skipped' | 'done';
-
-export interface JobProgress {
-  jobId: number | null;
-  /** The rows this job was started with. */
-  fileIds: number[];
-  done: number;
-  total: number;
-  etaMs: number | null;
-  realtimeX: number | null;
-  startedAt: number;
-}
-
-export interface LastBatch {
-  analysed: number;
-  review: number;
-  failed: number;
-  cancelled: boolean;
-  seconds: number;
-}
-
-interface LibraryState {
-  rows: Record<number, Row>;
-  order: number[];
-  filter: Filter;
-  query: string;
-  selected: number | null;
-  job: JobProgress | null;
-  lastBatch: LastBatch | null;
-  /** Why the last job could not start, until the next one does. */
-  aborted: IpcError | null;
-  /** A problem to show above the table (for example, settings the engine refused). */
-  notice: string | null;
-  add(entries: FileEntry[]): void;
-  /** Marks rows queued for a job about to start with `range`. */
-  queue(fileIds: number[], range: [number, number]): void;
-  applyEvent(event: JobEvent): void;
-  /** A row whose grid edit was saved: its analysis and plan, as an analysed event would. */
-  applyRowUpdate(update: RowUpdate): void;
-  applyReplan(replan: Replan): void;
-  /** Rebuilds the table from the engine's session after the window reloaded. */
-  restore(snapshot: SessionSnapshot, range: [number, number]): void;
-  setNotice(notice: string | null): void;
-  /** Empties the list (the engine forgets it too, through `clearList`). */
-  clear(): void;
-  setFilter(filter: Filter): void;
-  setQuery(query: string): void;
-  select(fileId: number | null): void;
-  moveSelection(delta: number): void;
-  /** Selects the next visible Needs review row after the selection, wrapping; returns it. */
-  selectNextReview(): number | null;
-}
-
-function stateOf(plan: Plan): RowState {
-  switch (plan.status) {
-    case 'needsReview':
-      return 'needsReview';
-    case 'skipped':
-      return 'skipped';
-    default:
-      return 'analysed';
-  }
-}
-
-/** Whether a row is short of the target (the Short chip). */
-export function isShort(row: Row): boolean {
-  const g = row.plan?.gain;
-  return row.analysis !== undefined && g?.type === 'gain' && g.shortByLu > 0;
-}
-
-function matchesFilter(row: Row, filter: Filter): boolean {
-  switch (filter) {
-    case 'all':
-      return true;
-    case 'review':
-      return row.state === 'needsReview';
-    case 'short':
-      return isShort(row);
-    case 'skipped':
-      return row.state === 'skipped';
-    case 'done':
-      return false;
-  }
-}
-
-function matchesQuery(row: Row, query: string): boolean {
-  if (!query) return true;
-  const q = query.toLocaleLowerCase();
-  const { info, path } = row.entry;
-  return [info.title, info.artist, info.album, path.split('/').pop()].some((s) =>
-    s?.toLocaleLowerCase().includes(q),
-  );
-}
-
-/** Row ids the table shows, in order. */
-export function visibleIds(s: Pick<LibraryState, 'rows' | 'order' | 'filter' | 'query'>): number[] {
-  return s.order.filter((id) => {
-    const row = s.rows[id];
-    return row !== undefined && matchesFilter(row, s.filter) && matchesQuery(row, s.query);
-  });
-}
-
-/** The counts the filter chips show. */
-export function counts(s: Pick<LibraryState, 'rows' | 'order'>): Record<Filter, number> {
-  const c: Record<Filter, number> = { all: 0, review: 0, short: 0, skipped: 0, done: 0 };
-  for (const id of s.order) {
-    const row = s.rows[id];
-    if (!row) continue;
-    c.all += 1;
-    if (row.state === 'needsReview') c.review += 1;
-    if (row.state === 'skipped') c.skipped += 1;
-    if (isShort(row)) c.short += 1;
-  }
-  return c;
-}
-
-/** Rows the Analyse button would (re)run: failed, cancelled, queued, or analysed with another BPM range. */
-export function staleIds(s: Pick<LibraryState, 'rows' | 'order'>, range: [number, number]): number[] {
-  return s.order.filter((id) => {
-    const row = s.rows[id];
-    if (!row) return false;
-    if (row.state === 'error' || row.state === 'cancelled' || row.state === 'queued') return true;
-    const r = row.analysedRange;
-    return r !== undefined && (r[0] !== range[0] || r[1] !== range[1]);
-  });
-}
+export { writtenWithoutAnalysis };
+export * from './librarySelectors';
+export type * from './libraryTypes';
 
 /** Applies `patch` to each listed row in one copy of the map. */
 function patchRows(
@@ -190,8 +47,18 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
   selected: null,
   job: null,
   lastBatch: null,
+  lastExport: null,
+  lastRun: null,
+  artefacts: null,
+  artefactsFailed: null,
+  xmlLeftOut: 0,
+  xmlWriting: false,
+  locked: null,
+  windingJobs: [],
   aborted: null,
+  abortedKind: 'analysis',
   notice: null,
+  info: null,
   add(entries) {
     const { rows, order, selected } = get();
     const next = { ...rows };
@@ -206,20 +73,92 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
   queue(fileIds, range) {
     const rows = patchRows(
       get().rows,
-      fileIds.map((id) => [id, () => ({ state: 'queued', progress: 0, error: undefined, analysedRange: range })]),
+      fileIds.map((id) => [
+        id,
+        () => ({
+          state: 'queued',
+          progress: 0,
+          error: undefined,
+          exportError: undefined,
+          analysedRange: range,
+        }),
+      ]),
     );
     set({
       rows,
       aborted: null,
-      job: {
-        jobId: null,
-        fileIds,
-        done: 0,
-        total: fileIds.length,
-        etaMs: null,
-        realtimeX: null,
-        startedAt: Date.now(),
-      },
+      abortedKind: 'analysis',
+      job: newJob('analysis', fileIds),
+    });
+  },
+  beginExport(fileIds, planned) {
+    const byId = new Map(planned.map((p) => [p.fileId, p]));
+    set({
+      rows: patchRows(
+        get().rows,
+        fileIds.map((id) => [id, (row) => exportQueued(row, byId.get(id))]),
+      ),
+      aborted: null,
+      abortedKind: 'export',
+      artefacts: null,
+      artefactsFailed: null,
+      xmlLeftOut: 0,
+      lastExport: null,
+      locked: new Set(fileIds),
+      job: newJob('export', fileIds),
+    });
+  },
+  setReverting(fileId) {
+    set({
+      rows: one(get().rows, fileId, () => ({
+        reverting: true,
+        revertError: undefined,
+        revertNotes: undefined,
+        exportError: undefined,
+      })),
+    });
+  },
+  applyRevert(fileId, result) {
+    set({
+      rows: one(get().rows, fileId, (row) => revertedPatch(row, result)),
+    });
+  },
+  revertFailed(fileId, error) {
+    set({ rows: one(get().rows, fileId, () => ({ reverting: false, revertError: error })) });
+  },
+  setXmlWriting(xmlWriting) {
+    set({ xmlWriting });
+  },
+  applyXml({ artefacts, notListed }) {
+    const why = new Map(notListed.map((n) => [n.fileId, n.why]));
+    set({
+      xmlWriting: false,
+      artefacts,
+      artefactsFailed: null,
+      xmlLeftOut: notListed.length,
+      rows: patchRows(
+        get().rows,
+        get().order.map((id) => [
+          id,
+          (row) => {
+            const left = why.get(id);
+            return left === row.xmlNotListed ? null : { xmlNotListed: left };
+          },
+        ]),
+      ),
+    });
+  },
+  setXmlFailed(error) {
+    set({ xmlWriting: false, artefacts: null, artefactsFailed: error, xmlLeftOut: 0 });
+  },
+  windDownEnded() {
+    const { lastExport, windingJobs } = get();
+    // Only the job the reload stopped: an analysis it stopped says nothing about an older export.
+    const stopped = lastExport?.jobId !== undefined && windingJobs.includes(lastExport.jobId);
+    set({
+      locked: null,
+      windingJobs: [],
+      lastExport: lastExport && stopped ? { ...lastExport, stoppedByReload: true } : lastExport,
     });
   },
   applyRowUpdate(update) {
@@ -231,9 +170,20 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
       plan: update.plan,
       revision: update.revision,
     });
+    // The engine says whether the saved grid differs from what the export wrote.
+    set({ rows: one(get().rows, update.fileId, () => ({ exportStale: update.exportStale })) });
   },
   applyEvent(event) {
     const { rows, job } = get();
+    // A file event of a running export; `job` is null once the list was cleared. A row outside the
+    // batch (added since, its grid saved meanwhile) goes on as any other.
+    if (job?.kind === 'export' && 'fileId' in event && job.fileIds.includes(event.fileId)) {
+      set({
+        rows: one(rows, event.fileId, (row) => exportPatch(row, event)),
+        job: { ...job, jobId: job.jobId ?? event.jobId, tally: tallied(job.tally, event) },
+      });
+      return;
+    }
     switch (event.type) {
       case 'started':
         set({
@@ -251,8 +201,11 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
             const newer = row.plan !== undefined && (row.planRevision ?? -1) > event.revision;
             const plan = newer && row.plan ? row.plan : event.plan;
             return {
-              state: stateOf(plan),
+              state: restingState(plan, row.export),
               progress: 1,
+              // Read again: what its export wrote was made of what the file was before.
+              ...(row.changedOnDisk && row.export ? { exportStale: true } : {}),
+              changedOnDisk: false,
               analysis: event.row,
               plan,
               planRevision: newer ? row.planRevision : event.revision,
@@ -280,6 +233,12 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
           });
         }
         break;
+      case 'artefacts':
+        set({ artefacts: event.artefacts, artefactsFailed: null, xmlLeftOut: 0 });
+        break;
+      case 'artefactsFailed':
+        set({ artefacts: null, artefactsFailed: event.error });
+        break;
       case 'aborted':
         set({ aborted: event.error });
         break;
@@ -287,6 +246,25 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
         // A job that ends after the list was cleared leaves nothing to report.
         if (!job) break;
         const ids = job.fileIds;
+        if (job.kind === 'export') {
+          // Rows it never reached (it was refused or cancelled early) are as they were.
+          const next = patchRows(
+            rows,
+            ids.map((id) => [id, (row) => (isExporting(row.state) ? exportEnded(row) : null)]),
+          );
+          set({
+            rows: next,
+            job: null,
+            locked: null,
+            lastRun: 'export',
+            lastExport: {
+              ...job.tally,
+              cancelled: event.cancelled,
+              seconds: (Date.now() - job.startedAt) / 1000,
+            },
+          });
+          break;
+        }
         // Rows of this job still waiting (it was aborted or cancelled early) no longer are.
         const next = patchRows(
           rows,
@@ -299,6 +277,7 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
         set({
           rows: next,
           job: null,
+          lastRun: 'analysis',
           lastBatch: {
             analysed: mine.filter((r) => r.analysis !== undefined && (r.state === 'analysed' || r.state === 'needsReview' || r.state === 'skipped')).length,
             review: mine.filter((r) => r.state === 'needsReview').length,
@@ -321,40 +300,67 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
           (row) => {
             if ((row.planRevision ?? -1) > revision) return null;
             // Rows still in flight keep their status until their analysis arrives.
-            return row.analysis
-              ? { plan, planRevision: revision, state: stateOf(plan) }
+            return row.analysis && !isExporting(row.state) && row.state !== 'failed'
+              ? { plan, planRevision: revision, state: restingState(plan, row.export) }
               : { plan, planRevision: revision };
           },
         ]),
       ),
     });
   },
-  restore(snapshot, range) {
+  restore(snapshot) {
+    const { rows: before, selected } = get();
+    const live = snapshot.runningJobs.length > 0;
     const rows: Record<number, Row> = {};
     const order: number[] = [];
     for (const r of snapshot.rows) {
       const id = r.entry.fileId;
       order.push(id);
-      rows[id] =
-        r.row && r.plan
-          ? {
-              entry: r.entry,
-              state: stateOf(r.plan),
-              progress: 1,
-              analysis: r.row,
-              plan: r.plan,
-              planRevision: snapshot.revision,
-              analysedRange: range,
-            }
-          : { entry: r.entry, state: 'cancelled', progress: 0 };
+      const row = rowFromSession(r, snapshot.revision, live);
+      // Added while the job winds down, and waiting for it: still waiting.
+      rows[id] = before[id]?.state === 'queued' && !row.analysis ? before[id] : row;
     }
-    set({ rows, order, selected: order[0] ?? null, job: null });
+    set({
+      rows,
+      order,
+      selected: selected !== null && rows[selected] ? selected : (order[0] ?? null),
+      job: null,
+      locked: live ? 'all' : null,
+      windingJobs: [...new Set([...get().windingJobs, ...snapshot.runningJobs])],
+      artefacts: snapshot.artefacts,
+      artefactsFailed: snapshot.artefactsFailed,
+      lastExport: snapshot.lastExport,
+      lastRun: snapshot.lastExport ? 'export' : null,
+    });
+  },
+  markChanged(fileIds) {
+    set({ rows: patchRows(get().rows, fileIds.map((id) => [id, () => ({ changedOnDisk: true })])) });
   },
   setNotice(notice) {
     set({ notice });
   },
+  setInfo(info) {
+    set({ info });
+  },
   clear() {
-    set({ rows: {}, order: [], selected: null, job: null, lastBatch: null, aborted: null, filter: 'all', query: '' });
+    set({
+      rows: {},
+      order: [],
+      selected: null,
+      job: null,
+      lastBatch: null,
+      lastExport: null,
+      lastRun: null,
+      artefacts: null,
+      artefactsFailed: null,
+      xmlLeftOut: 0,
+      locked: null,
+      windingJobs: [],
+      aborted: null,
+      info: null,
+      filter: 'all',
+      query: '',
+    });
   },
   setFilter(filter) {
     set({ filter });

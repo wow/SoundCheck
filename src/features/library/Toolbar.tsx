@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react';
+import { Plus, Search, SlidersHorizontal, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { NARROW, useMediaQuery } from '@/lib/media';
 import { chooseFiles, chooseFolders } from '@/lib/platform';
@@ -8,13 +8,14 @@ import { counts, staleIds, useLibrary, type Filter } from '@/state/library';
 import { usePanels } from '@/state/panels';
 import { presetLabel, useSettings } from '@/state/settings';
 import { addPaths, analyseStale } from '@/features/pipeline/actions';
+import { ExportBarButton } from '@/features/export/ExportPanel';
 
 /** The filter chips; `short` is the label in a narrow window. */
 const CHIPS: { id: Filter; label: string; short?: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'review', label: 'Needs review', short: 'Review' },
   { id: 'short', label: 'Short' },
-  { id: 'skipped', label: 'Skipped' },
+  { id: 'skipped', label: 'Skipped', short: 'Skip' },
   { id: 'done', label: 'Done' },
 ];
 
@@ -114,8 +115,12 @@ export function Toolbar({ busy }: { busy: boolean }) {
         onClick={analyseStale}
         title={stale === 0 ? 'Every track is analysed with the current settings' : undefined}
       >
-        Analyse{!busy && stale > 0 ? ` ${stale}` : ''}
+        {/* In a narrow window the count makes room for Export beside it. */}
+        Analyse{!busy && stale > 0 && !narrow ? ` ${stale}` : ''}
       </button>
+      {narrow && (
+        <ExportBarButton className={cn(button, 'border-transparent bg-accent text-bg-0')} />
+      )}
       <SettingsButton />
     </header>
   );
@@ -230,11 +235,12 @@ function AddMenu() {
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label="Add"
+        title="Add"
         onClick={() => setOpen(!open)}
-        className={cn(button, 'border-line text-fg-0 hover:bg-bg-2')}
+        className={cn(button, 'border-line px-2 text-fg-0 hover:bg-bg-2')}
       >
-        Add
-        <ChevronDown className="size-3.5" aria-hidden="true" />
+        <Plus className="size-3.5" aria-hidden="true" />
       </button>
       {open && (
         <div
@@ -285,7 +291,7 @@ const MENU_ITEM =
 
 /**
  * In a narrow window, where the settings rail is a drawer: the button that opens it, showing
- * the setting that matters most, what the batch is levelled to (`DJ · −11 LUFS`).
+ * the setting that matters most, what the batch is levelled to (`DJ · −11.0`; LUFS for a screen reader, the room is Export's).
  */
 function SettingsButton() {
   const narrow = useMediaQuery(NARROW);
@@ -300,14 +306,14 @@ function SettingsButton() {
       type="button"
       aria-haspopup="dialog"
       aria-expanded={open}
+      aria-label={`Settings: ${name} · ${target} LUFS`}
       onClick={() => setOpen(!open)}
       title="Settings · ⌘,"
       className={cn(button, 'border-line text-fg-0 hover:bg-bg-2', open && 'bg-bg-3')}
     >
       <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />
-      <span className="sr-only">Settings: </span>
       <span>
-        {name} · <span className="font-mono tabular-nums">{target}</span> LUFS
+        {name} · <span className="font-mono tabular-nums">{target}</span>
       </span>
     </button>
   );

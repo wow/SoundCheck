@@ -1,5 +1,6 @@
 import { confirm, open } from '@tauri-apps/plugin-dialog';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 
 /** Asks for folders; resolves to the chosen paths (none when cancelled). */
 export async function chooseFolders(): Promise<string[]> {
@@ -20,6 +21,17 @@ export async function chooseFiles(): Promise<string[]> {
     ],
   });
   return picked ?? [];
+}
+
+/** Asks for the one folder copies go to; resolves to null when cancelled. */
+export async function chooseExportFolder(): Promise<string | null> {
+  const picked = await open({ directory: true, multiple: false, title: 'Export to folder' });
+  return typeof picked === 'string' ? picked : null;
+}
+
+/** Shows the file or folder in the Finder, selected. */
+export function revealInFinder(path: string): Promise<void> {
+  return revealItemInDir(path);
 }
 
 /** A yes/no question in a native sheet. */

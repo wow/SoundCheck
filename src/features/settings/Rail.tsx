@@ -1,49 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { cn } from '@/lib/utils';
+import { useEffect, useRef, useState } from 'react';
 import type { LoudnessMode } from '@/lib/ipc';
 import { useLibrary } from '@/state/library';
 import { PRESETS, presetLabel, useSettings, type PresetId } from '@/state/settings';
 import { calibrateFromLibrary } from '@/features/pipeline/actions';
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="flex flex-col gap-2.5">
-      <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-2">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function Segmented<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: { id: T; label: string }[];
-  onChange: (v: T) => void;
-}) {
-  return (
-    <div role="group" aria-label={label} className="flex gap-0.5 rounded-lg border border-line bg-bg-1 p-[3px]">
-      {options.map((o) => (
-        <button
-          key={o.id}
-          type="button"
-          aria-pressed={value === o.id}
-          onClick={() => onChange(o.id)}
-          className={cn(
-            'h-7 flex-1 rounded-md text-[12.5px] font-semibold',
-            value === o.id ? 'bg-bg-3 text-fg-0 shadow-[0_1px_0_rgba(0,0,0,.4)]' : 'text-fg-2',
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
+import { ExportAction, ExportSection } from '@/features/export/ExportPanel';
+import { Section, Segmented } from './controls';
 
 /**
  * A number field that commits on Enter or blur, so the table replans once per edit rather than
@@ -140,8 +101,8 @@ export function Rail() {
 }
 
 /**
- * What the batch is levelled to, and the DJ app's BPM range: in the rail, or in the settings
- * drawer of a narrow window.
+ * What the batch is levelled to, the DJ app's BPM range and how the batch is exported: in the
+ * rail, or in the settings drawer of a narrow window.
  */
 export function Settings() {
   const s = useSettings();
@@ -220,10 +181,9 @@ export function Settings() {
           The tempo octave is chosen inside this range first, as rekordbox does. Changing it marks tracks for Analyse.
         </p>
       </Section>
+      <ExportSection />
       <div className="flex-1" />
-      <p className="flex items-center gap-2 text-[11.5px] text-fg-2">
-        Originals untouched. Nothing is written in this version.
-      </p>
+      <ExportAction />
     </div>
   );
 }

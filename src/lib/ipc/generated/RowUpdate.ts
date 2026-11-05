@@ -21,4 +21,8 @@ plan: Plan,
 /**
  * The settings revision the plan was decided with.
  */
-revision: number, };
+revision: number, 
+/**
+ * A grid different from what the file's export wrote has been saved since it.
+ */
+exportStale: boolean, };

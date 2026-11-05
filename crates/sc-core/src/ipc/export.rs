@@ -1,19 +1,25 @@
 //! What an export sends and receives over IPC: the request, the row each file shows (at most
 //! [`super::MAX_ROW_BYTES`] of JSON whatever the file holds, which [`ExportRow`]'s bounded lists
-//! see to), the batch's artefacts, and the answers of `revert_file`, `write_rekordbox_xml` and
+//! see to), the batch's artefacts, and the answers of `plan_export`, `revert_file`, `write_rekordbox_xml` and
 //! `forget_pending`. The written file's analysis, with its evidence, never crosses: the row
 //! carries the numbers the table shows.
+
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::recovery::RecoveryStatus;
 use super::track::RowUpdate;
-use super::{FileEntry, JobStage};
+use super::{FileEntry, IpcError, JobId, JobStage};
 use crate::export::{Cut, ExportNotice, ExportSettings, ExportSkip, GridCheck, XmlOnlyReason};
+use crate::plan::DecideSettings;
 
 /// Most JSON bytes the notes of one [`ExportRow`] take; [`bounded_strings`] keeps them there.
 pub const MAX_ROW_NOTES_JSON_BYTES: usize = 700;
+
+/// Most JSON bytes the folder in one [`ExportedWith`] takes.
+pub const MAX_EXPORTED_FOLDER_JSON_BYTES: usize = 300;
 
 /// Most JSON bytes the stale tag labels of one [`ExportVerification`] take.
 pub const MAX_STALE_TAGS_JSON_BYTES: usize = 300;
@@ -29,6 +35,122 @@ pub struct ExportRequest {
     pub settings: ExportSettings,
     /// The absolute folder copies go to: required by, and only by, a `folder` place.
     pub out_dir: Option<String>,
+    /// What the user confirmed, from `plan_export`: the job refuses to run on other settings, and
+    /// a file no longer the one confirmed fails its row before anything is written. `None` checks
+    /// nothing; the app always sends it.
+    pub confirmed: Option<ConfirmedExport>,
+}
+
+/// What the user saw in the confirm step, sent back with the export.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmedExport {
+    /// The settings revision the plan was decided with.
+    pub revision: u32,
+    /// Each file as it was planned.
+    pub files: Vec<ConfirmedFile>,
+}
+
+/// One file as the confirm step planned it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmedFile {
+    /// The file.
+    pub file_id: u32,
+    /// Its identity then (length, modification time, inode): opaque, compared whole.
+    pub identity: String,
+}
+
+/// What a row's export was made with, so the row can say when the settings have moved on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedWith {
+    /// The loudness settings.
+    pub decide: DecideSettings,
+    /// The export settings.
+    pub settings: ExportSettings,
+    /// The folder, cut to [`MAX_EXPORTED_FOLDER_JSON_BYTES`] of JSON (a folder longer than that
+    /// only reads as a different one).
+    pub out_dir: Option<String>,
+}
+
+impl ExportedWith {
+    /// What an export with these settings is made with.
+    #[must_use]
+    pub fn new(decide: DecideSettings, settings: ExportSettings, out_dir: Option<&Path>) -> Self {
+        Self {
+            decide,
+            settings,
+            out_dir: out_dir.and_then(|dir| {
+                let text = dir.display().to_string();
+                bounded_strings([text], MAX_EXPORTED_FOLDER_JSON_BYTES).pop()
+            }),
+        }
+    }
+}
+
+/// What became of the latest batch, kept for a window that reloads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportSummary {
+    /// The job it was.
+    pub job_id: JobId,
+    /// Files written.
+    pub written: u32,
+    /// Files only the rekordbox XML carries.
+    pub xml_only: u32,
+    /// Files skipped.
+    pub skipped: u32,
+    /// Files failed.
+    pub failed: u32,
+    /// It was cancelled.
+    pub cancelled: bool,
+    /// How long it took.
+    pub seconds: f64,
+}
+
+/// What exporting would do with one file, before anything is written.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPreviewRow {
+    /// The file.
+    pub file_id: u32,
+    /// What its row would show: `stage` `processing` for a file that would be written, `skipped`
+    /// for one that would not, with the plan's notes worded. `None` when it could not be planned.
+    pub row: Option<Box<ExportRow>>,
+    /// Why it could not be planned: not analysed yet, changed since it was analysed, or its start
+    /// could not be read.
+    pub error: Option<IpcError>,
+    /// The file as it was planned, to send back ([`ConfirmedFile`]); `None` without a plan.
+    pub identity: Option<String>,
+    /// The write replaces an earlier copy of it SoundCheck wrote in the folder.
+    pub replaces_copy: bool,
+}
+
+/// What `plan_export` found: the confirm step's numbers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPreview {
+    /// One row per file named, in that order.
+    pub rows: Vec<ExportPreviewRow>,
+    /// The settings revision the rows were planned with, to send back ([`ConfirmedExport`]).
+    pub revision: u32,
+    /// The loudness settings they were planned with.
+    pub decide: DecideSettings,
+    /// Tracks the rekordbox XML already in the folder lists, whose files are still there: they stay
+    /// listed.
+    pub xml_listed: u32,
+    /// Where the originals go, for an export in place.
+    pub backup_folder: Option<String>,
+    /// Where the rekordbox XML and grid report go, with the XML on: the export's folder, or for
+    /// an export in place the folder a new dated folder is made in.
+    pub artefacts_folder: Option<String>,
 }
 
 /// What exporting does with a file, as the row's Action column shows it.
@@ -125,6 +247,8 @@ pub struct ExportRow {
     /// The file was changed in place, with a backup, so `revert_file` can put it back. A copy in
     /// a folder leaves the original as it was: nothing to revert.
     pub revertible: bool,
+    /// The settings it was made with; absent where the row was not made by a job or a preview.
+    pub exported_with: Option<ExportedWith>,
     /// What did not work after the write (the file stays written) and what the render could not
     /// do, in order; bounded to [`MAX_ROW_NOTES_JSON_BYTES`], so the grid report holds the rest.
     pub notes: Vec<String>,

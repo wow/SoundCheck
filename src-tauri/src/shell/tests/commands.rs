@@ -452,6 +452,7 @@ fn events_of_an_unfinished_analysis(wav: &Path) -> [EngineEvent; 3] {
             artist: None,
         },
         analysis: None,
+        analysed: None,
         edit: EditState::default(),
         edit_carried: false,
         grid_check: GridCheck::NotChecked {

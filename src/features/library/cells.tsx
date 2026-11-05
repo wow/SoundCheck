@@ -1,5 +1,5 @@
 import { Ear } from 'lucide-react';
-import type { Codec, Confidence } from '@/lib/ipc';
+import { rowErrorCopy, type Codec, type Confidence } from '@/lib/ipc';
 import {
   CODEC_LABEL,
   DJ_UNSAFE_TEXT,
@@ -13,7 +13,9 @@ import {
 import { cn } from '@/lib/utils';
 import type { Row, RowState } from '@/state/library';
 import { isShort } from '@/state/library';
-import { statusLabel } from './status';
+import { ExportActionCell, GridCheckBadge, RevertIcon, RevertSpinner } from '@/features/export/ExportCells';
+import type { ExportNow } from '@/features/export/work';
+import { exportedAndRests, statusLabel } from './status';
 
 export function CodecBadge({ codec }: { codec: Codec }) {
   return (
@@ -65,18 +67,63 @@ const PILL: Record<RowState, string> = {
   skipped: 'text-fg-2 border-line bg-transparent',
   error: 'text-err border-[rgba(248,113,113,.45)] bg-[rgba(248,113,113,.10)]',
   cancelled: 'text-fg-2 border-line bg-transparent',
+  exportQueued: 'text-fg-2 border-line bg-transparent',
+  processing: 'text-accent-2 border-[rgba(79,209,197,.35)] bg-[rgba(79,209,197,.08)]',
+  writing: 'text-accent-2 border-[rgba(79,209,197,.35)] bg-[rgba(79,209,197,.08)]',
+  checking: 'text-accent-2 border-[rgba(79,209,197,.35)] bg-[rgba(79,209,197,.08)]',
+  done: 'text-ok border-[rgba(74,222,128,.35)] bg-[rgba(74,222,128,.08)]',
+  failed: 'text-err border-[rgba(248,113,113,.45)] bg-[rgba(248,113,113,.10)]',
 };
+
+/** What gets a row whose file changed up to date. */
+export const PRESS_ANALYSE = 'Press Analyse to read it again';
+
+const REVERTING = 'text-accent-2 border-[rgba(79,209,197,.35)] bg-[rgba(79,209,197,.08)]';
 
 export function StatusPill({ row }: { row: Row }) {
   return (
     <span
       className={cn(
-        'inline-flex h-[22px] items-center whitespace-nowrap rounded-md border px-2 text-xs font-medium',
-        PILL[row.state],
+        'inline-flex h-[22px] min-w-0 items-center gap-1 whitespace-nowrap rounded-md border px-2 text-xs font-medium',
+        row.reverting ? REVERTING : PILL[exportedAndRests(row) ? 'done' : row.state],
       )}
     >
-      {statusLabel(row)}
+      {row.reverting && <RevertSpinner />}
+      <span className="truncate">{statusLabel(row)}</span>
     </span>
+  );
+}
+
+/** The Status column: where the row is, and after an export its grid check and Revert. */
+export function StatusCell({
+  id,
+  row,
+  selected,
+  bpmRange,
+}: {
+  id: number;
+  row: Row;
+  selected: boolean;
+  bpmRange: [number, number];
+}) {
+  const check = row.export?.gridCheck;
+  // What still asks for a look comes first: it is why the row is in Needs review.
+  const review =
+    exportedAndRests(row) && row.plan ? reviewText(row.plan.review, row.analysis, bpmRange) : '';
+  return (
+    <div className="flex min-w-0 flex-col gap-px">
+      <div className="flex items-center gap-1">
+        <StatusPill row={row} />
+        <RevertIcon id={id} row={row} selected={selected} />
+      </div>
+      {review ? (
+        <span className="block truncate text-[12px] leading-4 text-warn/80" title={review}>
+          {review}
+        </span>
+      ) : (
+        check && <GridCheckBadge check={check} />
+      )}
+    </div>
   );
 }
 
@@ -279,7 +326,31 @@ export function BpmCell({
   );
 }
 
-export function ActionCell({ row, bpmRange }: { row: Row; bpmRange: [number, number] }) {
+export function ActionCell({
+  row,
+  bpmRange,
+  stacked = false,
+  now,
+}: {
+  row: Row;
+  bpmRange: [number, number];
+  /** No room for a gain and a cut on one line. */
+  stacked?: boolean;
+  /** What an export would be made with now, to tell a row exported otherwise. */
+  now?: ExportNow;
+}) {
+  if (row.state === 'failed') {
+    return (
+      <div className="min-w-0">
+        <div className="truncate text-[12.5px] font-medium text-err" title={row.exportError?.message}>
+          {row.exportError ? rowErrorCopy(row.exportError, row.entry.path) : 'Could not export'}
+        </div>
+        <div className="truncate text-[12px] text-fg-2">
+          {row.changedOnDisk ? PRESS_ANALYSE : 'The file was not changed'}
+        </div>
+      </div>
+    );
+  }
   if (row.state === 'error') {
     const missing = row.error?.kind === 'io' && /no such file|not found/i.test(row.error.message);
     return (
@@ -292,6 +363,17 @@ export function ActionCell({ row, bpmRange }: { row: Row; bpmRange: [number, num
         </div>
       </div>
     );
+  }
+  if (row.changedOnDisk) {
+    return (
+      <div className="min-w-0">
+        <div className="truncate text-[12.5px] font-medium">Changed since it was analysed</div>
+        <div className="truncate text-[12px] text-fg-2">{PRESS_ANALYSE}</div>
+      </div>
+    );
+  }
+  if (row.export) {
+    return <ExportActionCell row={row} exportRow={row.export} stacked={stacked} now={now} />;
   }
   if (!row.plan) return <Dash />;
   const action = actionText(row.plan);
@@ -311,7 +393,7 @@ export function ActionCell({ row, bpmRange }: { row: Row; bpmRange: [number, num
         {action.main}
       </div>
       {detail && (
-        <div className="truncate text-[11px] text-fg-2" title={detail}>
+        <div className="truncate text-[12px] text-fg-2" title={detail}>
           {detail}
         </div>
       )}

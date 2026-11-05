@@ -67,6 +67,8 @@ fn copies_that_would_share_a_name_are_refused_before_anything_is_written() {
     std::fs::write(a.join("Track.wav"), wav_bytes(false)).expect("a/Track.wav");
     std::fs::write(b.join("TRACK.wav"), wav_bytes(false)).expect("b/TRACK.wav");
     let out = lib.base.join("out");
+    std::fs::create_dir_all(&out).expect("out");
+    let folds_case = lib.base.join("OUT").exists();
     let run = lib.run_in(
         &lib.music,
         &[
@@ -79,6 +81,26 @@ fn copies_that_would_share_a_name_are_refused_before_anything_is_written() {
             arg(&out),
         ],
     );
+    if !folds_case {
+        // These are two different names on this volume, so both copies are written.
+        assert_eq!(run.code, Some(0), "{}", run.text());
+        let mut written: Vec<String> = std::fs::read_dir(&out)
+            .expect("out")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        written.sort();
+        assert_eq!(
+            written,
+            vec![
+                "TRACK.wav",
+                "TRACK.wav.soundcheck.json",
+                "Track.wav",
+                "Track.wav.soundcheck.json"
+            ]
+        );
+        return;
+    }
     assert_eq!(run.code, Some(2), "{}", run.text());
     assert!(
         run.stdout.starts_with("a/Track.wav: gain -1.00 dB"),

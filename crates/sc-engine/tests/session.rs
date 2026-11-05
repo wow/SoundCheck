@@ -246,3 +246,118 @@ fn median_of_nothing_is_none() {
         None::<Lufs>
     );
 }
+
+/// A session holding one analysed tone, and its id.
+fn analysed_tone(dir: &std::path::Path) -> (Mutex<Session>, u32) {
+    common::tone_wav(dir, "1.wav", 5.0, 0.1);
+    let session = Mutex::new(Session::new(DecideSettings::dj()));
+    let ids = add(&mut session.lock().unwrap(), &[dir.to_path_buf()]);
+    run_job(
+        &session,
+        1,
+        &ids,
+        &settings(),
+        &CancelToken::new(),
+        &mut |_| {},
+    );
+    (session, ids[0])
+}
+
+#[test]
+fn identity_is_of_the_file_before_its_analysis_read_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (session, id) = analysed_tone(dir.path());
+    let path = dir.path().join("1.wav");
+    let before = sc_io::txn::file_identity(&path).unwrap();
+    assert_eq!(
+        session
+            .lock()
+            .unwrap()
+            .planning_row(id)
+            .unwrap()
+            .identity
+            .as_deref(),
+        Some(before.as_str())
+    );
+    // An analysis that read an older version keeps that version's identity, whatever is on disk.
+    let record = session.lock().unwrap().planning_row(id).unwrap().record;
+    let report = sc_engine::AnalyzeReport {
+        schema: sc_engine::REPORT_SCHEMA,
+        cache: sc_engine::CacheStatus::Bypassed,
+        record,
+        identity: Some("read earlier".to_owned()),
+        bpm_range: (sc_core::Bpm(60.0), sc_core::Bpm(120.0)),
+    };
+    session.lock().unwrap().on_engine_event(
+        2,
+        sc_engine::EngineEvent::Analysed {
+            file_id: id,
+            report: Box::new(report),
+            edit: sc_engine::EditState::default(),
+        },
+    );
+    let s = session.lock().unwrap();
+    assert_eq!(
+        s.planning_row(id).unwrap().identity.as_deref(),
+        Some("read earlier")
+    );
+    assert_eq!(
+        s.snapshot().rows[0].analysed_range,
+        Some((sc_core::Bpm(60.0), sc_core::Bpm(120.0))),
+        "each row keeps the range it was analysed with"
+    );
+}
+
+fn skipped_event(file_id: u32, reason: sc_core::export::ExportSkip) -> sc_engine::EngineEvent {
+    sc_engine::EngineEvent::ExportSkipped {
+        file_id,
+        outcome: Box::new(sc_core::export::ExportOutcome::Skip { reason }),
+        duration: sc_core::Seconds(5.0),
+        codec: sc_core::plan::Codec::Wav,
+        xml: Box::new(sc_core::export::XmlTrackInfo {
+            grid: sc_core::export::XmlGrid::Absent,
+            title: None,
+            artist: None,
+        }),
+    }
+}
+
+#[test]
+fn confirming_a_grid_marks_a_row_skipped_for_its_grid() {
+    use sc_core::export::ExportSkip;
+    let dir = tempfile::tempdir().unwrap();
+    let (session, id) = analysed_tone(dir.path());
+    let mut s = session.lock().unwrap();
+    s.on_engine_event(2, skipped_event(id, ExportSkip::GridNeedsReview));
+    assert!(!s.snapshot().rows[0].export_stale);
+    let edit = sc_engine::EditState {
+        confirmed: true,
+        ..sc_engine::EditState::default()
+    };
+    // The same grid: only the confirmation changes.
+    let update = s.set_grid(id, None, edit).unwrap();
+    assert!(update.export_stale);
+    assert!(s.snapshot().rows[0].export_stale);
+}
+
+#[test]
+fn confirming_a_grid_does_not_mark_a_row_skipped_for_the_file_itself() {
+    use sc_core::export::ExportSkip;
+    let dir = tempfile::tempdir().unwrap();
+    let (session, id) = analysed_tone(dir.path());
+    let mut s = session.lock().unwrap();
+    s.on_engine_event(
+        2,
+        skipped_event(
+            id,
+            ExportSkip::NotDjSafeRate {
+                sample_rate_hz: 96_000,
+            },
+        ),
+    );
+    let edit = sc_engine::EditState {
+        confirmed: true,
+        ..sc_engine::EditState::default()
+    };
+    assert!(!s.set_grid(id, None, edit).unwrap().export_stale);
+}

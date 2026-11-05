@@ -7,11 +7,13 @@ SoundCheck is a free, open-source desktop app for DJs and producers. Drop a fold
 > **Status: in development, no usable release yet.** What works today, from source:
 > - **The app** analyses a dropped library (loudness, BPM, meter and bar 1, with a Needs-review queue) and opens any track in a grid view to inspect and fix its grid while a click plays along, with live IN/OUT meters, an original/processed A/B and a volume control. It does not write files yet.
 > - **`sc-cli apply`** already changes WAV, AIFF and FLAC files: gain and an optional head trim (snapped back up to 1 ms to the quietest frame and faded in over 2 ms), every other chunk, block and tag carried byte for byte, verified, with a backup in `~/Music/SoundCheck Backups` and `sc-cli undo`.
-> - **`sc-cli process <files> --batch-mode prepare|library`** exports: the planned gain, the Prepare cut and the tags written in place after a backup (or as copies with `--out`), verified against the planned length, with a sidecar recording the exported grid; grid edits and confirmations made in the app carry over to the exported file.
+> - **`sc-cli process <files> --batch-mode prepare|library --out <dir>`** exports: the planned gain, the Prepare cut and the tags written as copies (or, with `--in-place`, in place after a backup; one of the two is required), verified against the planned length, with a sidecar recording the exported grid; grid edits and confirmations made in the app carry over to the exported file.
 > - **`sc-cli process`** also writes the batch's **rekordbox XML** (`soundcheck-rekordbox.xml`: each gridded track's location, tags and a 4/4 `TEMPO` with bar 1 where the export put it; importing a track overwrites its rekordbox grid and info, so try one first) and a **`grid-report.csv`**, into the `--out` folder or `~/Music/SoundCheck/exports/<date time>/`; **`sc-cli xml <files>`** writes the XML for files already exported or only analysed.
 > - **`sc-cli plan --batch-mode prepare|library`** previews what an export will do to each file: the gain, the head cut (`Cut 0.21 s`, `Starts on bar 1`, `Starts on a bar line (bar 1 at 8.00 s)`, `Not cut: bar 1 1.00 s in`, or `Not cut: grid needs review` until the grid is confirmed), the tags, or why a file is left to the rekordbox XML (MP3/AAC for now) or skipped.
 >
-> Exporting from the app and MP3 output come next; `sc-cli process` already checks every exported file's grid against the written file's own analysis. The first pre-release, `v0.1.0-alpha.1`, follows once exported files pass rekordbox 7's own analysis; `v0.1.0` is the first release for everyone. Watch the releases page or the changelog.
+> - **Exporting from the app**: the rail's Export section, a summary of what will happen to each file before anything is written, row states with what was verified and each file's grid check, Revert, and the batch's rekordbox XML and `grid-report.csv` in the footer.
+>
+> MP3 output comes next; every exported file's grid is already checked against the written file's own analysis. The first pre-release, `v0.1.0-alpha.1`, follows once exported files pass rekordbox 7's own analysis; `v0.1.0` is the first release for everyone. Watch the releases page or the changelog.
 
 ## What v0.1 will do
 
@@ -40,7 +42,7 @@ pnpm dev:mock                 # the UI alone in a browser, with synthetic tracks
 cargo run --release -p sc-cli -- analyze <file>          # loudness, BPM, meter and bar 1
 cargo run --release -p sc-cli -- plan <files>            # what processing would do to each file
 cargo run --release -p sc-cli -- plan <files> --batch-mode prepare   # ... and what exporting would write
-cargo run --release -p sc-cli -- process <files> --batch-mode prepare   # export (backup first; --out <dir> for copies)
+cargo run --release -p sc-cli -- process <files> --batch-mode prepare --out <dir>   # export copies (--in-place replaces the files, backup first)
 cargo run --release -p sc-cli -- apply <files> --gain-db -3   # change files (backup first; --out <dir> for copies)
 cargo run --release -p sc-cli -- undo <files>            # put the previous version back
 cargo run --release -p sc-cli -- journal                 # recorded changes; `recover` finishes interrupted ones

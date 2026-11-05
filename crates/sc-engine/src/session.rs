@@ -7,27 +7,27 @@
 //! analysed grid before the evidence is dropped, and a confirmed grid needs no review.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
-use std::time::Duration;
 
 use sc_core::analysis::{AnalysisRecord, Grid};
+use sc_core::export::SkipCure;
 use sc_core::ipc::{
-    ExportRow, FileEntry, FileInfo, IpcError, JobEvent, JobId, Replan, RowAnalysis, RowPlan,
-    RowUpdate, SessionRow, SessionSnapshot,
+    ExportAction, ExportArtefacts, ExportRow, ExportSummary, ExportedWith, FileEntry, FileInfo,
+    IpcError, JobEvent, JobId, Replan, RowAnalysis, RowPlan, RowUpdate, SessionRow,
+    SessionSnapshot,
 };
 use sc_core::plan::{DecideSettings, GainPlan, Plan};
-use sc_core::{Lufs, Result};
+use sc_core::{Bpm, Lufs, Result};
 use sc_io::edits::EditStore;
 use unicode_normalization::UnicodeNormalization;
 
-use crate::analyze::CacheStatus;
 use crate::batch::{BatchFile, BatchSettings, EngineEvent, Task, run_batch};
 use crate::cancel::CancelToken;
 use crate::decide::decide;
 use crate::edits::{EditState, apply_saved};
-use crate::export::ProcessDone;
-use crate::export::row as export_row;
+
+mod events;
 
 /// One file the user added.
 #[derive(Debug, Clone)]
@@ -41,6 +41,14 @@ struct Tracked {
     export_running: Option<Box<ExportRow>>,
     /// A change of the file made in place is in effect: `revert_file` can put it back.
     revertible: bool,
+    /// A grid different from what the standing export wrote was saved since.
+    export_stale: bool,
+    /// The copy the standing export wrote to a folder.
+    copy: Option<PathBuf>,
+    /// What the file was when `record`'s analysis read it (`sc_io::txn::file_identity`).
+    identity: Option<String>,
+    /// The BPM range `record` was analysed with.
+    analysed_range: Option<(Bpm, Bpm)>,
 }
 
 impl Tracked {
@@ -65,6 +73,7 @@ impl Tracked {
             row: Box::new(self.row(false)?),
             plan: self.plan(settings)?,
             revision,
+            export_stale: self.export_stale,
         })
     }
 }
@@ -76,6 +85,32 @@ fn row_of(record: &AnalysisRecord, edit: EditState, cached: bool) -> RowAnalysis
         confirmed: edit.confirmed,
         ..RowAnalysis::from_record(record, cached)
     }
+}
+
+/// A reverted file's own analysis.
+#[derive(Debug, Clone)]
+pub struct RevertedAnalysis {
+    /// The analysis, with the saved edit applied.
+    pub record: AnalysisRecord,
+    /// The state of that edit.
+    pub edit: EditState,
+    /// What the file was before the analysis read it.
+    pub identity: Option<String>,
+    /// The BPM range it used.
+    pub bpm_range: (Bpm, Bpm),
+}
+
+/// What planning one file's export takes.
+#[derive(Debug, Clone)]
+pub struct PlanningRow {
+    /// Its analysis with the grid as shown.
+    pub record: AnalysisRecord,
+    /// The state of that grid.
+    pub edit: EditState,
+    /// An earlier change of it is in effect.
+    pub revertible: bool,
+    /// What the file was when that analysis was made.
+    pub identity: Option<String>,
 }
 
 /// Files, analyses and settings of one app session.
@@ -91,6 +126,13 @@ pub struct Session {
     revision: u32,
     /// Where the user's grid edits are saved; `None` applies none.
     edits: Option<EditStore>,
+    /// The latest batch's rekordbox XML and grid report, or why they could not be written, for a
+    /// window that reloads and never saw the event.
+    artefacts: Option<std::result::Result<ExportArtefacts, IpcError>>,
+    /// What became of the latest batch.
+    last_export: Option<ExportSummary>,
+    /// What each running export is made with.
+    export_jobs: BTreeMap<JobId, ExportedWith>,
 }
 
 impl Session {
@@ -105,6 +147,9 @@ impl Session {
             settings,
             revision: 0,
             edits: None,
+            artefacts: None,
+            last_export: None,
+            export_jobs: BTreeMap::new(),
         }
     }
 
@@ -141,6 +186,10 @@ impl Session {
                     export: None,
                     export_running: None,
                     revertible: false,
+                    export_stale: false,
+                    copy: None,
+                    identity: None,
+                    analysed_range: None,
                 },
             );
             added.push(entry);
@@ -153,6 +202,56 @@ impl Session {
     pub fn clear(&mut self) {
         self.files.clear();
         self.by_path.clear();
+        self.artefacts = None;
+        self.last_export = None;
+    }
+
+    /// What became of the latest batch; `None` while one runs, and when it could not start.
+    pub fn set_last_export(&mut self, summary: Option<ExportSummary>) {
+        self.last_export = summary;
+    }
+
+    /// An export starts as job `job_id`, made with `with`: its rows say so.
+    pub fn begin_export(&mut self, job_id: JobId, with: ExportedWith) {
+        self.export_jobs.insert(job_id, with);
+    }
+
+    /// The export `job_id` has ended.
+    pub fn end_export(&mut self, job_id: JobId) {
+        self.export_jobs.remove(&job_id);
+    }
+
+    /// The settings revision now.
+    #[must_use]
+    pub fn revision(&self) -> u32 {
+        self.revision
+    }
+
+    /// The copy the file's standing export wrote to a folder.
+    #[must_use]
+    pub fn exported_copy(&self, file_id: u32) -> Option<PathBuf> {
+        self.files.get(&file_id)?.copy.clone()
+    }
+
+    /// The latest batch's artefacts, or why they could not be written; `None` for a batch that
+    /// has none (yet).
+    pub fn set_artefacts(
+        &mut self,
+        artefacts: Option<std::result::Result<ExportArtefacts, IpcError>>,
+    ) {
+        self.artefacts = artefacts;
+    }
+
+    /// What planning the file's export takes. `None` until it is analysed.
+    #[must_use]
+    pub fn planning_row(&self, file_id: u32) -> Option<PlanningRow> {
+        let t = self.files.get(&file_id)?;
+        Some(PlanningRow {
+            record: t.record.clone()?,
+            edit: t.edit,
+            revertible: t.revertible,
+            identity: t.identity.clone(),
+        })
     }
 
     /// Files in the session.
@@ -233,8 +332,22 @@ impl Session {
                     plan: t.plan(&self.settings),
                     export: t.export_running.clone().or_else(|| t.export.clone()),
                     revertible: t.revertible,
+                    export_stale: t.export_stale,
+                    analysed_range: t.analysed_range,
                 })
                 .collect(),
+            running_jobs: Vec::new(),
+            last_export: self.last_export.clone(),
+            artefacts: self
+                .artefacts
+                .as_ref()
+                .and_then(|a| a.as_ref().ok())
+                .cloned(),
+            artefacts_failed: self
+                .artefacts
+                .as_ref()
+                .and_then(|a| a.as_ref().err())
+                .cloned(),
         }
     }
 
@@ -265,6 +378,17 @@ impl Session {
     ) -> Option<RowUpdate> {
         let t = self.files.get_mut(&file_id)?;
         let record = t.record.as_mut()?;
+        // What the export wrote no longer holds: another grid, or one withheld now confirmed.
+        let released = t.export.as_ref().is_some_and(|e| e.grid_withheld) && edit.confirmed;
+        let skip = t.export.as_ref().and_then(|e| match e.action {
+            ExportAction::Skip { reason } => Some(reason),
+            _ => None,
+        });
+        let about_file = skip.is_some_and(|reason| reason.cure() == SkipCure::File);
+        let flipped = skip.is_some() && edit.confirmed != t.edit.confirmed;
+        if t.export.is_some() && !about_file && (record.grid != grid || released || flipped) {
+            t.export_stale = true;
+        }
         if grid.is_some() {
             record.grid_skipped = None;
         }
@@ -277,6 +401,7 @@ impl Session {
             row,
             plan,
             revision: self.revision,
+            export_stale: t.export_stale,
         })
     }
 
@@ -288,14 +413,14 @@ impl Session {
     }
 
     /// The file `file_id` is its original again (a revert): `info` is what its headers say and
-    /// `analysis` its own analysis with its saved edit applied, or `None` when it could not be
-    /// analysed. No export of it stands any more; with `earlier_changes` still in effect, another
+    /// `analysis` its own analysis with its saved edit applied, what the file was before that read
+    /// it and the BPM range it used, or `None` when it could not be analysed. No export of it stands any more; with `earlier_changes` still in effect, another
     /// revert can go further back. Returns the row and its plan, when analysed.
     pub fn set_reverted(
         &mut self,
         file_id: u32,
         info: FileInfo,
-        analysis: Option<(AnalysisRecord, EditState)>,
+        analysis: Option<RevertedAnalysis>,
         earlier_changes: usize,
     ) -> Option<RowUpdate> {
         let revision = self.revision;
@@ -305,12 +430,16 @@ impl Session {
         t.export = None;
         t.export_running = None;
         t.revertible = earlier_changes > 0;
-        let (record, edit) = analysis.unzip();
-        t.record = record.map(|mut record| {
-            record.evidence = None;
-            record
+        t.export_stale = false;
+        t.copy = None;
+        let analysed = analysis.map(|mut a| {
+            a.record.evidence = None;
+            a
         });
-        t.edit = edit.unwrap_or_default();
+        t.identity = analysed.as_ref().and_then(|a| a.identity.clone());
+        t.analysed_range = analysed.as_ref().map(|a| a.bpm_range);
+        t.edit = analysed.as_ref().map(|a| a.edit).unwrap_or_default();
+        t.record = analysed.map(|a| a.record);
         t.update(file_id, &settings, revision)
     }
 
@@ -341,163 +470,6 @@ impl Session {
         };
         Some(Lufs(median))
     }
-
-    /// Turns an engine event of a job into what the UI receives, storing analyses and export
-    /// rows on the way; the evidence of an analysis stays out of both. `None` for an export event
-    /// of a file no longer in the session (the list was cleared meanwhile).
-    pub fn on_engine_event(&mut self, job_id: JobId, event: EngineEvent) -> Option<JobEvent> {
-        Some(match event {
-            EngineEvent::Started { file_id } => JobEvent::Started { job_id, file_id },
-            EngineEvent::Progress { file_id, fraction } => JobEvent::Progress {
-                job_id,
-                file_id,
-                fraction,
-            },
-            EngineEvent::Analysed {
-                file_id,
-                report,
-                edit,
-            } => {
-                let mut record = report.record;
-                record.evidence = None;
-                let codec = self
-                    .files
-                    .get(&file_id)
-                    .map_or(sc_core::plan::Codec::Other, |t| t.entry.info.codec);
-                let row = Box::new(row_of(&record, edit, report.cache == CacheStatus::Hit));
-                let plan = decide(&record, codec, &self.settings, edit.confirmed);
-                if let Some(t) = self.files.get_mut(&file_id) {
-                    t.record = Some(record);
-                    t.edit = edit;
-                }
-                JobEvent::Analysed {
-                    job_id,
-                    file_id,
-                    row,
-                    plan,
-                    revision: self.revision,
-                }
-            }
-            EngineEvent::Failed { file_id, error } => {
-                self.end_running_export(file_id);
-                failed_event(job_id, file_id, error)
-            }
-            EngineEvent::Cancelled { file_id } => {
-                self.end_running_export(file_id);
-                JobEvent::Cancelled { job_id, file_id }
-            }
-            EngineEvent::Batch(p) => JobEvent::Batch {
-                job_id,
-                done: saturating_u32(p.done),
-                total: saturating_u32(p.total),
-                eta_ms: p.eta.map(millis),
-                // Display precision.
-                #[allow(clippy::cast_possible_truncation)]
-                realtime_x: p.realtime_x.map(|x| x as f32),
-            },
-            EngineEvent::Processing { file_id, plan } => {
-                let t = self.files.get_mut(&file_id)?;
-                let row = export_row::planned(&plan, t.revertible);
-                t.export_running = Some(row.clone());
-                JobEvent::Processing {
-                    job_id,
-                    file_id,
-                    row,
-                }
-            }
-            EngineEvent::Written { file_id, report } => {
-                let t = self.files.get_mut(&file_id)?;
-                let Some(row) = t.export_running.take() else {
-                    return Some(lost_report(job_id, file_id));
-                };
-                let row = export_row::written(row, &report);
-                t.revertible = row.revertible;
-                t.export_running = Some(row.clone());
-                JobEvent::Written {
-                    job_id,
-                    file_id,
-                    row,
-                }
-            }
-            EngineEvent::ExportSkipped {
-                file_id, outcome, ..
-            } => {
-                let t = self.files.get_mut(&file_id)?;
-                let row = export_row::skipped(&outcome, t.revertible);
-                t.export_running = None;
-                t.export = Some(row.clone());
-                JobEvent::ExportSkipped {
-                    job_id,
-                    file_id,
-                    row,
-                }
-            }
-            EngineEvent::Done { file_id, done } => return self.on_done(job_id, file_id, *done),
-        })
-    }
-
-    /// A file's export ended without changing it: its last export stands.
-    fn end_running_export(&mut self, file_id: u32) {
-        if let Some(t) = self.files.get_mut(&file_id) {
-            t.export_running = None;
-        }
-    }
-
-    /// A file is written and checked. Written in place, the row now is the written file: its own
-    /// analysis (none when that did not finish: what was measured before no longer holds).
-    fn on_done(&mut self, job_id: JobId, file_id: u32, mut done: ProcessDone) -> Option<JobEvent> {
-        let revision = self.revision;
-        let settings = self.settings;
-        let t = self.files.get_mut(&file_id)?;
-        let Some(row) = t.export_running.take() else {
-            return Some(lost_report(job_id, file_id));
-        };
-        let row = export_row::done(row, &done);
-        t.export = Some(row.clone());
-        let in_place = done.output == Path::new(&t.entry.path);
-        let update = if in_place {
-            t.record = done.analysis.take().map(|mut record| {
-                record.evidence = None;
-                *record
-            });
-            t.edit = if t.record.is_some() {
-                done.edit
-            } else {
-                EditState::default()
-            };
-            t.update(file_id, &settings, revision).map(Box::new)
-        } else {
-            None
-        };
-        Some(JobEvent::ExportDone {
-            job_id,
-            file_id,
-            row,
-            in_place,
-            update,
-        })
-    }
-}
-
-/// The failed event of `file_id`.
-fn failed_event(job_id: JobId, file_id: u32, error: sc_core::Error) -> JobEvent {
-    JobEvent::Failed {
-        job_id,
-        file_id,
-        error: IpcError {
-            file_id: Some(file_id),
-            ..IpcError::from(error)
-        },
-    }
-}
-
-/// An export event that came without the ones before it, which a batch never sends.
-fn lost_report(job_id: JobId, file_id: u32) -> JobEvent {
-    failed_event(
-        job_id,
-        file_id,
-        sc_core::Error::Internal("a written file lost its report".into()),
-    )
 }
 
 /// Runs one analysis job over `file_ids` (whatever `settings.task` says; an export runs through
@@ -550,12 +522,4 @@ pub fn run_job(
             });
         }
     }
-}
-
-fn saturating_u32(n: usize) -> u32 {
-    u32::try_from(n).unwrap_or(u32::MAX)
-}
-
-fn millis(d: Duration) -> u32 {
-    u32::try_from(d.as_millis()).unwrap_or(u32::MAX)
 }

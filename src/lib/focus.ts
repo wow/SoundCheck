@@ -20,6 +20,15 @@ export function ownsKey(target: EventTarget | null, key: string): boolean {
 const CONTROL = 'button, a[href], [role="button"], [role="menuitem"]';
 
 /**
+ * Commits what is being typed: a text field saves on blur, and a click on a button does not take
+ * focus from it ({@link keepFocusOnClick}), so anything that reads the settings must call this.
+ */
+export function commitFocusedField(): void {
+  const active = document.activeElement;
+  if (active instanceof HTMLInputElement && active.type !== 'checkbox') active.blur();
+}
+
+/**
  * For `onMouseDownCapture` at the root: a click on a button does not move focus to it, as in a
  * native Mac app, so Space and Enter stay the window's shortcuts after a click. Tab still
  * focuses buttons for keyboard use; text fields still take focus.

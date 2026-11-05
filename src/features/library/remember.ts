@@ -1,15 +1,15 @@
 import { restoreSession } from '@/lib/ipc';
 import { loadTrackList, saveTrackList } from '@/lib/persist';
 import { useLibrary } from '@/state/library';
-import { useSettings } from '@/state/settings';
-import { addPaths } from '@/features/pipeline/actions';
+import { addPaths, analyseWritten, pipeline } from '@/features/pipeline/actions';
 
 /**
  * Brings the track list back when the app starts and keeps it saved afterwards.
  *
  * After a window reload the engine still holds the rows, so they come from it. After a restart
  * the saved file paths are added again; their analyses come from the disk cache, and a file that
- * was moved or deleted shows as an error row. Returns a stop function.
+ * was moved or deleted shows as an error row. A job still winding down when the window reloaded
+ * cannot be heard from this page, so the pipeline waits it out. Returns a stop function.
  */
 export function startTrackListPersistence(): () => void {
   let stopped = false;
@@ -26,8 +26,10 @@ export function startTrackListPersistence(): () => void {
     try {
       const snapshot = await restoreSession();
       if (stopped) return;
+      if (snapshot?.runningJobs?.length) pipeline().send({ type: 'WIND_DOWN' });
       if (snapshot?.rows?.length) {
-        useLibrary.getState().restore(snapshot, useSettings.getState().bpmRange);
+        useLibrary.getState().restore(snapshot);
+        if (!snapshot.runningJobs?.length) analyseWritten();
       } else {
         const paths = await loadTrackList();
         if (stopped) return;

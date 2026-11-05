@@ -425,7 +425,7 @@ export function gridCommand(
         edited: JSON.stringify(g) !== JSON.stringify(open.analysed),
         confirmed,
       };
-      const update: RowUpdate = { fileId, row: analysis, plan, revision: row.revision };
+      const update: RowUpdate = { fileId, row: analysis, plan, revision: row.revision, exportStale: false };
       return update;
     }
     case 'player_play':

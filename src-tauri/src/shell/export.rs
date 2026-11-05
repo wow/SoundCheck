@@ -1,23 +1,26 @@
-//! The export commands' bodies: starting an export, reverting a file, writing a rekordbox XML of
-//! analysed rows and forgetting a change recovery left pending. Every one of them is refused while
-//! the start-up recovery runs: the engine would only wait for it, and the user is better told.
+//! The export commands' bodies: saying what an export would do, starting one, reverting a file,
+//! writing a rekordbox XML of analysed rows and forgetting a change recovery left pending. Every
+//! one of them is refused while the start-up recovery runs: the engine would only wait for it, and
+//! the user is better told.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use sc_core::Error;
-use sc_core::analysis::AnalysisRecord;
 use sc_core::export::Place as ExportPlace;
 use sc_core::ipc::{
-    ExportArtefacts, ExportRequest, ForgetResult, IpcError, IpcErrorKind, JobEvent, JobId,
-    RecoveryStatus, RevertResult, WriteXmlRequest, XmlNotListed, XmlWritten,
+    ExportArtefacts, ExportPreview, ExportPreviewRow, ExportRequest, ExportedWith, ForgetResult,
+    IpcError, IpcErrorKind, JobEvent, JobId, RecoveryStatus, RevertResult, WriteXmlRequest,
+    XmlNotListed, XmlWritten,
 };
+use sc_core::{ChangeCause, Error};
 use sc_engine::export::{
-    ExportJob, XmlOutRefusal, analysed_row, artefact_conflict, export_artefacts, failed_row,
-    new_artefacts_folder, not_listed, run_export_job, xml_out_refusal, xml_tracks,
+    ExportJob, PreviewInput, XmlOutRefusal, analysed_row, artefact_conflict, export_artefacts,
+    failed_row, new_artefacts_folder, not_listed, preview_row, run_export_job, tracks_listed_in,
+    xml_out_refusal, xml_tracks,
 };
 use sc_engine::{
-    Analyzer, BatchFile, BatchRow, BatchSettings, CancelToken, EditState, EngineEvent, Place,
-    ProcessSettings, Task, XmlSelect, apply_saved, check_inputs, run_batch, undo_file,
+    Analyzer, BatchFile, BatchRow, BatchSettings, CancelToken, EngineEvent, Place, ProcessSettings,
+    RevertedAnalysis, Task, XmlSelect, apply_saved, check_inputs, run_batch, undo_file,
     write_artefacts,
 };
 use sc_io::rekordbox::is_soundcheck_xml;
@@ -68,12 +71,18 @@ impl Shell {
         })
     }
 
-    /// The rows `file_ids` name, in that order, each named once however it is spelled on disk.
+    /// The rows `file_ids` name, in that order, each named once however it is spelled on disk, and
+    /// the later of any files one folder would hold under one name: the first in the list is
+    /// written, and those are skipped.
     ///
     /// # Errors
     /// `invalidArgument` for no file or a row the session does not hold; `listedTwice` for a
-    /// file named twice; `sameOutputName` for two files one folder would hold under one name.
-    fn distinct_rows(&self, file_ids: &[u32], place: &Place) -> Result<Vec<BatchFile>, IpcError> {
+    /// file named twice.
+    fn distinct_rows(
+        &self,
+        file_ids: &[u32],
+        place: &Place,
+    ) -> Result<(Vec<BatchFile>, BTreeSet<u32>), IpcError> {
         if file_ids.is_empty() {
             return Err(Error::InvalidArgument("no files were named".into()).into());
         }
@@ -88,14 +97,17 @@ impl Shell {
             session.batch(file_ids)
         };
         let paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
-        let refused = check_inputs(&paths, place)
-            .into_iter()
-            .zip(&files)
-            .find_map(|(refusal, file)| refusal.map(|e| about(file.file_id, e)));
-        match refused {
-            Some(error) => Err(error),
-            None => Ok(files),
+        let mut same_name = BTreeSet::new();
+        for (refusal, file) in check_inputs(&paths, place).into_iter().zip(&files) {
+            match refusal {
+                Some(Error::SameOutputName { .. }) => {
+                    same_name.insert(file.file_id);
+                }
+                Some(error) => return Err(about(file.file_id, error)),
+                None => {}
+            }
         }
+        Ok((files, same_name))
     }
 
     /// Refuses a folder nothing is written into, whatever the rows do: inside the backups, which
@@ -115,6 +127,169 @@ impl Shell {
         Ok(())
     }
 
+    /// What an export of `req` needs, once everything that refuses it before anything is written
+    /// has had its say.
+    ///
+    /// # Errors
+    /// See [`Self::export`], except `busy`.
+    fn checked_export(
+        &self,
+        req: &ExportRequest,
+    ) -> Result<(ProcessSettings, Vec<BatchFile>, u32), IpcError> {
+        self.refuse_while_recovering()?;
+        let out_dir = req
+            .out_dir
+            .as_deref()
+            .map(|dir| absolute(dir, "the export folder"))
+            .transpose()?;
+        // One read, so the numbers and the revision they are checked by go together.
+        let (decide, revision) = {
+            let session = self.session();
+            (session.settings(), session.revision())
+        };
+        let process = ProcessSettings {
+            decide,
+            export: req.settings,
+            out_dir: out_dir.clone(),
+            backup_root: self.backup_root()?,
+            edits: self.inner.edits.clone(),
+            recovery: self.inner.recovery.clone(),
+            confirmed: req.confirmed.as_ref().map(|c| {
+                c.files
+                    .iter()
+                    .map(|f| (f.file_id, f.identity.clone()))
+                    .collect()
+            }),
+            same_name: BTreeSet::new(),
+        };
+        process.validate()?;
+        let place = out_dir
+            .as_ref()
+            .map_or(Place::InPlace, |dir| Place::Folder(dir.clone()));
+        let (files, same_name) = self.distinct_rows(&req.file_ids, &place)?;
+        let process = ProcessSettings {
+            same_name,
+            ..process
+        };
+        if let Some(dir) = &out_dir {
+            if dir.exists() && !dir.is_dir() {
+                return Err(
+                    Error::InvalidArgument(format!("{} is not a folder", dir.display())).into(),
+                );
+            }
+            self.refuse_destination(dir)?;
+            if req.settings.xml
+                && let Some(conflict) = artefact_conflict(dir)
+            {
+                return Err(conflict.error.into());
+            }
+        }
+        Ok((process, files, revision))
+    }
+
+    /// What exporting `req.file_ids` would do with each, planned as the job plans them, with
+    /// everything the job would refuse refused here too. Nothing is written. A file that cannot be
+    /// planned (not analysed yet, changed since it was analysed, its start unreadable) gets its
+    /// error on its row, as the job would report it on its row.
+    ///
+    /// # Errors
+    /// What [`Self::export`] refuses; `busy` while one of the files is being exported or reverted.
+    pub fn plan_export(&self, req: &ExportRequest) -> Result<ExportPreview, IpcError> {
+        let (process, files, revision) = self.checked_export(req)?;
+        let _hold = self.hold(&files, HoldKind::Reading)?;
+        let rows = files
+            .iter()
+            .map(|file| self.preview_of(file, &process, req))
+            .collect();
+        let shown = |dir: &Path| dir.display().to_string();
+        let artefacts_folder = if req.settings.xml {
+            match &process.out_dir {
+                Some(dir) => Some(shown(dir)),
+                None => self.inner.roots.exports.as_deref().map(shown),
+            }
+        } else {
+            None
+        };
+        let xml_listed = process
+            .out_dir
+            .as_deref()
+            .filter(|_| req.settings.xml)
+            .map_or(0, tracks_listed_in);
+        Ok(ExportPreview {
+            rows,
+            revision,
+            decide: process.decide,
+            xml_listed: u32::try_from(xml_listed).unwrap_or(u32::MAX),
+            backup_folder: process
+                .out_dir
+                .is_none()
+                .then(|| shown(&process.backup_root)),
+            artefacts_folder,
+        })
+    }
+
+    /// What exporting `file` would do, or why that cannot be said.
+    fn preview_of(
+        &self,
+        file: &BatchFile,
+        process: &ProcessSettings,
+        req: &ExportRequest,
+    ) -> ExportPreviewRow {
+        let file_id = file.file_id;
+        let failed = |error: Error| ExportPreviewRow {
+            file_id,
+            row: None,
+            error: Some(about(file_id, error)),
+            identity: None,
+            replaces_copy: false,
+        };
+        let Some(planning) = self.session().planning_row(file_id) else {
+            return failed(Error::InvalidArgument(format!(
+                "{} is not analysed yet",
+                file.path.display()
+            )));
+        };
+        // Read first: a file that changes during the planning is told apart by the job.
+        let identity = match sc_io::txn::file_identity(&file.path) {
+            Ok(identity) => identity,
+            Err(error) => return failed(error),
+        };
+        if planning.identity.as_ref().is_some_and(|i| *i != identity) {
+            return failed(Error::FileChanged {
+                path: file.path.clone(),
+                detail: "since it was analysed; press Analyse to read it again".to_owned(),
+                cause: ChangeCause::SincePlanned,
+            });
+        }
+        let input = PreviewInput {
+            path: &file.path,
+            record: &planning.record,
+            edit: planning.edit,
+            decide: &process.decide,
+            settings: &req.settings,
+            out_dir: process.out_dir.as_deref(),
+            revertible: planning.revertible,
+            same_name: process.same_name.contains(&file_id),
+        };
+        match preview_row(&input) {
+            Ok((mut row, replaces_copy)) => {
+                row.exported_with = Some(ExportedWith::new(
+                    process.decide,
+                    req.settings,
+                    process.out_dir.as_deref(),
+                ));
+                ExportPreviewRow {
+                    file_id,
+                    row: Some(row),
+                    error: None,
+                    identity: Some(identity),
+                    replaces_copy,
+                }
+            }
+            Err(error) => failed(error),
+        }
+    }
+
     /// Starts exporting `req.file_ids`, sending every event to `send`; returns at once with the
     /// job's id. A running job is cancelled with [`Shell::cancel`]. The grid view closes if it
     /// shows a file about to be replaced.
@@ -130,37 +305,18 @@ impl Shell {
         req: ExportRequest,
         send: impl FnMut(JobEvent) + Send + 'static,
     ) -> Result<JobId, IpcError> {
-        self.refuse_while_recovering()?;
-        let out_dir = req
-            .out_dir
-            .as_deref()
-            .map(|dir| absolute(dir, "the export folder"))
-            .transpose()?;
-        let process = ProcessSettings {
-            decide: self.session().settings(),
-            export: req.settings,
-            out_dir: out_dir.clone(),
-            backup_root: self.backup_root()?,
-            edits: self.inner.edits.clone(),
-            recovery: self.inner.recovery.clone(),
-        };
-        process.validate()?;
-        let place = out_dir
+        let (process, files, revision) = self.checked_export(&req)?;
+        if req
+            .confirmed
             .as_ref()
-            .map_or(Place::InPlace, |dir| Place::Folder(dir.clone()));
-        let files = self.distinct_rows(&req.file_ids, &place)?;
-        if let Some(dir) = &out_dir {
-            if dir.exists() && !dir.is_dir() {
-                return Err(
-                    Error::InvalidArgument(format!("{} is not a folder", dir.display())).into(),
-                );
-            }
-            self.refuse_destination(dir)?;
-            if req.settings.xml
-                && let Some(conflict) = artefact_conflict(dir)
-            {
-                return Err(conflict.error.into());
-            }
+            .is_some_and(|c| c.revision != revision)
+        {
+            return Err(IpcError {
+                kind: IpcErrorKind::SettingsChanged,
+                message: "the loudness settings changed after this plan; nothing was done"
+                    .to_owned(),
+                file_id: None,
+            });
         }
         let kind = if req.settings.place == ExportPlace::InPlace {
             HoldKind::ExportInPlace
@@ -211,7 +367,7 @@ impl Shell {
     pub(super) fn revert_analysing(
         &self,
         file_id: u32,
-        analyse: impl FnOnce(&Path) -> sc_core::Result<(AnalysisRecord, EditState)>,
+        analyse: impl FnOnce(&Path) -> sc_core::Result<RevertedAnalysis>,
     ) -> Result<RevertResult, IpcError> {
         self.refuse_while_recovering()?;
         let root = self.backup_root()?;
@@ -253,20 +409,26 @@ impl Shell {
     }
 
     /// The analysis of the file at `path`, with its saved edit applied.
-    fn analyse_original(&self, path: &Path) -> sc_core::Result<(AnalysisRecord, EditState)> {
+    fn analyse_original(&self, path: &Path) -> sc_core::Result<RevertedAnalysis> {
         let mut analyzer = Analyzer::load(
             self.analysis_settings(),
             self.inner.cache.clone(),
             CancelToken::new(),
         )?;
-        let mut record = analyzer.analyze(path)?.record;
+        let report = analyzer.analyze(path)?;
+        let mut record = report.record;
         let edit = self
             .inner
             .edits
             .as_ref()
             .map(|store| apply_saved(&mut record, store))
             .unwrap_or_default();
-        Ok((record, edit))
+        Ok(RevertedAnalysis {
+            record,
+            edit,
+            identity: report.identity,
+            bpm_range: report.bpm_range,
+        })
     }
 
     /// Writes a rekordbox XML of the files `req.file_ids`, as `sc-cli xml` does: each analysed
@@ -306,10 +468,22 @@ impl Shell {
                 self.refuse_destination(dir)?;
             }
         }
-        let files = self.distinct_rows(&req.file_ids, &Place::InPlace)?;
+        let (files, _) = self.distinct_rows(&req.file_ids, &Place::InPlace)?;
         let _hold = self.hold(&files, HoldKind::Reading)?;
+        // A file exported to a folder is listed as that copy, which is what the export made.
+        let files: Vec<BatchFile> = {
+            let session = self.session();
+            files
+                .into_iter()
+                .map(|file| match session.exported_copy(file.file_id) {
+                    Some(copy) if copy.is_file() => BatchFile { path: copy, ..file },
+                    _ => file,
+                })
+                .collect()
+        };
         let rows = self.analysed_rows(&files)?;
         let artefacts = self.write_xml_rows(&rows, out.as_deref())?;
+        self.session().set_artefacts(Some(Ok(artefacts.clone())));
         let not_listed = not_listed(&rows, XmlSelect::All)
             .into_iter()
             .map(|(i, why)| XmlNotListed {

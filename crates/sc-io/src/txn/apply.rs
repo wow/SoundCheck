@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use sc_core::{ChangeCause, Error, RenderRequest, Result};
 
+use super::copy_at::{CopyAt, proven_copy};
 use super::crash;
 use super::finish::finish;
 use super::fsx::{
@@ -25,7 +26,7 @@ use super::journal::{Journal, Line, State, TargetLock, TxnKind, TxnLock};
 use super::meta::{FileId, FileMeta, folder_id, restore, snapshot};
 use super::preflight::{
     Container, Source, check_in_place, check_not_rekordbox, check_outside_backups, check_space,
-    name_in_dir, nearest_existing, resolve, source,
+    name_in_dir, nearest_existing, real_path, resolve, source,
 };
 use super::recover::settle_failure;
 use super::sidecar::{Record, RenderSummary};
@@ -51,6 +52,8 @@ struct Checked {
     /// The source's identity when it was checked, before waiting for the target lock.
     source_id: FileId,
     volume: Volume,
+    /// The earlier copy at the target this one replaces, proven SoundCheck's by its sidecar.
+    replaces: Option<FileId>,
 }
 
 /// What a transaction writes where.
@@ -63,6 +66,8 @@ pub(super) struct Plan<'a> {
     pub target: PathBuf,
     pub target_dir: PathBuf,
     pub temp: PathBuf,
+    /// The earlier copy at the target this one replaces.
+    pub replaces: Option<FileId>,
     /// In place: the backup's first-choice path and its temp file.
     pub backup: Option<(PathBuf, PathBuf)>,
     pub opts: &'a TxnOptions,
@@ -148,7 +153,15 @@ fn check(
     req: &RenderRequest,
     opts: &TxnOptions,
 ) -> Result<Checked> {
-    let (full, dir, name) = resolve(path)?;
+    let (mut full, mut dir, mut name) = resolve(path)?;
+    // A copy is made of the file itself: a link is only kept to refuse it in place.
+    if out_dir.is_some() && full.is_symlink() {
+        full = real_path(&full)?;
+        if let (Some(folder), Some(file)) = (full.parent(), full.file_name()) {
+            dir = folder.to_path_buf();
+            name = file.to_os_string();
+        }
+    }
     check_outside_backups(&full, &opts.backup_root)?;
     let (kind, target_dir, create_dir, volume) = match out_dir {
         None => {
@@ -185,10 +198,19 @@ fn check(
         _ => name.clone(),
     };
     let target = target_dir.join(&out_name);
+    let mut replaces = None;
     if kind == TxnKind::ToFolder {
         check_outside_backups(&target, &opts.backup_root)?;
         if exists(&target) {
-            return Err(Error::AlreadyExists { path: target });
+            let proven = if opts.replace_own_copy {
+                proven_copy(&target, &full)?
+            } else {
+                (CopyAt::Foreign, None)
+            };
+            let (CopyAt::Own, Some(id)) = proven else {
+                return Err(Error::AlreadyExists { path: target });
+            };
+            replaces = Some(id);
         }
     }
     let source_id = FileId::read(&full)?;
@@ -209,6 +231,7 @@ fn check(
         create_dir,
         source_id,
         volume,
+        replaces,
     })
 }
 
@@ -222,7 +245,8 @@ fn plan<'a>(
 ) -> Result<Plan<'a>> {
     if c.kind == TxnKind::InPlace {
         check_in_place(&c.src.path, &c.target_dir, tx.volumes)?;
-    } else if exists(&c.target) {
+    } else if exists(&c.target) && Some(FileId::read(&c.target)?) != c.replaces {
+        // Something took the name, or changed the copy, while this waited for the lock.
         return Err(Error::AlreadyExists { path: c.target });
     }
     let meta = snapshot(&c.src.path)?;
@@ -254,6 +278,7 @@ fn plan<'a>(
         target: c.target,
         target_dir: c.target_dir,
         temp,
+        replaces: c.replaces,
         backup,
         opts,
         journal,
@@ -487,6 +512,15 @@ fn rename_into_place(tx: &Transaction<'_>, plan: &Plan<'_>) -> Result<()> {
     #[cfg(not(test))]
     let _ = tx;
     match plan.kind {
+        // An earlier copy, still what it was when it was proven ours, is replaced atomically.
+        TxnKind::ToFolder if plan.replaces.is_some() => {
+            if FileId::read(&plan.target).ok() != plan.replaces {
+                return Err(Error::AlreadyExists {
+                    path: plan.target.clone(),
+                });
+            }
+            std::fs::rename(&plan.temp, &plan.target).map_err(|e| io_err(&plan.target, e))
+        }
         TxnKind::ToFolder => rename_noreplace(&plan.temp, &plan.target),
         _ => std::fs::rename(&plan.temp, &plan.target).map_err(|e| io_err(&plan.target, e)),
     }

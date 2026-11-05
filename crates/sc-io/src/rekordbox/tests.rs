@@ -364,3 +364,57 @@ fn parse_back() {
         assert_eq!(battito.parse::<u8>().expect("number"), t.battito);
     }
 }
+
+#[test]
+fn what_it_writes_reads_back_as_the_same_bytes() {
+    let tracks = [
+        track("/Music/Şarkı & Co/a.wav", 245.0, tempo(221, 128.0)),
+        track("/Music/c%20d#e.flac", 10.0, tempo(5_000, 174.0)),
+    ];
+    let bytes = xml_bytes(&tracks, "9.9.9-test", "SoundCheck & <co>");
+    let read = read_tracks(&bytes).expect("ours");
+    assert_eq!(read.len(), 2);
+    assert_eq!(read[0].path, tracks[0].path);
+    assert_eq!(xml_bytes(&read, "9.9.9-test", "SoundCheck & <co>"), bytes);
+}
+
+#[test]
+fn an_xml_cut_short_is_not_an_empty_one() {
+    let bytes = xml_bytes(
+        &[track("/Music/a.wav", 245.0, tempo(221, 128.0))],
+        "9.9.9-test",
+        "SoundCheck",
+    );
+    assert!(read_tracks(&bytes).is_some());
+    let cut = |at: usize| read_tracks(&bytes[..at]);
+    assert_eq!(cut(bytes.len() / 2), None, "cut in the collection");
+    let collection_end = bytes
+        .windows(13)
+        .position(|w| w == b"</COLLECTION>")
+        .unwrap();
+    assert_eq!(cut(collection_end + 13), None, "cut after the collection");
+    let empty = xml_bytes(&[], "9.9.9-test", "SoundCheck");
+    assert_eq!(
+        read_tracks(&empty),
+        Some(Vec::new()),
+        "an empty one is fine"
+    );
+}
+
+#[test]
+fn what_it_cannot_read_as_ours_it_says_so() {
+    assert_eq!(
+        read_tracks(b"<DJ_PLAYLISTS><COLLECTION><TRACK Name=\"x\"></TRACK>"),
+        None
+    );
+    assert_eq!(
+        read_tracks(b"<DJ_PLAYLISTS><COLLECTION><TRACK Location=\"file://localhost/a.wav\" TotalTime=\"1\"></TRACK></COLLECTION></DJ_PLAYLISTS>"),
+        None,
+        "a track with no tempo"
+    );
+    assert_eq!(
+        read_tracks(b"<DJ_PLAYLISTS><COLLECTION><TRACK Location=\"file://localhost/a.wav\" TotalTime=\"1\"/></COLLECTION></DJ_PLAYLISTS>"),
+        None,
+        "an empty track"
+    );
+}

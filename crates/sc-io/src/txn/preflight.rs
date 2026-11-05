@@ -114,6 +114,49 @@ pub(crate) fn name_in_dir(dir: &Path, given: &std::ffi::OsStr, ino: u64) -> OsSt
     found.unwrap_or_else(|| given.to_os_string())
 }
 
+/// Whether two names differing only in case are one file in the folder `dir` (which need not exist
+/// yet): read from the nearest folder that does, by asking for it with its name's case swapped.
+/// When that cannot tell, it says yes: two files then keep from sharing a name, never overwrite.
+#[must_use]
+pub fn folder_folds_case(dir: &Path) -> bool {
+    let Ok((base, _)) = nearest_existing(dir) else {
+        return true;
+    };
+    let Ok(device) = std::fs::metadata(&base).map(|m| m.dev()) else {
+        return true;
+    };
+    for folder in base.ancestors() {
+        let Some(name) = folder.file_name().and_then(|n| n.to_str()) else {
+            return true;
+        };
+        let swapped: String = name
+            .chars()
+            .map(|c| {
+                if c.is_uppercase() {
+                    c.to_ascii_lowercase()
+                } else {
+                    c.to_ascii_uppercase()
+                }
+            })
+            .collect();
+        if swapped == name {
+            continue;
+        }
+        let Ok(meta) = std::fs::metadata(folder) else {
+            return true;
+        };
+        // Another volume higher up says nothing about this one.
+        if meta.dev() != device {
+            return true;
+        }
+        return match std::fs::metadata(folder.with_file_name(swapped)) {
+            Ok(other) => other.dev() == meta.dev() && other.ino() == meta.ino(),
+            Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+        };
+    }
+    true
+}
+
 /// The nearest existing folder at or above `path` (resolved), and the part below it.
 pub(crate) fn nearest_existing(path: &Path) -> Result<(PathBuf, PathBuf)> {
     let absolute = if path.is_absolute() {

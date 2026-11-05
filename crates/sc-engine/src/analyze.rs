@@ -17,7 +17,7 @@ use sc_core::analysis::{
     AnalysisRecord, AnalysisSettings, Grid, GridEdit, GridEvidence, Model, OnsetList,
     RECORD_SCHEMA, TagHints,
 };
-use sc_core::{AudioSpec, Error, Result, SampleIndex};
+use sc_core::{AudioSpec, Bpm, Error, Result, SampleIndex};
 use sc_dsp::{KickBand, Onset, OnsetDetector, Resampler, to_mono};
 use sc_io::cache::Cache;
 use sc_io::{Decoder, tags};
@@ -66,6 +66,13 @@ pub struct AnalyzeReport {
     pub cache: CacheStatus,
     /// The analysis.
     pub record: AnalysisRecord,
+    /// What the file was before it was read (`sc_io::txn::file_identity`): a file changed during
+    /// the analysis does not match it afterwards.
+    #[serde(skip)]
+    pub identity: Option<String>,
+    /// The BPM range it was analysed with.
+    #[serde(skip)]
+    pub bpm_range: (Bpm, Bpm),
 }
 
 /// Wall time per stage of one analysis.
@@ -185,6 +192,8 @@ impl Analyzer {
         read_cache: bool,
     ) -> Result<AnalyzeReport> {
         self.check_cancel()?;
+        let identity = sc_io::txn::file_identity(path).ok();
+        let bpm_range = self.settings.bpm_range;
         let (nfc_path, key) = Cache::key_for(path, &self.settings)?;
         if read_cache
             && let Some(cache) = &self.cache
@@ -194,6 +203,8 @@ impl Analyzer {
                 schema: REPORT_SCHEMA,
                 cache: CacheStatus::Hit,
                 record,
+                identity,
+                bpm_range,
             });
         }
 
@@ -254,6 +265,8 @@ impl Analyzer {
             schema: REPORT_SCHEMA,
             cache,
             record,
+            identity,
+            bpm_range,
         })
     }
 }

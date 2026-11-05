@@ -300,14 +300,50 @@ fn duplicate_paths_are_refused_before_anything_is_written() {
     std::fs::create_dir_all(&other_dir).unwrap();
     let same_name = other_dir.join("a.wav");
     tone_wav(&same_name, 0.2, 44_100);
-    let second = shell.expand(vec![same_name.display().to_string()]);
-    let pair = [ids[0], second[0].file_id];
+    let second = analysed(&shell, &[&same_name]);
+    let pair = [ids[0], second[0]];
+    let other_before = sha256(&same_name);
     let out = lib.base().join("out");
-    let err = shell
-        .export(request(&pair, in_folder(prepare()), Some(&out)), |_| {})
-        .unwrap_err();
-    assert_eq!(err.kind, IpcErrorKind::SameOutputName);
-    assert!(!out.exists(), "nothing was written");
+    let (_, events) = export(&shell, request(&pair, in_folder(prepare()), Some(&out)));
+    // The first in the list is written, and the later one skipped with why.
+    assert!(
+        steps(&events, pair[0]).contains(&"exportDone"),
+        "{events:?}"
+    );
+    let skipped = events.iter().find_map(|e| match e {
+        JobEvent::ExportSkipped { file_id, row, .. } if *file_id == pair[1] => Some(row.clone()),
+        _ => None,
+    });
+    let skipped = skipped.expect("skipped");
+    assert_eq!(
+        skipped.action,
+        ExportAction::Skip {
+            reason: ExportSkip::CopyOfOtherTrack
+        }
+    );
+    assert!(
+        skipped.notes[0].contains("another track"),
+        "{:?}",
+        skipped.notes
+    );
+    assert_eq!(sha256(&same_name), other_before, "the source is untouched");
+    let preview = shell
+        .plan_export(&request(
+            &pair,
+            in_folder(prepare()),
+            Some(&lib.base().join("fresh")),
+        ))
+        .unwrap();
+    assert!(matches!(
+        preview.rows[1].row.as_ref().unwrap().action,
+        ExportAction::Skip {
+            reason: ExportSkip::CopyOfOtherTrack
+        }
+    ));
+    assert!(matches!(
+        preview.rows[0].row.as_ref().unwrap().action,
+        ExportAction::Write { .. }
+    ));
 }
 
 #[test]

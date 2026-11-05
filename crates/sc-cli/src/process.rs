@@ -1,7 +1,9 @@
 //! `sc-cli process`: exporting files with the engine's process job (`sc_engine::Task::Process`),
-//! the one the app's Export button runs. Crash recovery runs first; every file is analysed (the
-//! cache is used), planned as `sc-cli plan --batch-mode` plans it, written in place after a
-//! backup (or as a copy with `--out`), verified, and analysed again, its grid checked against
+//! the one the app's Export button runs. It must be told where files go: `--out <dir>` for copies,
+//! or `--in-place` to replace them after a backup; with neither it refuses, because changing the
+//! originals is never a default. Crash recovery runs first; every file is analysed (the
+//! cache is used), planned as `sc-cli plan --batch-mode` plans it, written, verified, and analysed
+//! again, its grid checked against
 //! the one exported (`  grid check:` under its line). Each file prints one line
 //! (or one JSON document) in the order given: what was written, or why not; a refusal prints
 //! three lines on stderr. A summary line ends the text output. Unless `--no-xml`, the batch's
@@ -18,7 +20,8 @@ use sc_core::export::{
     BatchMode, DEFAULT_LEAD_MS, ExportOutcome, ExportPlan, ExportSettings, GridCheck,
     Place as ExportPlace, XmlOnlyReason, XmlTrackInfo,
 };
-use sc_core::plan::Codec;
+use sc_core::ipc::RecoveryStatus;
+use sc_core::plan::{Codec, DecideSettings};
 use sc_core::{Error, Seconds};
 use sc_engine::export::wording::UNVERIFIED;
 use sc_engine::{
@@ -65,6 +68,34 @@ pub struct ArtefactArgs {
     no_xml: bool,
 }
 
+/// Where `process` writes: one of the two is required.
+#[derive(clap::Args)]
+pub struct DestinationArgs {
+    /// Write copies into this folder (created if needed) and leave the files as they are. A copy
+    /// an earlier export wrote there is replaced; any other file of that name is left alone.
+    #[arg(long, value_name = "DIR", conflicts_with = "in_place")]
+    out: Option<PathBuf>,
+    /// Replace the files themselves, after a backup. Either this or --out is required.
+    #[arg(long)]
+    in_place: bool,
+}
+
+impl DestinationArgs {
+    /// Says that `process` was not told where files go, in three lines, and exits: changing the
+    /// originals is never a default.
+    fn require(&self) {
+        if self.out.is_some() || self.in_place {
+            return;
+        }
+        eprintln!(
+            "process: nothing written\n  why: it was not told where the files go, and it changes \
+             the originals only when asked\n  what to do: pass --out <folder> to write copies, or \
+             --in-place to replace the files after a backup"
+        );
+        std::process::exit(crate::EXIT_FAILED);
+    }
+}
+
 /// The flags of `process`.
 #[derive(clap::Args)]
 pub struct ProcessArgs {
@@ -78,9 +109,8 @@ pub struct ProcessArgs {
     /// Change no audio: no gain and no cut; only tags carry the grid.
     #[arg(long)]
     grid_only: bool,
-    /// Write copies into this folder (created if needed) and leave the files as they are.
-    #[arg(long, value_name = "DIR")]
-    out: Option<PathBuf>,
+    #[command(flatten)]
+    destination: DestinationArgs,
     /// Output bits per sample.
     #[arg(long, value_enum, default_value = "source")]
     depth: DepthArg,
@@ -121,7 +151,7 @@ impl ProcessArgs {
         };
         let defaults = ExportSettings::new(mode);
         let settings = ExportSettings {
-            place: if self.out.is_some() {
+            place: if self.destination.out.is_some() {
                 ExportPlace::Folder
             } else {
                 ExportPlace::InPlace
@@ -170,36 +200,56 @@ struct Counts {
     failed: usize,
 }
 
+/// How the batch exports. No confirm step checks anything here: the command line is the
+/// confirmation.
+fn process_settings(
+    decide: DecideSettings,
+    export: ExportSettings,
+    out_dir: Option<PathBuf>,
+    backup_root: PathBuf,
+    recovered: RecoveryStatus,
+) -> anyhow::Result<ProcessSettings> {
+    Ok(ProcessSettings {
+        decide,
+        export,
+        out_dir,
+        backup_root,
+        edits: Some(EditStore::open(EditStore::default_dir()?)),
+        recovery: Arc::new(RecoveryGate::new(recovered)),
+        confirmed: None,
+        same_name: std::collections::BTreeSet::new(),
+    })
+}
+
 /// `sc-cli process`: returns how many files failed.
 ///
 /// # Errors
 /// Invalid flags, an unreachable backup, cache or edits folder, or a failed write to stdout.
 pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
+    args.destination.require();
     let decide = decide_settings(args.mode, args.target, args.ceiling, &args.analysis);
     decide.validate()?;
     let export = args.export_settings()?;
     // Refused before anything is exported: the batch could not write its XML or report.
-    if export.xml && refuse_foreign_artefact(args.out.as_deref()) {
+    if export.xml && refuse_foreign_artefact(args.destination.out.as_deref()) {
         return Ok(1);
     }
     let root = args.backup.resolve()?;
     let cache = Cache::open(Cache::default_dir()?);
     let recovered = recover_first(&root, &cache);
-    let out_dir = args.out.as_ref().map(std::path::absolute).transpose()?;
+    let out_dir = args
+        .destination
+        .out
+        .as_ref()
+        .map(std::path::absolute)
+        .transpose()?;
     let place = out_dir.clone().map_or(Place::InPlace, Place::Folder);
     let action = if out_dir.is_some() {
         Action::Copy
     } else {
         Action::Change
     };
-    let process = ProcessSettings {
-        decide,
-        export,
-        out_dir,
-        backup_root: root,
-        edits: Some(EditStore::open(EditStore::default_dir()?)),
-        recovery: Arc::new(RecoveryGate::new(recovered)),
-    };
+    let process = process_settings(decide, export, out_dir, root, recovered)?;
     let settings = BatchSettings {
         analysis: crate::settings(&args.analysis),
         workers: args.jobs.unwrap_or_else(default_workers),
@@ -264,7 +314,7 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
     }
     if export.xml && printer.rows.iter().any(|r| r.action != RowAction::Failed) {
         let now = std::time::SystemTime::now();
-        let dir = artefacts_dir(args.out.as_deref(), now)?;
+        let dir = artefacts_dir(args.destination.out.as_deref(), now)?;
         let playlist = sc_io::rekordbox::playlist_name(now);
         let written = write_artefacts(&dir, &printer.rows, XmlSelect::Batch, &playlist)?;
         print_artefacts(&written, &playlist, export.batch_mode, args.json);
@@ -294,6 +344,11 @@ fn foreign_artefact(out: &Path) -> Option<(PathBuf, String)> {
             Error::AlreadyExists { .. } => format!(
                 "the batch writes its {} here, and a file SoundCheck did not write is already \
                  there; it is never replaced",
+                conflict.name
+            ),
+            Error::Corrupt { .. } => format!(
+                "it starts like the {} SoundCheck writes but cannot be read, so what it lists would \
+                 be lost; it is left as it is",
                 conflict.name
             ),
             other => format!("it could not be read to check it: {other}"),

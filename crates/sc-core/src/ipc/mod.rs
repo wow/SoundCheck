@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 pub use export::{
-    ExportAction, ExportArtefacts, ExportRequest, ExportRow, ExportVerification, ForgetResult,
+    ConfirmedExport, ConfirmedFile, ExportAction, ExportArtefacts, ExportPreview, ExportPreviewRow,
+    ExportRequest, ExportRow, ExportSummary, ExportVerification, ExportedWith, ForgetResult,
     MAX_ROW_NOTES_JSON_BYTES, MAX_STALE_TAGS_JSON_BYTES, RevertResult, WriteXmlRequest,
     XmlNotListed, XmlWritten, bounded_strings,
 };
@@ -30,7 +31,7 @@ use crate::units::{Bpm, DbTp, Lu, Lufs, Seconds};
 pub const MAX_EVENT_BYTES: usize = 256;
 
 /// Largest JSON encoding allowed for one analysed row with its plan, and for one export row.
-pub const MAX_ROW_BYTES: usize = 2048;
+pub const MAX_ROW_BYTES: usize = 3072;
 
 /// Largest JSON encoding allowed for an `exportDone` event, which holds both of those.
 pub const MAX_EXPORT_DONE_BYTES: usize = 2 * MAX_ROW_BYTES;
@@ -333,6 +334,11 @@ pub struct SessionRow {
     /// A change of it is in effect that `revert_file` can put back: also true with no `export`
     /// after a revert that left an earlier change standing.
     pub revertible: bool,
+    /// A grid different from what its export wrote was saved since: exporting it again would write
+    /// something new.
+    pub export_stale: bool,
+    /// The BPM range its analysis was made with, when analysed.
+    pub analysed_range: Option<(Bpm, Bpm)>,
 }
 
 /// Everything the session holds, in the order the files were added.
@@ -344,6 +350,15 @@ pub struct SessionSnapshot {
     pub revision: u32,
     /// The rows.
     pub rows: Vec<SessionRow>,
+    /// Jobs still winding down when this was read: they were cancelled, but until they end their
+    /// files are busy and their rows can still change. Read again until this is empty.
+    pub running_jobs: Vec<JobId>,
+    /// Where the latest batch's rekordbox XML and grid report are, until the next batch.
+    pub artefacts: Option<ExportArtefacts>,
+    /// Why the latest batch's rekordbox XML and grid report could not be written.
+    pub artefacts_failed: Option<IpcError>,
+    /// What became of the latest batch.
+    pub last_export: Option<ExportSummary>,
 }
 
 /// A row's plan, sent when the settings change.
@@ -572,6 +587,8 @@ pub enum IpcErrorKind {
     /// Another job or command is working on the file (`file_id`): exporting it, reverting it,
     /// or, for a change of it, analysing it. Nothing was done; asking again once that ends works.
     Busy,
+    /// The loudness settings changed after the plan the user confirmed.
+    SettingsChanged,
 }
 
 /// An error crossing IPC: a class the UI can branch on plus a human-readable message.

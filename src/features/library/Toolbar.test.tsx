@@ -1,9 +1,12 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import App from '@/App';
 import { useLibrary } from '@/state/library';
 import { usePanels } from '@/state/panels';
-import { entry } from '@/test/fixtures';
+import { useRecovery } from '@/state/recovery';
+import { useSettings } from '@/state/settings';
+import { analysed, entry } from '@/test/fixtures';
+import { Toolbar } from './Toolbar';
 
 /** A window narrower than 1000 px. */
 function narrowWindow() {
@@ -100,5 +103,61 @@ describe('the toolbar in a narrow window', () => {
     fireEvent.keyDown(menu, { key: 'Escape' });
     expect(screen.queryByRole('menu')).toBeNull();
     expect(screen.getByRole('button', { name: 'Add' })).toHaveFocus();
+  });
+
+  it('shows Export in the top bar, since the rail is behind a drawer', () => {
+    render(<App />);
+    expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument();
+    expect(screen.queryByRole('complementary')).toBeNull();
+  });
+
+  it('that button goes by the same rules as the rail\'s', () => {
+    act(() => useLibrary.getState().add([entry(1)]));
+    render(<App />);
+    const button = screen.getByRole('button', { name: 'Export' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', expect.stringMatching(/Analyse the tracks first/));
+  });
+
+  it('with a folder all that is missing, it asks for one instead of sitting disabled', async () => {
+    let asked = false;
+    mockIPC((cmd) => {
+      if (cmd === 'plugin:dialog|open') {
+        asked = true;
+        return '/Users/dj/Out';
+      }
+      return undefined;
+    });
+    useSettings.setState({ place: 'folder', outDir: null });
+    act(() => {
+      useLibrary.getState().add([entry(1)]);
+      useLibrary.getState().applyEvent(analysed(1));
+    });
+    render(<Toolbar busy={false} />);
+    const button = screen.getByRole('button', { name: 'Export' });
+    expect(button).toBeEnabled();
+    expect(button).toHaveAttribute('title', 'Choose a folder');
+    fireEvent.click(button);
+    await waitFor(() => expect(asked).toBe(true));
+    await waitFor(() => expect(useSettings.getState().outDir).toBe('/Users/dj/Out'));
+  });
+
+  it('with anything else in the way, it stays disabled', () => {
+    useSettings.setState({ place: 'folder', outDir: null });
+    useRecovery.setState({ running: true });
+    act(() => {
+      useLibrary.getState().add([entry(1)]);
+      useLibrary.getState().applyEvent(analysed(1));
+    });
+    render(<Toolbar busy={false} />);
+    expect(screen.getByRole('button', { name: 'Export' })).toBeDisabled();
+    useRecovery.setState({ running: false });
+  });
+
+  it('shows no second Export beside the rail in a wide window', () => {
+    vi.unstubAllGlobals();
+    useLibrary.getState().add([entry(1)]);
+    render(<Toolbar busy={false} />);
+    expect(screen.queryByRole('button', { name: 'Export' })).toBeNull();
   });
 });

@@ -66,3 +66,72 @@ fn csv_columns() {
     // An empty report is the header alone.
     assert_eq!(text(&[]), format!("{}\r\n", COLUMNS.join(",")));
 }
+
+#[test]
+fn what_it_writes_reads_back_as_the_same_bytes() {
+    let rows = [
+        ReportRow {
+            file: "/Music/a, \"b\"\nc.wav".to_owned(),
+            mode: "prepare".to_owned(),
+            action: "written".to_owned(),
+            gain_db: Some(-2.25),
+            cut: Some(Seconds(0.21)),
+            bpm: Some(Bpm(128.0)),
+            bar1: Some(Seconds(0.005)),
+            grid: "tempo: beat 1 at 0.005 s".to_owned(),
+            grid_check: Some("off by 12.0 ms".to_owned()),
+            notes: vec!["=formula".to_owned(), "another".to_owned()],
+        },
+        ReportRow {
+            file: "=b.wav".to_owned(),
+            ..ReportRow::default()
+        },
+    ];
+    let bytes = csv_bytes(&rows);
+    let read = read_rows(&bytes).expect("ours");
+    assert_eq!(read[0].file, rows[0].file);
+    assert_eq!(read[1].file, "=b.wav");
+    assert_eq!(read[1].gain_db, None);
+    assert_eq!(csv_bytes(&read), bytes);
+}
+
+#[test]
+fn another_shape_of_report_is_not_read() {
+    assert_eq!(read_rows(b"file,mode\r\n"), None);
+    assert_eq!(read_rows(b"\xEF\xBB\xBFfile,mode\r\n"), None);
+}
+
+#[test]
+fn a_report_cut_short_or_damaged_is_not_an_empty_one() {
+    let rows = [ReportRow {
+        file: "/a, \"b\".wav".to_owned(),
+        gain_db: Some(-1.0),
+        ..ReportRow::default()
+    }];
+    let bytes = csv_bytes(&rows);
+    assert!(read_rows(&bytes).is_some());
+    assert_eq!(
+        read_rows(&bytes[..bytes.len() - 6]),
+        None,
+        "a row cut short"
+    );
+    let quote = bytes.iter().rposition(|b| *b == b'"').unwrap();
+    assert_eq!(read_rows(&bytes[..quote]), None, "cut in a quoted field");
+    let mut short = bytes.clone();
+    short.extend_from_slice(b"just one field\r\n");
+    assert_eq!(read_rows(&short), None, "a row with too few fields");
+    // Cut inside the last field, quoted: every field is there, but not all of it.
+    let noted = csv_bytes(&[ReportRow {
+        file: "/a.wav".to_owned(),
+        notes: vec!["a, b".to_owned()],
+        ..ReportRow::default()
+    }]);
+    assert!(read_rows(&noted).is_some());
+    assert_eq!(
+        read_rows(&noted[..noted.len() - 4]),
+        None,
+        "cut in the last field"
+    );
+    let text = String::from_utf8(bytes).unwrap().replace("-1.00", "oops");
+    assert_eq!(read_rows(text.as_bytes()), None, "a number that is none");
+}

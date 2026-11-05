@@ -36,7 +36,7 @@ pub use export::{
     RowAction, RowTrack, SeratoPresence, XmlSelect, plan_export, plan_export_snapped,
     plan_snapped_cut, run_export_job, write_artefacts,
 };
-pub use session::{Session, run_job};
+pub use session::{PlanningRow, RevertedAnalysis, Session, run_job};
 pub use track::{Track, TrackProgress};
 pub use txn::{
     ApplyOptions, ApplyRequest, Place, RecoveryGate, RecoveryGuard, Tag, apply_file, check_inputs,

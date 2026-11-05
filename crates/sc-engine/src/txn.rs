@@ -58,7 +58,7 @@ pub enum Place {
     /// Replaces the original, after backing it up into the backup root.
     InPlace,
     /// A copy with the same name in this folder (created if needed); the original is untouched
-    /// and an existing file is never replaced.
+    /// and an existing file is replaced only as [`ApplyOptions::replace_own_copy`] says.
     Folder(PathBuf),
 }
 
@@ -77,6 +77,9 @@ pub struct ApplyOptions {
     /// The analysis cache whose entry for the file written is removed before and after the
     /// change (see [`forget_cached`]); `None` touches no cache.
     pub cache: Option<Cache>,
+    /// A copy may replace an earlier copy SoundCheck wrote there, proven by its sidecar
+    /// (`sc_io::txn::copy_at`); any other file of that name is refused either way.
+    pub replace_own_copy: bool,
 }
 
 impl ApplyOptions {
@@ -89,6 +92,7 @@ impl ApplyOptions {
             keep_mtime: true,
             sidecar: true,
             cache: None,
+            replace_own_copy: false,
         }
     }
 }
@@ -151,6 +155,7 @@ pub fn apply_file(
         sidecar: opts.sidecar,
         export: req.export.clone(),
         expect_original_blake3: req.source_blake3,
+        replace_own_copy: opts.replace_own_copy,
     };
     let flag = cancel.flag();
     let mut report = match &opts.place {

@@ -214,4 +214,6 @@ pub struct RowUpdate {
     pub plan: Plan,
     /// The settings revision the plan was decided with.
     pub revision: u32,
+    /// A grid different from what the file's export wrote has been saved since it.
+    pub export_stale: bool,
 }

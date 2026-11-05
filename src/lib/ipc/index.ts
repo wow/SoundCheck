@@ -1,6 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type { AnalyzeRequest } from './generated/AnalyzeRequest';
 import type { DecideSettings } from './generated/DecideSettings';
+import type { ExportPreview } from './generated/ExportPreview';
 import type { ExportRequest } from './generated/ExportRequest';
 import type { FileEntry } from './generated/FileEntry';
 import type { ForgetResult } from './generated/ForgetResult';
@@ -20,6 +21,8 @@ import type { XmlWritten } from './generated/XmlWritten';
 export type { AnalyzeRequest } from './generated/AnalyzeRequest';
 export type { AnalysisSettings } from './generated/AnalysisSettings';
 export type { Codec } from './generated/Codec';
+export type { ConfirmedExport } from './generated/ConfirmedExport';
+export type { ConfirmedFile } from './generated/ConfirmedFile';
 export type { BatchMode } from './generated/BatchMode';
 export type { Confidence } from './generated/Confidence';
 export type { Cut } from './generated/Cut';
@@ -28,9 +31,13 @@ export type { DjUnsafe } from './generated/DjUnsafe';
 export type { ExportAction } from './generated/ExportAction';
 export type { ExportArtefacts } from './generated/ExportArtefacts';
 export type { ExportNotice } from './generated/ExportNotice';
+export type { ExportPreview } from './generated/ExportPreview';
+export type { ExportPreviewRow } from './generated/ExportPreviewRow';
 export type { ExportRequest } from './generated/ExportRequest';
 export type { ExportRow } from './generated/ExportRow';
 export type { ExportSettings } from './generated/ExportSettings';
+export type { ExportSummary } from './generated/ExportSummary';
+export type { ExportedWith } from './generated/ExportedWith';
 export type { ExportSkip } from './generated/ExportSkip';
 export type { ExportVerification } from './generated/ExportVerification';
 export type { FileEntry } from './generated/FileEntry';
@@ -58,6 +65,7 @@ export type { RowGrid } from './generated/RowGrid';
 export type { Replan } from './generated/Replan';
 export type { RevertResult } from './generated/RevertResult';
 export type { RowPlan } from './generated/RowPlan';
+export type { RowUpdate } from './generated/RowUpdate';
 export type { SessionRow } from './generated/SessionRow';
 export type { SessionSnapshot } from './generated/SessionSnapshot';
 export type { SkipReason } from './generated/SkipReason';
@@ -84,6 +92,14 @@ export function analyze(req: AnalyzeRequest, onEvent: (event: JobEvent) => void)
   const channel = new Channel<JobEvent>();
   channel.onmessage = onEvent;
   return invoke<number>('analyze', { req, onEvent: channel });
+}
+
+/**
+ * What exporting these files would do with each, planned as the job plans them. Nothing is
+ * written. Rejects as `exportFiles` does.
+ */
+export function planExport(req: ExportRequest): Promise<ExportPreview> {
+  return invoke<ExportPreview>('plan_export', { req });
 }
 
 /**
@@ -136,7 +152,10 @@ export function clearSession(): Promise<void> {
   return invoke<void>('clear_session');
 }
 
-/** Everything the Rust session holds, for a window that reloads; running jobs are cancelled. */
+/**
+ * Everything the Rust session holds, for a window that reloads; running jobs are cancelled. They
+ * end on their own time: `runningJobs` names them until they have.
+ */
 export function restoreSession(): Promise<SessionSnapshot> {
   return invoke<SessionSnapshot>('restore_session');
 }
@@ -154,4 +173,5 @@ export function recoveryStatus(): Promise<RecoveryStatus> {
   return invoke<RecoveryStatus>('recovery_status');
 }
 
+export * from './errors';
 export * from './grid';

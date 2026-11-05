@@ -66,6 +66,11 @@ fn copies_into_one_folder_may_not_share_a_name() {
     let out = base.join("out");
     let files = vec![a.clone(), b.clone(), c, a.clone()];
     let found = check_inputs(&files, &Place::Folder(out.clone()));
+    // As the volume compares names: `Track.wav` and `TRACK.wav` collide where it folds case.
+    if !sc_io::txn::folder_folds_case(&out) {
+        assert_eq!(kinds(&found), vec!["ok", "ok", "ok", "twice"]);
+        return;
+    }
     assert_eq!(kinds(&found), vec!["ok", "same name", "ok", "twice"]);
     match &found[1] {
         Some(Error::SameOutputName {
@@ -82,5 +87,22 @@ fn copies_into_one_folder_may_not_share_a_name() {
     assert_eq!(
         kinds(&check_inputs(&files[..3], &Place::InPlace)),
         vec!["ok", "ok", "ok"]
+    );
+}
+
+#[test]
+fn a_name_is_compared_as_the_volume_compares_it() {
+    assert_eq!(
+        super::name_key("Track.wav", true),
+        super::name_key("track.wav", true)
+    );
+    assert_ne!(
+        super::name_key("Track.wav", false),
+        super::name_key("track.wav", false)
+    );
+    // Two Unicode forms of one name are one name either way.
+    assert_eq!(
+        super::name_key("Şarkı.wav", false),
+        super::name_key("S\u{327}arkı.wav", false)
     );
 }

@@ -86,10 +86,10 @@ impl BatchMode {
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub enum Place {
-    /// Replaces the original, after backing it up.
-    #[default]
+    /// Replaces the original, after backing it up: only when asked for.
     InPlace,
-    /// A copy in another folder; the original is untouched.
+    /// A copy in another folder; the original is untouched. The default.
+    #[default]
     Folder,
 }
 
@@ -115,13 +115,13 @@ pub struct ExportSettings {
 }
 
 impl ExportSettings {
-    /// The defaults of `batch_mode`: in place, source depth, gain on, the tempo tag in Prepare
-    /// only (a Library track's tag is the DJ app's), XML on, [`DEFAULT_LEAD_MS`].
+    /// The defaults of `batch_mode`: to a folder (originals are changed only when asked), source
+    /// depth, gain on, the tempo tag in Prepare only (a Library track's tag is the DJ app's), XML on, [`DEFAULT_LEAD_MS`].
     #[must_use]
     pub fn new(batch_mode: BatchMode) -> Self {
         Self {
             batch_mode,
-            place: Place::InPlace,
+            place: Place::Folder,
             depth: None,
             grid_only: false,
             tbpm: batch_mode == BatchMode::Prepare,
@@ -359,6 +359,12 @@ pub enum ExportSkip {
     /// written (where bar 1 is cannot be trusted), so there is nothing to write. Confirm the
     /// grid first.
     GridNeedsReview,
+    /// The folder already holds a file of this name that is not a copy SoundCheck wrote, or that
+    /// changed since: it is left as it is.
+    OtherFileInFolder,
+    /// A copy of another track has this name in the folder, or would have it first in this batch:
+    /// it is left as it is, since it is not this file's to replace.
+    CopyOfOtherTrack,
     /// An MP3 or AAC file, which only the rekordbox XML carries, without a grid: the XML would
     /// list nothing for it.
     XmlNoGrid {
@@ -384,6 +390,41 @@ pub enum ExportSkip {
         /// Why the file itself is not written.
         reason: XmlOnlyReason,
     },
+}
+
+/// What could make a skipped file writable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipCure {
+    /// Nothing the user does here: it is about the file itself.
+    File,
+    /// A grid saved or confirmed.
+    Grid,
+    /// Other export settings.
+    Settings,
+    /// What is in the folder, which can change with no word to the app.
+    Disk,
+}
+
+impl ExportSkip {
+    /// What could make the file writable: whether a later export is worth planning again.
+    #[must_use]
+    pub fn cure(self) -> SkipCure {
+        match self {
+            Self::NotDjSafeRate { .. }
+            | Self::UnsupportedChannels { .. }
+            | Self::Unsupported { .. }
+            | Self::Silent => SkipCure::File,
+            Self::NoGrid
+            | Self::GridNeedsReview
+            | Self::XmlNoGrid { .. }
+            | Self::XmlGridNeedsReview { .. }
+            | Self::XmlNotOptedIn { .. } => SkipCure::Grid,
+            Self::SeratoInPlaceCut { .. }
+            | Self::SeratoUnknownInPlaceCut { .. }
+            | Self::NothingToWrite { .. } => SkipCure::Settings,
+            Self::OtherFileInFolder | Self::CopyOfOtherTrack => SkipCure::Disk,
+        }
+    }
 }
 
 /// What exporting does with one file.

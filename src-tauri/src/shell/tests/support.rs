@@ -171,6 +171,7 @@ pub(super) fn request(
         file_ids: file_ids.to_vec(),
         settings,
         out_dir: out_dir.map(|d| d.display().to_string()),
+        confirmed: None,
     }
 }
 
@@ -257,8 +258,12 @@ pub(super) fn analysis_held_at(
     hold_at(&|send| shell.start(req.clone(), send), stop)
 }
 
+/// Prepare, in place: the tests choose a folder with [`in_folder`].
 pub(super) fn prepare() -> ExportSettings {
-    ExportSettings::new(BatchMode::Prepare)
+    ExportSettings {
+        place: Place::InPlace,
+        ..ExportSettings::new(BatchMode::Prepare)
+    }
 }
 
 pub(super) fn in_folder(settings: ExportSettings) -> ExportSettings {

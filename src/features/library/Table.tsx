@@ -4,8 +4,9 @@ import { cn } from '@/lib/utils';
 import { useLibrary, visibleIds } from '@/state/library';
 import { useSettings } from '@/state/settings';
 import { layoutFor, minWidth, rowDomId, type Layout } from './columns';
-import { ActionCell, BpmCell, LoudnessCell, NameCell, SpecCell, StatusPill, TpCell } from './cells';
+import { ActionCell, BpmCell, LoudnessCell, NameCell, SpecCell, StatusCell, TpCell } from './cells';
 import { openInGridView } from '@/features/grid/actions';
+import { useExportNow, type ExportNow } from '@/features/export/work';
 
 /** Row height in px; rows are fixed-height so only the visible ones are rendered. */
 export const ROW_HEIGHT = 44;
@@ -66,11 +67,13 @@ function TrackRow({
   index,
   top,
   layout,
+  now,
 }: {
   id: number;
   index: number;
   top: number;
   layout: Layout;
+  now: ExportNow;
 }) {
   const row = useLibrary((s) => s.rows[id]);
   const selected = useLibrary((s) => s.selected === id);
@@ -124,10 +127,10 @@ function TrackRow({
         />
       </Cell>
       <Cell width={layout.action}>
-        <ActionCell row={row} bpmRange={bpmRange} />
+        <ActionCell row={row} bpmRange={bpmRange} stacked={layout.compact} now={now} />
       </Cell>
       <Cell width={layout.status}>
-        <StatusPill row={row} />
+        <StatusCell id={id} row={row} selected={selected} bpmRange={bpmRange} />
       </Cell>
     </div>
   );
@@ -138,6 +141,7 @@ export function Table() {
   const ids = useLibrary(useShallow(visibleIds));
   const selected = useLibrary((s) => s.selected);
   const mode = useSettings((s) => s.mode);
+  const now = useExportNow();
   const ref = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -232,6 +236,7 @@ export function Table() {
               index={first + k}
               top={(first + k) * ROW_HEIGHT}
               layout={layout}
+              now={now}
             />
           ))}
           {ids.length === 0 && (

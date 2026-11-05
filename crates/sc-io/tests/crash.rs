@@ -2,7 +2,8 @@
 //! is run with `SC_TEST_CRASH_AFTER_STEP` naming a crash point, so it aborts there: every
 //! journaled state and the points between them (inside the render, inside the backup copy,
 //! between the backup's journaled name and its rename, between the rename and its journal
-//! line), for in-place changes of a WAV and a FLAC, copies to a folder, and undos. Recovery
+//! line), for in-place changes of a WAV and a FLAC, copies to a folder, a copy replacing an earlier
+//! one, and undos. Recovery
 //! must then leave the file before the transaction or the verified file after it (never
 //! anything else, and after it exactly when the rename happened); no temp, placeholder or lock
 //! file; the journal entry recovered; for an in-place change the backup present (equal to the
@@ -189,6 +190,70 @@ fn every_crash_point_of_a_copy_to_a_folder_recovers() {
             assert!(!written.exists(), "{what}: nothing at the destination");
             assert_eq!(sidecars(&out), 0, "{what}");
         }
+        assert!(backups_in(&lib.backups).is_empty(), "{what}: no backup");
+    }
+}
+
+#[test]
+fn every_crash_point_of_replacing_a_copy_recovers() {
+    for (point, reached) in TO_FOLDER {
+        let what = format!("replacing a copy at {point}");
+        let lib = Library::new();
+        let path = lib.add("a.wav", &wav(3000, 26));
+        let original = blake3_of(&path);
+        let out = lib.dir.path().join("out");
+        // The earlier copy, finished; the program's `replace` mode writes another gain over it.
+        let opts = TxnOptions {
+            replace_own_copy: true,
+            ..TxnOptions::new(lib.backups.clone())
+        };
+        let req = RenderRequest {
+            gain_db: -3.0,
+            ..RenderRequest::default()
+        };
+        txn::apply_to_folder(
+            &path,
+            &out,
+            &req,
+            &opts,
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .expect("the first copy");
+        let written = out.join("a.wav");
+        let earlier = blake3_of(&written);
+
+        crash_at(&[&path, &lib.backups, &out], "replace", point);
+        let entries = journal_entries(&lib.backups).expect("journal");
+        assert_eq!(entries.len(), 2, "{what}");
+        let r = txn::recover(&lib.backups).expect("recovery");
+        assert_eq!(r.recovered.len(), 1, "{what}: {r:?}");
+        assert_eq!(blake3_of(&path), original, "{what}: the source");
+        let entry = journal_entries(&lib.backups)
+            .expect("journal")
+            .into_iter()
+            .next_back()
+            .expect("the second change");
+        assert!(entry.state.is_final(), "{what}");
+        let _ = reached;
+        if renamed(point) {
+            assert_eq!(r.recovered[0].outcome, Outcome::Completed, "{what}");
+            assert_eq!(
+                Some(hex(&blake3_of(&written))),
+                entry.output_blake3,
+                "{what}"
+            );
+            assert_ne!(blake3_of(&written), earlier, "{what}: the new copy");
+        } else {
+            assert_eq!(r.recovered[0].outcome, Outcome::RolledBack, "{what}");
+            assert_eq!(blake3_of(&written), earlier, "{what}: the earlier copy");
+        }
+        // Either way the sidecar proves what is there, and the next export can replace it.
+        assert_eq!(
+            txn::copy_at(&written, &path).expect("read"),
+            txn::CopyAt::Own,
+            "{what}"
+        );
+        assert_no_temps(lib.dir.path());
         assert!(backups_in(&lib.backups).is_empty(), "{what}: no backup");
     }
 }

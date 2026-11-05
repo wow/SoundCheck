@@ -3,7 +3,8 @@ import { mockIPC } from '@tauri-apps/api/mocks';
 import type { FileEntry } from '@/lib/ipc';
 import { loadTrackList, saveTrackList } from '@/lib/persist';
 import { useLibrary } from '@/state/library';
-import { analysis, entry, plan } from '@/test/fixtures';
+import { analysis, doneRow, entry, plan } from '@/test/fixtures';
+import { pipeline } from '@/features/pipeline/actions';
 import { startTrackListPersistence } from './remember';
 
 vi.mock('@/lib/persist', () => ({
@@ -46,7 +47,14 @@ describe('remembering the track list', () => {
   it('after a window reload takes the rows from the engine instead', async () => {
     mockIPC((cmd) => {
       if (cmd === 'restore_session') {
-        return { revision: 2, rows: [{ entry: entry(9), row: analysis(), plan: plan() }] };
+        return {
+          revision: 2,
+          rows: [{ entry: entry(9), row: analysis(), plan: plan(), export: null, revertible: false, exportStale: false, analysedRange: null }],
+          runningJobs: [],
+          artefacts: null,
+          artefactsFailed: null,
+          lastExport: null,
+        };
       }
       return null;
     });
@@ -54,6 +62,55 @@ describe('remembering the track list', () => {
     await waitFor(() => expect(useLibrary.getState().order).toEqual([9]));
     expect(loadTrackList).not.toHaveBeenCalled();
     expect(useLibrary.getState().rows[9]?.state).toBe('analysed');
+    stop();
+  });
+
+  it('a job still running at a reload sets the pipeline waiting for it', async () => {
+    mockIPC((cmd) => {
+      if (cmd === 'restore_session') {
+        return {
+          revision: 2,
+          rows: [{ entry: entry(9), row: analysis(), plan: plan(), export: null, revertible: false, exportStale: false, analysedRange: null }],
+          runningJobs: [4],
+          artefacts: null,
+          artefactsFailed: null,
+          lastExport: null,
+        };
+      }
+      return null;
+    });
+    const stop = startTrackListPersistence();
+    await waitFor(() => expect(pipeline().getSnapshot().value).toBe('windingDown'));
+    expect(useLibrary.getState().locked).toBe('all');
+    // The read after it says the job is gone (the mock's next answer), and the pipeline is free.
+    mockIPC((cmd) =>
+      cmd === 'restore_session'
+        ? { revision: 2, rows: [], runningJobs: [], artefacts: null, artefactsFailed: null, lastExport: null }
+        : null,
+    );
+    await waitFor(() => expect(pipeline().getSnapshot().value).toBe('idle'), { timeout: 2000 });
+    stop();
+  });
+
+  it('after a plain reload analyses a file written in place whose analysis did not finish', async () => {
+    const calls: string[] = [];
+    mockIPC((cmd) => {
+      calls.push(cmd);
+      if (cmd === 'restore_session') {
+        return {
+          revision: 2,
+          rows: [{ entry: entry(9), row: null, plan: null, export: doneRow(), revertible: true, exportStale: false, analysedRange: null }],
+          runningJobs: [],
+          artefacts: null,
+          artefactsFailed: null,
+          lastExport: null,
+        };
+      }
+      return cmd === 'analyze' ? 6 : null;
+    });
+    const stop = startTrackListPersistence();
+    await waitFor(() => expect(calls).toContain('analyze'));
+    pipeline().send({ type: 'FINISHED' });
     stop();
   });
 

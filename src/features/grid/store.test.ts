@@ -64,6 +64,7 @@ function update(confirmed: boolean): RowUpdate {
     row: { ...analysis(), edited: true, confirmed },
     plan: plan({ status: 'analysed' }),
     revision: 0,
+    exportStale: false,
   };
 }
 

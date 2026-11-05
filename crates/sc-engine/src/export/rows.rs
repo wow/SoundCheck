@@ -14,6 +14,7 @@ use sc_io::txn::sidecar::{self, SidecarDoc};
 use sc_io::txn::{TxnReport, hash_file, hex};
 
 use super::ProcessDone;
+use super::artefacts::merge::{listed_in, reported_in};
 use super::artefacts::{BatchRow, XmlSelect, is_listed, report_rows};
 use super::wording::{GRID_WITHHELD, UNVERIFIED, notice_text, skip_why, xml_only_text};
 use crate::analyze::AnalyzeReport;
@@ -156,7 +157,8 @@ pub struct ArtefactConflict {
 }
 
 /// The first artefact name in the folder `dir` that a batch could not write, because a file
-/// SoundCheck did not write is there. Asked before anything is exported.
+/// SoundCheck did not write is there, or one of its own that cannot be read whole, whose entries a
+/// new one could not keep. Asked before anything is exported.
 #[must_use]
 pub fn artefact_conflict(dir: &Path) -> Option<ArtefactConflict> {
     use sc_io::artefacts::check_replaceable;
@@ -173,7 +175,13 @@ pub fn artefact_conflict(dir: &Path) -> Option<ArtefactConflict> {
     ];
     checks.into_iter().find_map(|(name, is_ours)| {
         let path = dir.join(name);
-        let checked: Result<()> = check_replaceable(&path, is_ours);
+        let checked: Result<()> = check_replaceable(&path, is_ours).and_then(|()| {
+            if name == sc_io::rekordbox::XML_FILE_NAME {
+                listed_in(dir).map(|_| ())
+            } else {
+                reported_in(dir).map(|_| ())
+            }
+        });
         checked
             .err()
             .map(|error| ArtefactConflict { path, name, error })

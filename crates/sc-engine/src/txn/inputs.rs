@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use sc_core::Error;
-use sc_io::txn::resolve_file;
+use sc_io::txn::{folder_folds_case, resolve_file};
 use unicode_normalization::UnicodeNormalization;
 
 use super::Place;
@@ -21,6 +21,7 @@ use super::Place;
 pub fn check_inputs(files: &[PathBuf], place: &Place) -> Vec<Option<Error>> {
     let mut seen: BTreeMap<PathBuf, usize> = BTreeMap::new();
     let mut names: BTreeMap<String, usize> = BTreeMap::new();
+    let folds = matches!(place, Place::Folder(dir) if folder_folds_case(dir));
     files
         .iter()
         .enumerate()
@@ -37,11 +38,7 @@ pub fn check_inputs(files: &[PathBuf], place: &Place) -> Vec<Option<Error>> {
                 return None;
             };
             let name = path.file_name()?;
-            let key: String = name
-                .to_string_lossy()
-                .nfc()
-                .collect::<String>()
-                .to_lowercase();
+            let key = name_key(&name.to_string_lossy(), folds);
             if let Some(&other) = names.get(&key) {
                 return Some(Error::SameOutputName {
                     path: path.clone(),
@@ -53,6 +50,14 @@ pub fn check_inputs(files: &[PathBuf], place: &Place) -> Vec<Option<Error>> {
             None
         })
         .collect()
+}
+
+/// How the folder compares a name: `folds` when `Track.wav` and `track.wav` are one file there.
+/// Unicode forms are always one name: macOS volumes treat them so, and on any other volume two
+/// spellings of one name are worth refusing.
+fn name_key(name: &str, folds: bool) -> String {
+    let nfc: String = name.nfc().collect();
+    if folds { nfc.to_lowercase() } else { nfc }
 }
 
 #[cfg(test)]

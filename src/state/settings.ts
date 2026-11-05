@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import type { AnalysisSettings, DecideSettings, LoudnessMode } from '@/lib/ipc';
+import type {
+  AnalysisSettings,
+  BatchMode,
+  DecideSettings,
+  ExportSettings,
+  LoudnessMode,
+  Place,
+} from '@/lib/ipc';
 
 /** A loudness preset. `djTarget` reads its target from the persisted DJ target. */
 export type PresetId = 'djTarget' | 'clubHot' | 'spotify' | 'apple' | 'custom';
@@ -31,6 +38,15 @@ export const TARGET_RANGE: [number, number] = [-30, -4];
 export const CEILING_RANGE: [number, number] = [-6, 0];
 export const BPM_LIMITS: [number, number] = [40, 300];
 
+/** Time a Prepare cut leaves before bar 1, ms (the engine's default, until it is calibrated). */
+export const LEAD_MS = 5;
+
+/** The export depths the engine writes; `null` keeps the source depth. */
+export const EXPORT_DEPTHS: (number | null)[] = [null, 16, 24];
+
+/** How many folders are remembered as "keep Prepare, Serato data or not". */
+export const MAX_REMEMBERED_FOLDERS = 200;
+
 /** The shape of the saved settings; bumped when it changes. */
 export const SETTINGS_SCHEMA = 1;
 
@@ -42,6 +58,19 @@ export interface SavedSettings {
   target: number;
   ceiling: number;
   bpmRange: [number, number];
+  /** Prepare or Library, as chosen; files with Serato data can switch a batch to Library. */
+  batchMode: BatchMode;
+  place: Place;
+  /** The folder copies go to, once chosen. */
+  outDir: string | null;
+  /** Output bits per sample; `null` keeps the source depth. */
+  depth: number | null;
+  gridOnly: boolean;
+  /** Write the tempo tag, per mode: in Library a track's tag is the DJ app's by default. */
+  tbpm: Record<BatchMode, boolean>;
+  xml: boolean;
+  /** Folders whose Serato files the user chose to prepare anyway. */
+  seratoPrepareFolders: string[];
 }
 
 export const DEFAULT_SETTINGS: SavedSettings = {
@@ -51,6 +80,15 @@ export const DEFAULT_SETTINGS: SavedSettings = {
   target: DEFAULT_DJ_TARGET,
   ceiling: -0.5,
   bpmRange: [70, 180],
+  batchMode: 'prepare',
+  // Originals are changed only when asked; the folder is remembered once chosen.
+  place: 'folder',
+  outDir: null,
+  depth: null,
+  gridOnly: false,
+  tbpm: { prepare: true, library: false },
+  xml: true,
+  seratoPrepareFolders: [],
 };
 
 interface SettingsState extends SavedSettings {
@@ -62,6 +100,13 @@ interface SettingsState extends SavedSettings {
   setTarget(lufs: number): void;
   setCeiling(dbtp: number): void;
   setBpmRange(range: [number, number]): void;
+  setBatchMode(mode: BatchMode, seratoFolders?: string[]): void;
+  setPlace(place: Place): void;
+  setOutDir(dir: string): void;
+  setDepth(depth: number | null): void;
+  setGridOnly(on: boolean): void;
+  setTbpm(on: boolean, mode: BatchMode): void;
+  setXml(on: boolean): void;
   /** Sets the DJ target (from "Calibrate from my library") and selects it. */
   calibrate(lufs: number): void;
 }
@@ -103,6 +148,23 @@ export function sanitize(saved: Record<string, unknown>): Partial<SavedSettings>
   if (num(saved.target, TARGET_RANGE)) out.target = saved.target as number;
   if (num(saved.ceiling, CEILING_RANGE)) out.ceiling = saved.ceiling as number;
   if (validRange(saved.bpmRange)) out.bpmRange = saved.bpmRange;
+  if (saved.batchMode === 'prepare' || saved.batchMode === 'library') out.batchMode = saved.batchMode;
+  if (saved.place === 'inPlace' || saved.place === 'folder') out.place = saved.place;
+  if (typeof saved.outDir === 'string' && saved.outDir !== '') out.outDir = saved.outDir;
+  if (EXPORT_DEPTHS.includes(saved.depth as number | null) && saved.depth !== undefined) {
+    out.depth = saved.depth as number | null;
+  }
+  if (typeof saved.gridOnly === 'boolean') out.gridOnly = saved.gridOnly;
+  const tbpm = saved.tbpm as Partial<Record<BatchMode, unknown>> | null | undefined;
+  if (typeof tbpm?.prepare === 'boolean' && typeof tbpm.library === 'boolean') {
+    out.tbpm = { prepare: tbpm.prepare, library: tbpm.library };
+  }
+  if (typeof saved.xml === 'boolean') out.xml = saved.xml;
+  if (Array.isArray(saved.seratoPrepareFolders)) {
+    out.seratoPrepareFolders = saved.seratoPrepareFolders
+      .filter((f): f is string => typeof f === 'string')
+      .slice(-MAX_REMEMBERED_FOLDERS);
+  }
   return out;
 }
 
@@ -135,6 +197,32 @@ export const useSettings = create<SettingsState>()((set, get) => ({
   setBpmRange(range) {
     if (validRange(range)) set({ bpmRange: [Math.round(range[0]), Math.round(range[1])] });
   },
+  setBatchMode(mode, seratoFolders = []) {
+    const kept = get().seratoPrepareFolders.filter((f) => !seratoFolders.includes(f));
+    set({
+      batchMode: mode,
+      seratoPrepareFolders:
+        mode === 'prepare' ? [...kept, ...seratoFolders].slice(-MAX_REMEMBERED_FOLDERS) : kept,
+    });
+  },
+  setPlace(place) {
+    set({ place });
+  },
+  setOutDir(outDir) {
+    set({ outDir });
+  },
+  setDepth(depth) {
+    if (EXPORT_DEPTHS.includes(depth)) set({ depth });
+  },
+  setGridOnly(gridOnly) {
+    set({ gridOnly });
+  },
+  setTbpm(on, mode) {
+    set({ tbpm: { ...get().tbpm, [mode]: on } });
+  },
+  setXml(xml) {
+    set({ xml });
+  },
   calibrate(lufs) {
     const djTarget = tenth(clamp(lufs, TARGET_RANGE));
     set({ mode: 'dj', preset: 'djTarget', djTarget, target: djTarget, ceiling: -0.5 });
@@ -151,6 +239,19 @@ export function analysisSettings(s: SavedSettings): AnalysisSettings {
   return { bpmRange: s.bpmRange, grid: true, model: 'small' };
 }
 
+/** What an export runs with, for a batch in `batchMode`. Grid only keeps the source depth. */
+export function exportSettings(s: SavedSettings, batchMode: BatchMode): ExportSettings {
+  return {
+    batchMode,
+    place: s.place,
+    depth: s.gridOnly ? null : s.depth,
+    gridOnly: s.gridOnly,
+    tbpm: s.tbpm[batchMode],
+    xml: s.xml,
+    leadMs: LEAD_MS,
+  };
+}
+
 /** The saved part of the state. */
 export function savedPart(s: SavedSettings): SavedSettings {
   return {
@@ -160,6 +261,14 @@ export function savedPart(s: SavedSettings): SavedSettings {
     target: s.target,
     ceiling: s.ceiling,
     bpmRange: s.bpmRange,
+    batchMode: s.batchMode,
+    place: s.place,
+    outDir: s.outDir,
+    depth: s.depth,
+    gridOnly: s.gridOnly,
+    tbpm: s.tbpm,
+    xml: s.xml,
+    seratoPrepareFolders: s.seratoPrepareFolders,
   };
 }
 

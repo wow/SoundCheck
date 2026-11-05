@@ -1,19 +1,48 @@
 import { createActor } from 'xstate';
-import { pipelineMachine } from './machine';
+import { pipelineMachine, type PipelineEvent } from './machine';
 
 function run() {
   const started: number[][] = [];
+  const exports: number[][] = [];
   const cancelled: (number | null)[] = [];
+  let watched = 0;
   const actor = createActor(
     pipelineMachine.provide({
       actions: {
         startJob: (_, { fileIds }) => void started.push(fileIds),
+        startExport: (_, { job }) => void exports.push(job?.request.fileIds ?? []),
         cancelJob: (_, { jobId }) => void cancelled.push(jobId),
+        watchSession: () => {
+          watched += 1;
+        },
       },
     }),
   );
   actor.start();
-  return { actor, started, cancelled };
+  return { actor, started, exports, cancelled, watched: () => watched };
+}
+
+function exportEvent(fileIds: number[]): PipelineEvent {
+  return {
+    type: 'EXPORT',
+    job: {
+      request: {
+        fileIds,
+        settings: {
+          batchMode: 'prepare',
+          place: 'inPlace',
+          depth: null,
+          gridOnly: false,
+          tbpm: true,
+          xml: true,
+          leadMs: 5,
+        },
+        outDir: null,
+        confirmed: null,
+      },
+      planned: [],
+    },
+  };
 }
 
 describe('pipeline machine', () => {
@@ -76,5 +105,95 @@ describe('pipeline machine', () => {
     actor.send({ type: 'FINISHED' });
     expect(actor.getSnapshot().value).toBe('analysing');
     expect(started).toEqual([[1], [5, 6]]);
+  });
+
+  describe('export', () => {
+    it('runs the export, then goes idle when it finishes', () => {
+      const { actor, exports, started } = run();
+      actor.send(exportEvent([1, 2]));
+      expect(actor.getSnapshot().value).toBe('exporting');
+      expect(exports).toEqual([[1, 2]]);
+      expect(started).toEqual([]);
+      actor.send({ type: 'STARTED', jobId: 4 });
+      expect(actor.getSnapshot().context.jobId).toBe(4);
+      actor.send({ type: 'FINISHED' });
+      expect(actor.getSnapshot().value).toBe('idle');
+      expect(actor.getSnapshot().context.jobId).toBeNull();
+    });
+
+    it('ignores an export of nothing', () => {
+      const { actor, exports } = run();
+      actor.send(exportEvent([]));
+      expect(actor.getSnapshot().value).toBe('idle');
+      expect(exports).toEqual([]);
+    });
+
+    it('is one job at a time: no export starts during an analysis or another export', () => {
+      const { actor, exports } = run();
+      actor.send({ type: 'ANALYSE', fileIds: [1] });
+      actor.send(exportEvent([1]));
+      expect(actor.getSnapshot().value).toBe('analysing');
+      expect(exports).toEqual([]);
+      actor.send({ type: 'FINISHED' });
+      actor.send(exportEvent([1]));
+      actor.send(exportEvent([2]));
+      expect(exports).toEqual([[1]]);
+    });
+
+    it('files added during an export wait and start as the next analysis', () => {
+      const { actor, started } = run();
+      actor.send(exportEvent([1]));
+      actor.send({ type: 'ANALYSE', fileIds: [2] });
+      actor.send({ type: 'ANALYSE', fileIds: [2, 3] });
+      expect(started).toEqual([]);
+      actor.send({ type: 'FINISHED' });
+      expect(actor.getSnapshot().value).toBe('analysing');
+      expect(started).toEqual([[2, 3]]);
+    });
+
+    it('cancel stops the export and keeps the files waiting, which the export did not start', () => {
+      const { actor, cancelled, started } = run();
+      actor.send(exportEvent([1]));
+      actor.send({ type: 'STARTED', jobId: 8 });
+      actor.send({ type: 'ANALYSE', fileIds: [5] });
+      actor.send({ type: 'CANCEL' });
+      expect(actor.getSnapshot().value).toBe('cancellingExport');
+      expect(cancelled).toEqual([8]);
+      actor.send({ type: 'FINISHED' });
+      expect(started).toEqual([[5]]);
+    });
+
+    it('a cancel before the job id arrives cancels the export on arrival', () => {
+      const { actor, cancelled } = run();
+      actor.send(exportEvent([1]));
+      actor.send({ type: 'CANCEL' });
+      actor.send({ type: 'STARTED', jobId: 6 });
+      expect(cancelled).toEqual([null, 6]);
+      actor.send({ type: 'FINISHED' });
+      expect(actor.getSnapshot().value).toBe('idle');
+    });
+  });
+
+  describe('a reload during a job', () => {
+    it('waits for the old job before starting anything', () => {
+      const { actor, started, exports, watched } = run();
+      actor.send({ type: 'WIND_DOWN' });
+      expect(actor.getSnapshot().value).toBe('windingDown');
+      expect(watched()).toBe(1);
+      actor.send({ type: 'ANALYSE', fileIds: [3] });
+      actor.send(exportEvent([3]));
+      expect(started).toEqual([]);
+      expect(exports).toEqual([]);
+      actor.send({ type: 'WOUND_DOWN' });
+      expect(actor.getSnapshot().value).toBe('analysing');
+      expect(started).toEqual([[3]]);
+    });
+
+    it('goes idle when nothing waits', () => {
+      const { actor } = run();
+      actor.send({ type: 'WIND_DOWN' });
+      actor.send({ type: 'WOUND_DOWN' });
+      expect(actor.getSnapshot().value).toBe('idle');
+    });
   });
 });
