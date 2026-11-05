@@ -171,6 +171,7 @@ pub(super) fn request(
         file_ids: file_ids.to_vec(),
         settings,
         out_dir: out_dir.map(|d| d.display().to_string()),
+        confirmed: None,
     }
 }
 

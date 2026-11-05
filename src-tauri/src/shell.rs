@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use sc_core::Lufs;
 use sc_core::analysis::AnalysisSettings;
 use sc_core::ipc::{
-    AnalyzeRequest, FileEntry, IpcError, JobEvent, JobId, RecoveryStatus, Replan, SessionSnapshot,
+    AnalyzeRequest, FileEntry, IpcError, IpcErrorKind, JobEvent, JobId, RecoveryStatus, Replan,
+    SessionSnapshot,
 };
 use sc_core::plan::{DecideSettings, check_bpm_range};
 use sc_engine::player::Player;
@@ -246,12 +247,13 @@ impl Shell {
     /// Runs a job on its own thread, its events going to `send`, holding `hold`'s files. The job
     /// leaves the running set and lets go of its files before its last event goes out, so a caller
     /// that has seen `finished` never finds it still cancellable or its files busy. A job that
-    /// panics lets go of them as its thread ends.
+    /// panics, or ends without `finished`, gets the same end from [`JobEnd`], so nothing waits for
+    /// it for ever.
     fn spawn_job(
         &self,
         job_id: JobId,
         hold: Hold,
-        mut send: impl FnMut(JobEvent) + Send + 'static,
+        send: impl FnMut(JobEvent) + Send + 'static,
         run: impl FnOnce(&Shell, &CancelToken, &mut dyn FnMut(JobEvent)) + Send + 'static,
     ) {
         let cancel = CancelToken::new();
@@ -260,17 +262,14 @@ impl Shell {
         std::thread::Builder::new()
             .name(format!("sc-job-{job_id}"))
             .spawn(move || {
-                let jobs = shell.clone();
-                let mut hold = Some(hold);
-                let mut forward = |event: JobEvent| {
-                    if matches!(event, JobEvent::Finished { .. }) {
-                        jobs.jobs().remove(&job_id);
-                        hold.take();
-                    }
-                    send(event);
+                let mut end = JobEnd {
+                    shell: shell.clone(),
+                    job_id,
+                    hold: Some(hold),
+                    send,
+                    finished: false,
                 };
-                run(&shell, &cancel, &mut forward);
-                shell.jobs().remove(&job_id);
+                run(&shell, &cancel, &mut |event| end.forward(event));
             })
             .expect("the OS can start a thread for a job");
     }
@@ -334,6 +333,53 @@ impl Shell {
     #[must_use]
     pub fn calibration_target(&self) -> Option<Lufs> {
         self.session().median_short_term_p95()
+    }
+}
+
+/// The end of a job: on `finished`, or if it never gets there, when its thread lets go of this.
+struct JobEnd<F: FnMut(JobEvent)> {
+    shell: Shell,
+    job_id: JobId,
+    hold: Option<Hold>,
+    send: F,
+    finished: bool,
+}
+
+impl<F: FnMut(JobEvent)> JobEnd<F> {
+    fn forward(&mut self, event: JobEvent) {
+        if matches!(event, JobEvent::Finished { .. }) {
+            self.finished = true;
+            self.let_go();
+        }
+        (self.send)(event);
+    }
+
+    fn let_go(&mut self) {
+        self.shell.jobs().remove(&self.job_id);
+        self.hold.take();
+    }
+}
+
+impl<F: FnMut(JobEvent)> Drop for JobEnd<F> {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        self.let_go();
+        tracing::error!(job_id = self.job_id, "a job ended without finishing");
+        (self.send)(JobEvent::Aborted {
+            job_id: self.job_id,
+            error: IpcError {
+                kind: IpcErrorKind::Internal,
+                message: "the job stopped unexpectedly; restart SoundCheck to be sure of its files"
+                    .to_owned(),
+                file_id: None,
+            },
+        });
+        (self.send)(JobEvent::Finished {
+            job_id: self.job_id,
+            cancelled: false,
+        });
     }
 }
 

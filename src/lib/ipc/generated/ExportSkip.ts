@@ -26,7 +26,7 @@ channels: number, } | { "type": "unsupported",
 /**
  * The codec.
  */
-codec: Codec, } | { "type": "silent" } | { "type": "noGrid" } | { "type": "gridNeedsReview" } | { "type": "xmlNoGrid", 
+codec: Codec, } | { "type": "silent" } | { "type": "noGrid" } | { "type": "gridNeedsReview" } | { "type": "otherFileInFolder" } | { "type": "xmlNoGrid", 
 /**
  * The codec.
  */

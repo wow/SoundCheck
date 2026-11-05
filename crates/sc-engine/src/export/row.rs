@@ -35,6 +35,7 @@ pub(crate) fn planned(plan: &ExportPlan, revertible: bool) -> Box<ExportRow> {
         grid_check: None,
         edit_carried: false,
         revertible,
+        exported_with: None,
         notes: bounded_strings(plan_notes(plan), MAX_ROW_NOTES_JSON_BYTES),
     })
 }
@@ -75,6 +76,7 @@ pub(crate) fn skipped(outcome: &ExportOutcome, revertible: bool) -> Box<ExportRo
         grid_check: None,
         edit_carried: false,
         revertible,
+        exported_with: None,
         notes: bounded_strings(why, MAX_ROW_NOTES_JSON_BYTES),
     })
 }

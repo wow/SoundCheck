@@ -5,17 +5,18 @@
 
 use std::path::{Path, PathBuf};
 
-use sc_core::Error;
 use sc_core::analysis::AnalysisRecord;
 use sc_core::export::Place as ExportPlace;
 use sc_core::ipc::{
-    ExportArtefacts, ExportPreview, ExportPreviewRow, ExportRequest, ForgetResult, IpcError,
-    IpcErrorKind, JobEvent, JobId, RecoveryStatus, RevertResult, WriteXmlRequest, XmlNotListed,
-    XmlWritten,
+    ExportArtefacts, ExportPreview, ExportPreviewRow, ExportRequest, ExportedWith, ForgetResult,
+    IpcError, IpcErrorKind, JobEvent, JobId, RecoveryStatus, RevertResult, WriteXmlRequest,
+    XmlNotListed, XmlWritten,
 };
+use sc_core::{ChangeCause, Error};
 use sc_engine::export::{
-    ExportJob, XmlOutRefusal, analysed_row, artefact_conflict, export_artefacts, failed_row,
-    new_artefacts_folder, not_listed, preview_row, run_export_job, xml_out_refusal, xml_tracks,
+    ExportJob, PreviewInput, XmlOutRefusal, analysed_row, artefact_conflict, export_artefacts,
+    failed_row, new_artefacts_folder, not_listed, preview_row, run_export_job, tracks_listed_in,
+    xml_out_refusal, xml_tracks,
 };
 use sc_engine::{
     Analyzer, BatchFile, BatchRow, BatchSettings, CancelToken, EditState, EngineEvent, Place,
@@ -125,20 +126,31 @@ impl Shell {
     fn checked_export(
         &self,
         req: &ExportRequest,
-    ) -> Result<(ProcessSettings, Vec<BatchFile>), IpcError> {
+    ) -> Result<(ProcessSettings, Vec<BatchFile>, u32), IpcError> {
         self.refuse_while_recovering()?;
         let out_dir = req
             .out_dir
             .as_deref()
             .map(|dir| absolute(dir, "the export folder"))
             .transpose()?;
+        // One read, so the numbers and the revision they are checked by go together.
+        let (decide, revision) = {
+            let session = self.session();
+            (session.settings(), session.revision())
+        };
         let process = ProcessSettings {
-            decide: self.session().settings(),
+            decide,
             export: req.settings,
             out_dir: out_dir.clone(),
             backup_root: self.backup_root()?,
             edits: self.inner.edits.clone(),
             recovery: self.inner.recovery.clone(),
+            confirmed: req.confirmed.as_ref().map(|c| {
+                c.files
+                    .iter()
+                    .map(|f| (f.file_id, f.identity.clone()))
+                    .collect()
+            }),
         };
         process.validate()?;
         let place = out_dir
@@ -158,54 +170,22 @@ impl Shell {
                 return Err(conflict.error.into());
             }
         }
-        Ok((process, files))
+        Ok((process, files, revision))
     }
 
     /// What exporting `req.file_ids` would do with each, planned as the job plans them, with
     /// everything the job would refuse refused here too. Nothing is written. A file that cannot be
-    /// planned (not analysed yet, its start unreadable) gets its error on its row, as the job would
-    /// report it on its row.
+    /// planned (not analysed yet, changed since it was analysed, its start unreadable) gets its
+    /// error on its row, as the job would report it on its row.
     ///
     /// # Errors
     /// What [`Self::export`] refuses; `busy` while one of the files is being exported or reverted.
     pub fn plan_export(&self, req: &ExportRequest) -> Result<ExportPreview, IpcError> {
-        let (process, files) = self.checked_export(req)?;
+        let (process, files, revision) = self.checked_export(req)?;
         let _hold = self.hold(&files, HoldKind::Reading)?;
-        let decide = process.decide;
         let rows = files
             .iter()
-            .map(|file| {
-                let planning = self.session().planning_row(file.file_id);
-                let planned = planning
-                    .ok_or_else(|| {
-                        Error::InvalidArgument(format!(
-                            "{} is not analysed yet",
-                            file.path.display()
-                        ))
-                    })
-                    .and_then(|(record, edit, revertible)| {
-                        preview_row(
-                            &file.path,
-                            &record,
-                            edit,
-                            &decide,
-                            &req.settings,
-                            revertible,
-                        )
-                    });
-                match planned {
-                    Ok(row) => ExportPreviewRow {
-                        file_id: file.file_id,
-                        row: Some(row),
-                        error: None,
-                    },
-                    Err(error) => ExportPreviewRow {
-                        file_id: file.file_id,
-                        row: None,
-                        error: Some(about(file.file_id, error)),
-                    },
-                }
-            })
+            .map(|file| self.preview_of(file, &process, req))
             .collect();
         let shown = |dir: &Path| dir.display().to_string();
         let artefacts_folder = if req.settings.xml {
@@ -216,14 +196,83 @@ impl Shell {
         } else {
             None
         };
+        let xml_listed = process
+            .out_dir
+            .as_deref()
+            .filter(|_| req.settings.xml)
+            .map_or(0, tracks_listed_in);
         Ok(ExportPreview {
             rows,
+            revision,
+            decide: process.decide,
+            xml_listed: u32::try_from(xml_listed).unwrap_or(u32::MAX),
             backup_folder: process
                 .out_dir
                 .is_none()
                 .then(|| shown(&process.backup_root)),
             artefacts_folder,
         })
+    }
+
+    /// What exporting `file` would do, or why that cannot be said.
+    fn preview_of(
+        &self,
+        file: &BatchFile,
+        process: &ProcessSettings,
+        req: &ExportRequest,
+    ) -> ExportPreviewRow {
+        let file_id = file.file_id;
+        let failed = |error: Error| ExportPreviewRow {
+            file_id,
+            row: None,
+            error: Some(about(file_id, error)),
+            identity: None,
+            replaces_copy: false,
+        };
+        let Some(planning) = self.session().planning_row(file_id) else {
+            return failed(Error::InvalidArgument(format!(
+                "{} is not analysed yet",
+                file.path.display()
+            )));
+        };
+        // Read first: a file that changes during the planning is told apart by the job.
+        let identity = match sc_io::txn::file_identity(&file.path) {
+            Ok(identity) => identity,
+            Err(error) => return failed(error),
+        };
+        if planning.identity.as_ref().is_some_and(|i| *i != identity) {
+            return failed(Error::FileChanged {
+                path: file.path.clone(),
+                detail: "since it was analysed; analyse it again to see what it needs".to_owned(),
+                cause: ChangeCause::SincePlanned,
+            });
+        }
+        let input = PreviewInput {
+            path: &file.path,
+            record: &planning.record,
+            edit: planning.edit,
+            decide: &process.decide,
+            settings: &req.settings,
+            out_dir: process.out_dir.as_deref(),
+            revertible: planning.revertible,
+        };
+        match preview_row(&input) {
+            Ok((mut row, replaces_copy)) => {
+                row.exported_with = Some(ExportedWith::new(
+                    process.decide,
+                    req.settings,
+                    process.out_dir.as_deref(),
+                ));
+                ExportPreviewRow {
+                    file_id,
+                    row: Some(row),
+                    error: None,
+                    identity: Some(identity),
+                    replaces_copy,
+                }
+            }
+            Err(error) => failed(error),
+        }
     }
 
     /// Starts exporting `req.file_ids`, sending every event to `send`; returns at once with the
@@ -241,7 +290,19 @@ impl Shell {
         req: ExportRequest,
         send: impl FnMut(JobEvent) + Send + 'static,
     ) -> Result<JobId, IpcError> {
-        let (process, files) = self.checked_export(&req)?;
+        let (process, files, revision) = self.checked_export(&req)?;
+        if req
+            .confirmed
+            .as_ref()
+            .is_some_and(|c| c.revision != revision)
+        {
+            return Err(IpcError {
+                kind: IpcErrorKind::SettingsChanged,
+                message: "the loudness settings changed after this plan; nothing was done"
+                    .to_owned(),
+                file_id: None,
+            });
+        }
         let kind = if req.settings.place == ExportPlace::InPlace {
             HoldKind::ExportInPlace
         } else {
@@ -388,6 +449,17 @@ impl Shell {
         }
         let files = self.distinct_rows(&req.file_ids, &Place::InPlace)?;
         let _hold = self.hold(&files, HoldKind::Reading)?;
+        // A file exported to a folder is listed as that copy, which is what the export made.
+        let files: Vec<BatchFile> = {
+            let session = self.session();
+            files
+                .into_iter()
+                .map(|file| match session.exported_copy(file.file_id) {
+                    Some(copy) if copy.is_file() => BatchFile { path: copy, ..file },
+                    _ => file,
+                })
+                .collect()
+        };
         let rows = self.analysed_rows(&files)?;
         let artefacts = self.write_xml_rows(&rows, out.as_deref())?;
         self.session().set_artefacts(Some(Ok(artefacts.clone())));

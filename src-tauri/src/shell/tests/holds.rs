@@ -303,3 +303,53 @@ fn a_job_that_panics_releases_its_files() {
     });
     assert!(released, "still held after the job's thread ended");
 }
+
+#[test]
+fn a_job_that_panics_still_ends_and_lets_go_of_its_files() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    let files = shell.session().batch(&ids);
+    let hold = shell.hold(&files, HoldKind::ExportInPlace).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    shell.spawn_job(
+        77,
+        hold,
+        move |e| {
+            let _ = tx.send(e);
+        },
+        |_, _, _| panic!("outside the workers' catch_unwind"),
+    );
+
+    let events = events_until_finished(&rx);
+    assert!(
+        matches!(
+            &events[..],
+            [
+                JobEvent::Aborted { job_id: 77, .. },
+                JobEvent::Finished { job_id: 77, .. }
+            ]
+        ),
+        "{events:?}"
+    );
+    assert!(shell.restore().running_jobs.is_empty(), "no longer running");
+    // Its files are free again.
+    let (_, events) = export(&shell, request(&ids, prepare(), None));
+    assert!(steps(&events, ids[0]).contains(&"exportDone"));
+}
+
+#[test]
+fn a_job_that_ends_with_its_own_finished_gets_no_second_one() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    let (_, events) = export(&shell, request(&ids, prepare(), None));
+    let finished = events
+        .iter()
+        .filter(|e| matches!(e, JobEvent::Finished { .. }))
+        .count();
+    assert_eq!(finished, 1);
+    assert!(!events.iter().any(|e| matches!(e, JobEvent::Aborted { .. })));
+}

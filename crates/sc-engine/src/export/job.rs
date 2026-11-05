@@ -5,12 +5,12 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use sc_core::Error;
 use sc_core::analysis::AnalysisSettings;
 use sc_core::export::{BatchMode, ExportPlan};
-use sc_core::ipc::{ExportArtefacts, IpcError, JobEvent, JobId};
+use sc_core::ipc::{ExportArtefacts, ExportSummary, ExportedWith, IpcError, JobEvent, JobId};
 use sc_io::cache::Cache;
 use sc_io::txn::TxnReport;
 
@@ -45,6 +45,8 @@ struct Rows<'a> {
     plans: BTreeMap<u32, Box<ExportPlan>>,
     reports: BTreeMap<u32, Box<TxnReport>>,
     found: Vec<Option<BatchRow>>,
+    /// Files cancelled, which their rows count among the failed.
+    cancelled: u32,
 }
 
 impl<'a> Rows<'a> {
@@ -60,6 +62,7 @@ impl<'a> Rows<'a> {
             plans: BTreeMap::new(),
             reports: BTreeMap::new(),
             found: files.iter().map(|_| None).collect(),
+            cancelled: 0,
         }
     }
 
@@ -90,9 +93,12 @@ impl<'a> Rows<'a> {
             EngineEvent::Failed { file_id, error } => {
                 self.set(*file_id, |file, mode| failed_row(file, Some(mode), error));
             }
-            EngineEvent::Cancelled { file_id } => self.set(*file_id, |file, mode| {
-                failed_row(file, Some(mode), &Error::Cancelled)
-            }),
+            EngineEvent::Cancelled { file_id } => {
+                self.cancelled += 1;
+                self.set(*file_id, |file, mode| {
+                    failed_row(file, Some(mode), &Error::Cancelled)
+                });
+            }
             EngineEvent::Started { .. }
             | EngineEvent::Progress { .. }
             | EngineEvent::Analysed { .. }
@@ -113,8 +119,30 @@ impl<'a> Rows<'a> {
         });
     }
 
-    fn finish(self) -> Vec<BatchRow> {
-        self.found.into_iter().flatten().collect()
+    fn finish(self) -> (Vec<BatchRow>, u32) {
+        (self.found.into_iter().flatten().collect(), self.cancelled)
+    }
+}
+
+/// What became of a batch, for a window that reloads.
+fn summary(
+    job_id: JobId,
+    rows: &[BatchRow],
+    not_failed: u32,
+    was_cancelled: bool,
+    started: Instant,
+) -> ExportSummary {
+    let count = |action| {
+        u32::try_from(rows.iter().filter(|r| r.action == action).count()).unwrap_or(u32::MAX)
+    };
+    ExportSummary {
+        job_id,
+        written: count(RowAction::Written),
+        xml_only: count(RowAction::XmlOnly),
+        skipped: count(RowAction::Skipped),
+        failed: count(RowAction::Failed).saturating_sub(not_failed),
+        cancelled: was_cancelled,
+        seconds: started.elapsed().as_secs_f64(),
     }
 }
 
@@ -134,7 +162,18 @@ pub fn run_export_job(
     send: &mut dyn FnMut(JobEvent),
 ) {
     let lock = || session.lock().unwrap_or_else(PoisonError::into_inner);
-    lock().set_artefacts(None);
+    let started = Instant::now();
+    let with = ExportedWith::new(
+        job.process.decide,
+        job.process.export,
+        job.process.out_dir.as_deref(),
+    );
+    {
+        let mut session = lock();
+        session.set_artefacts(None);
+        session.set_last_export(None);
+        session.begin_export(job_id, with);
+    }
     let files = lock().batch(file_ids);
     let settings = BatchSettings {
         analysis: job.analysis.clone(),
@@ -164,8 +203,9 @@ pub fn run_export_job(
         }
     });
     match result {
-        Ok(summary) => {
-            if let Some(event) = write_batch_artefacts(job_id, job, &rows.finish()) {
+        Ok(summary_of_batch) => {
+            let (rows, cancelled) = rows.finish();
+            if let Some(event) = write_batch_artefacts(job_id, job, &rows) {
                 match &event {
                     JobEvent::Artefacts { artefacts, .. } => {
                         lock().set_artefacts(Some(Ok(artefacts.clone())));
@@ -177,12 +217,21 @@ pub fn run_export_job(
                 }
                 send(event);
             }
+            lock().set_last_export(Some(summary(
+                job_id,
+                &rows,
+                cancelled,
+                summary_of_batch.was_cancelled,
+                started,
+            )));
+            lock().end_export(job_id);
             send(JobEvent::Finished {
                 job_id,
-                cancelled: summary.was_cancelled,
+                cancelled: summary_of_batch.was_cancelled,
             });
         }
         Err(error) => {
+            lock().end_export(job_id);
             send(JobEvent::Aborted {
                 job_id,
                 error: IpcError::from(error),

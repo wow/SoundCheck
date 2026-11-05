@@ -22,13 +22,14 @@ mod source;
 pub mod wording;
 
 pub use artefacts::{
-    Artefacts, BatchRow, RowAction, RowTrack, XmlSelect, report_rows, write_artefacts, xml_tracks,
+    Artefacts, BatchRow, RowAction, RowTrack, XmlSelect, report_rows, tracks_listed_in,
+    write_artefacts, xml_tracks,
 };
 pub use job::{ExportJob, export_artefacts, new_artefacts_folder, run_export_job};
 pub use plan::{
     ExportInput, ExportSource, SeratoPresence, plan_export, plan_snapped_cut, replaygain,
 };
-pub use preview::preview_row;
+pub use preview::{PreviewInput, preview_row};
 pub use process::{ProcessDone, ProcessSettings};
 pub use rows::{
     ArtefactConflict, XmlOutRefusal, analysed_row, artefact_conflict, failed_row, not_listed,

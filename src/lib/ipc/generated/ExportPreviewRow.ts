@@ -16,6 +16,15 @@ fileId: number,
  */
 row: ExportRow | null, 
 /**
- * Why it could not be planned: not analysed yet, or its start could not be read.
+ * Why it could not be planned: not analysed yet, changed since it was analysed, or its start
+ * could not be read.
  */
-error: IpcError | null, };
+error: IpcError | null, 
+/**
+ * The file as it was planned, to send back ([`ConfirmedFile`]); `None` without a plan.
+ */
+identity: string | null, 
+/**
+ * The write replaces an earlier copy of it SoundCheck wrote in the folder.
+ */
+replacesCopy: boolean, };

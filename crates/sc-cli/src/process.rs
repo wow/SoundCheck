@@ -219,6 +219,7 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
         backup_root: root,
         edits: Some(EditStore::open(EditStore::default_dir()?)),
         recovery: Arc::new(RecoveryGate::new(recovered)),
+        confirmed: None,
     };
     let settings = BatchSettings {
         analysis: crate::settings(&args.analysis),

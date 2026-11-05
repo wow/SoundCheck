@@ -423,6 +423,11 @@ fn worst_case_export_row() -> ExportRow {
         }),
         edit_carried: true,
         revertible: true,
+        exported_with: Some(ExportedWith::new(
+            crate::plan::DecideSettings::dj(),
+            crate::export::ExportSettings::default(),
+            Some(std::path::Path::new(&long("\""))),
+        )),
         notes: bounded_strings(
             vec![long("\""), long("\u{1f3a7}")],
             MAX_ROW_NOTES_JSON_BYTES,
@@ -436,6 +441,10 @@ fn a_worst_case_preview_row_stays_within_budget() {
         file_id: u32::MAX,
         row: Some(Box::new(worst_case_export_row())),
         error: None,
+        identity: Some(
+            "1:18446744073709551615:18446744073709551615:9223372036854775807.999999999".to_owned(),
+        ),
+        replaces_copy: true,
     };
     assert!(json_len(&row) <= MAX_ROW_BYTES, "{} bytes", json_len(&row));
 }
@@ -465,6 +474,7 @@ fn a_worst_case_export_done_stays_within_budget() {
             row: Box::new(row),
             plan,
             revision: u32::MAX,
+            export_stale: true,
         })),
     };
     assert!(

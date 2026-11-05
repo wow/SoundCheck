@@ -1,8 +1,13 @@
 //! The confirm step's `plan_export` and what a window that reloads reads: synthetic tones, loudness
 //! only (no model).
 
+use std::path::Path;
+
 use sc_core::export::{ExportSettings, ExportSkip};
-use sc_core::ipc::{ExportAction, IpcErrorKind, JobEvent, JobStage};
+use sc_core::ipc::{
+    ConfirmedExport, ConfirmedFile, ExportAction, ExportPreview, ExportRequest, IpcErrorKind,
+    JobEvent, JobStage,
+};
 
 use super::support::{Lib, analysed, export, held_at, in_folder, prepare, request, sha256, steps};
 
@@ -234,4 +239,195 @@ fn the_next_batch_or_clearing_the_list_drops_the_artefacts() {
     assert!(shell.restore().artefacts.is_some());
     shell.clear();
     assert_eq!(shell.restore().artefacts, None);
+}
+
+/// The request sent back after `preview`: what the user confirmed.
+fn confirmed_of(mut req: ExportRequest, preview: &ExportPreview) -> ExportRequest {
+    req.confirmed = Some(ConfirmedExport {
+        revision: preview.revision,
+        files: preview
+            .rows
+            .iter()
+            .map(|r| ConfirmedFile {
+                file_id: r.file_id,
+                identity: r.identity.clone().expect("planned"),
+            })
+            .collect(),
+    });
+    req
+}
+
+/// Another tone of a different level, of another length so the file is told apart at once.
+fn rewrite(wav: &Path) {
+    super::support::tone_wav(wav, 0.5, 44_100);
+    let mut bytes = std::fs::read(wav).unwrap();
+    bytes.extend_from_slice(&[0; 2]);
+    std::fs::write(wav, &bytes).unwrap();
+}
+
+#[test]
+fn a_file_changed_after_confirm_fails_its_row_and_is_not_written() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let other = lib.tone("b.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav, &other]);
+    let req = request(&ids, prepare(), None);
+    let preview = shell.plan_export(&req).unwrap();
+    let req = confirmed_of(req, &preview);
+
+    rewrite(&wav);
+    let rewritten = sha256(&wav);
+    let (_, events) = export(&shell, req);
+
+    assert_eq!(sha256(&wav), rewritten, "left as it is");
+    let refused = events.iter().find_map(|e| match e {
+        JobEvent::Failed { file_id, error, .. } if *file_id == ids[0] => Some(error),
+        _ => None,
+    });
+    let refused = refused.expect("failed");
+    assert_eq!(refused.kind, IpcErrorKind::FileChanged, "{refused:?}");
+    assert!(
+        refused.message.contains("since you confirmed"),
+        "{refused:?}"
+    );
+    // The other file of the batch goes on.
+    assert!(steps(&events, ids[1]).contains(&"exportDone"));
+}
+
+#[test]
+fn a_file_unchanged_since_confirm_is_written() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    let req = request(&ids, prepare(), None);
+    let preview = shell.plan_export(&req).unwrap();
+    let (_, events) = export(&shell, confirmed_of(req, &preview));
+    assert!(steps(&events, ids[0]).contains(&"exportDone"), "{events:?}");
+}
+
+#[test]
+fn the_preview_notices_a_file_that_changed_since_its_analysis() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    rewrite(&wav);
+    let preview = shell.plan_export(&request(&ids, prepare(), None)).unwrap();
+    assert_eq!(preview.rows[0].row, None);
+    let error = preview.rows[0].error.as_ref().expect("an error");
+    assert_eq!(error.kind, IpcErrorKind::FileChanged);
+    assert!(error.message.contains("since it was analysed"), "{error:?}");
+}
+
+#[test]
+fn the_job_refuses_settings_that_changed_after_the_plan() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    let before = sha256(&wav);
+    let req = request(&ids, prepare(), None);
+    let preview = shell.plan_export(&req).unwrap();
+    assert!((preview.decide.target.0 + 11.0).abs() < 1e-9);
+
+    let mut decide = preview.decide;
+    decide.target = sc_core::Lufs(-8.0);
+    shell.set_decide_settings(decide).unwrap();
+
+    let refused = shell
+        .export(confirmed_of(req, &preview), |_| {})
+        .unwrap_err();
+    assert_eq!(refused.kind, IpcErrorKind::SettingsChanged, "{refused:?}");
+    assert_eq!(sha256(&wav), before, "nothing was written");
+}
+
+#[test]
+fn the_preview_says_which_copies_it_replaces_and_which_files_it_leaves() {
+    let lib = Lib::new();
+    let (a, b, c) = (
+        lib.tone("a.wav", 0.1),
+        lib.tone("b.wav", 0.1),
+        lib.tone("c.wav", 0.1),
+    );
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&a, &b, &c]);
+    let out = lib.base().join("copies");
+    let (_, events) = export(&shell, request(&ids[..1], in_folder(prepare()), Some(&out)));
+    assert!(steps(&events, ids[0]).contains(&"exportDone"));
+    std::fs::write(out.join("b.wav"), b"someone else's").unwrap();
+
+    let preview = shell
+        .plan_export(&request(&ids, in_folder(prepare()), Some(&out)))
+        .unwrap();
+
+    assert!(preview.rows[0].replaces_copy, "an earlier copy");
+    assert!(!preview.rows[1].replaces_copy && !preview.rows[2].replaces_copy);
+    let action = |i: usize| preview.rows[i].row.as_ref().unwrap().action.clone();
+    assert!(matches!(action(0), ExportAction::Write { .. }));
+    assert_eq!(
+        action(1),
+        ExportAction::Skip {
+            reason: ExportSkip::OtherFileInFolder
+        }
+    );
+    assert!(matches!(action(2), ExportAction::Write { .. }));
+    assert_eq!(std::fs::read(out.join("b.wav")).unwrap(), b"someone else's");
+}
+
+#[test]
+fn a_row_says_what_it_was_exported_with() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    let out = lib.base().join("copies");
+    export(&shell, request(&ids, in_folder(prepare()), Some(&out)));
+    let snapshot = shell.restore();
+    let row = snapshot.rows[0].export.as_ref().expect("exported");
+    let with = row.exported_with.as_ref().expect("recorded");
+    assert!((with.decide.target.0 + 11.0).abs() < 1e-9);
+    assert_eq!(with.settings.place, sc_core::export::Place::Folder);
+    assert_eq!(
+        with.out_dir.as_deref(),
+        Some(out.display().to_string().as_str())
+    );
+}
+
+#[test]
+fn the_snapshot_holds_what_became_of_the_latest_batch() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let hi_res = lib.tone_at("hi-res.wav", 0.1, 96_000);
+    let shell = lib.shell(2);
+    let ids = analysed(&shell, &[&wav, &hi_res]);
+    assert_eq!(shell.restore().last_export, None, "only an export counts");
+
+    let out = lib.base().join("copies");
+    let (job, _) = export(&shell, request(&ids, in_folder(prepare()), Some(&out)));
+
+    let summary = shell.restore().last_export.expect("kept");
+    assert_eq!(summary.job_id, job);
+    assert_eq!(
+        (summary.written, summary.skipped, summary.failed),
+        (1, 1, 0)
+    );
+    assert!(!summary.cancelled);
+    shell.clear();
+    assert_eq!(shell.restore().last_export, None);
+}
+
+#[test]
+fn a_cancelled_file_is_not_counted_as_failed() {
+    let lib = Lib::new();
+    let wav = lib.tone("a.wav", 0.1);
+    let shell = lib.shell(1);
+    let ids = analysed(&shell, &[&wav]);
+    let held = held_at(&shell, request(&ids, prepare(), None), at_processing);
+    let _ = shell.restore();
+    held.finish();
+    let summary = shell.restore().last_export.expect("kept");
+    assert_eq!((summary.written, summary.failed), (0, 0));
+    assert!(summary.cancelled);
 }

@@ -28,4 +28,9 @@ export: ExportRow | null,
  * A change of it is in effect that `revert_file` can put back: also true with no `export`
  * after a revert that left an earlier change standing.
  */
-revertible: boolean, };
+revertible: boolean, 
+/**
+ * A grid different from what its export wrote was saved since: exporting it again would write
+ * something new.
+ */
+exportStale: boolean, };
