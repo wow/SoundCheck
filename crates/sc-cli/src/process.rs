@@ -235,6 +235,7 @@ pub fn run_process(args: &ProcessArgs) -> anyhow::Result<usize> {
         edits: Some(EditStore::open(EditStore::default_dir()?)),
         recovery: Arc::new(RecoveryGate::new(recovered)),
         confirmed: None,
+        same_name: std::collections::BTreeSet::new(),
     };
     let settings = BatchSettings {
         analysis: crate::settings(&args.analysis),
@@ -330,6 +331,11 @@ fn foreign_artefact(out: &Path) -> Option<(PathBuf, String)> {
             Error::AlreadyExists { .. } => format!(
                 "the batch writes its {} here, and a file SoundCheck did not write is already \
                  there; it is never replaced",
+                conflict.name
+            ),
+            Error::Corrupt { .. } => format!(
+                "it starts like the {} SoundCheck writes but cannot be read, so what it lists would \
+                 be lost; it is left as it is",
                 conflict.name
             ),
             other => format!("it could not be read to check it: {other}"),

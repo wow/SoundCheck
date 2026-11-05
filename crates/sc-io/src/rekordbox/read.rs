@@ -39,8 +39,9 @@ fn tempo_of(e: &BytesStart<'_>) -> Option<Tempo> {
     })
 }
 
-/// The tracks of the XML `bytes`, in order; `None` when it is not readable as one SoundCheck wrote,
-/// including a track without the `TEMPO` every listed track has.
+/// The tracks of the XML `bytes`, in order; `None` when it is not readable whole as one SoundCheck
+/// wrote: cut short, or a track without the `TEMPO` every listed track has. A caller must not take
+/// that for an empty list: writing over it would lose what it lists.
 #[must_use]
 pub fn read_tracks(bytes: &[u8]) -> Option<Vec<XmlTrack>> {
     let mut reader = quick_xml::Reader::from_reader(bytes);
@@ -49,6 +50,7 @@ pub fn read_tracks(bytes: &[u8]) -> Option<Vec<XmlTrack>> {
     let mut in_collection = false;
     let mut current: Option<XmlTrack> = None;
     let mut has_tempo = false;
+    let mut ended = false;
     loop {
         match reader.read_event_into(&mut buf).ok()? {
             Event::Start(e) if e.name().as_ref() == "COLLECTION" => in_collection = true,
@@ -69,7 +71,9 @@ pub fn read_tracks(bytes: &[u8]) -> Option<Vec<XmlTrack>> {
                 }
                 tracks.push(current.take()?);
             }
-            Event::Eof => return Some(tracks),
+            Event::Empty(e) if in_collection && e.name().as_ref() == "TRACK" => return None,
+            Event::End(e) if e.name().as_ref() == "DJ_PLAYLISTS" => ended = true,
+            Event::Eof => return ended.then_some(tracks),
             _ => {}
         }
         buf.clear();

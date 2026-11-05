@@ -195,6 +195,19 @@ pub struct SidecarDoc {
     /// schema 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub export: Option<ExportRecord>,
+    /// A hash of the resolved path of the file a copy was made from, to tell it from a copy of
+    /// another track of the same name. A hash, not the path: sidecars travel with shared music
+    /// folders, and a path would give away a home folder. Absent in place and in older sidecars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path_hash: Option<String>,
+}
+
+/// The hash a sidecar records of the resolved path of a copy's source.
+#[must_use]
+pub fn hash_of_path(resolved: &Path) -> String {
+    blake3::hash(resolved.as_os_str().as_encoded_bytes())
+        .to_hex()
+        .to_string()
 }
 
 /// The sidecar path of `file`: `<file name>.soundcheck.json` next to it.
@@ -243,6 +256,7 @@ pub(crate) fn render_text(entry: &Entry, notes: &[String]) -> Result<String> {
             notes: notes.to_vec(),
         },
         export: record.export.clone(),
+        source_path_hash: (entry.kind == TxnKind::ToFolder).then(|| hash_of_path(&entry.source)),
     };
     doc_text(&doc)
 }

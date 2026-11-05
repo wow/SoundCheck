@@ -23,7 +23,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use sc_core::analysis::{AnalysisRecord, AnalysisSettings, Grid};
 use sc_core::export::{
@@ -31,7 +31,7 @@ use sc_core::export::{
     GridCheckSkip, Place as ExportPlace, SourceMeasurements, XmlGrid, XmlTrackInfo,
 };
 use sc_core::plan::{DecideSettings, Plan};
-use sc_core::{Error, Result, Seconds};
+use sc_core::{Bpm, Error, Result, Seconds};
 use sc_io::cache::Cache;
 use sc_io::edits::{EditStore, SavedEdit};
 use sc_io::txn::{CopyAt, copy_at};
@@ -64,6 +64,9 @@ pub struct ProcessSettings {
     /// Each file as the user confirmed it, by id: a file that is no longer that one fails before
     /// anything is written. `None` checks nothing.
     pub confirmed: Option<BTreeMap<u32, String>>,
+    /// Files whose copy would take a name an earlier file of this batch takes: skipped, the first
+    /// in the list being written. By id.
+    pub same_name: BTreeSet<u32>,
 }
 
 impl ProcessSettings {
@@ -117,6 +120,8 @@ pub struct ProcessDone {
     /// The output's own analysis, now in the cache, with the carried grid edit applied; `None`
     /// when it did not finish (see `notes`).
     pub analysis: Option<Box<AnalysisRecord>>,
+    /// What the output was before that analysis read it, and the BPM range it used.
+    pub analysed: Option<(String, (Bpm, Bpm))>,
     /// What the carried grid edit does to the output's grid.
     pub edit: EditState,
     /// The user's grid edit was carried over to the output.
@@ -173,7 +178,8 @@ pub(crate) fn process_file(
         grid_confirmed: edit.confirmed,
     };
     let outcome = plan_export_snapped(path, &input, &settings.export)?;
-    let plan = match gate_folder(outcome, path, settings.out_dir.as_deref())?.0 {
+    let same_name = settings.same_name.contains(&file_id);
+    let plan = match gate_folder(outcome, path, settings.out_dir.as_deref(), same_name)?.0 {
         ExportOutcome::Write { plan } => plan,
         outcome => {
             return Ok(EngineEvent::ExportSkipped {
@@ -269,8 +275,9 @@ fn check_confirmed(file_id: u32, path: &Path, settings: &ProcessSettings) -> Res
     })
 }
 
-/// `outcome`, given what is at the path a copy would take in `out_dir`: another file of that name
-/// keeps the file from being written. Also says whether the write replaces an earlier copy.
+/// `outcome`, given what is at the path a copy would take in `out_dir`, and whether an earlier file
+/// of the batch takes that name (`same_name`): anything of that name but this file's own earlier
+/// copy keeps the file from being written. Also says whether the write replaces that copy.
 ///
 /// # Errors
 /// [`Error::Io`] when that file cannot be read to tell.
@@ -278,21 +285,22 @@ pub(super) fn gate_folder(
     outcome: ExportOutcome,
     path: &Path,
     out_dir: Option<&Path>,
+    same_name: bool,
 ) -> Result<(ExportOutcome, bool)> {
     let (ExportOutcome::Write { .. }, Some(dir), Some(name)) =
         (&outcome, out_dir, path.file_name())
     else {
         return Ok((outcome, false));
     };
+    let skip = |reason| (ExportOutcome::Skip { reason }, false);
+    if same_name {
+        return Ok(skip(ExportSkip::CopyOfOtherTrack));
+    }
     Ok(match copy_at(&dir.join(name), path)? {
         CopyAt::Nothing => (outcome, false),
         CopyAt::Own => (outcome, true),
-        CopyAt::Foreign => (
-            ExportOutcome::Skip {
-                reason: ExportSkip::OtherFileInFolder,
-            },
-            false,
-        ),
+        CopyAt::OtherTrack => skip(ExportSkip::CopyOfOtherTrack),
+        CopyAt::Foreign => skip(ExportSkip::OtherFileInFolder),
     })
 }
 
@@ -312,6 +320,7 @@ fn after_write_guarded(
         duration,
         xml: xml_info_absent(),
         analysis: None,
+        analysed: None,
         edit: EditState::default(),
         edit_carried: false,
         grid_check: not_analysed(),
@@ -453,9 +462,11 @@ fn after_write(
         _ => false,
     };
     let started = Instant::now();
+    let mut analysed = None;
     let (analysis, edit, grid_check) =
         match analyzer.analyze_fresh(output, &mut Timings::default(), None) {
             Ok(report) => {
+                analysed = report.identity.clone().map(|id| (id, report.bpm_range));
                 let mut record = report.record;
                 // The detector's own grid, before the carried edit pins it.
                 let check = check_written(&record, &carry.exported);
@@ -508,6 +519,7 @@ fn after_write(
         // Set by the caller, which knows the plan.
         xml: xml_info_absent(),
         analysis,
+        analysed,
         edit,
         edit_carried,
         grid_check,

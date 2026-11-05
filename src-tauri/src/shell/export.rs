@@ -3,9 +3,9 @@
 //! one of them is refused while the start-up recovery runs: the engine would only wait for it, and
 //! the user is better told.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use sc_core::analysis::AnalysisRecord;
 use sc_core::export::Place as ExportPlace;
 use sc_core::ipc::{
     ExportArtefacts, ExportPreview, ExportPreviewRow, ExportRequest, ExportedWith, ForgetResult,
@@ -19,8 +19,8 @@ use sc_engine::export::{
     xml_out_refusal, xml_tracks,
 };
 use sc_engine::{
-    Analyzer, BatchFile, BatchRow, BatchSettings, CancelToken, EditState, EngineEvent, Place,
-    ProcessSettings, Task, XmlSelect, apply_saved, check_inputs, run_batch, undo_file,
+    Analyzer, BatchFile, BatchRow, BatchSettings, CancelToken, EngineEvent, Place, ProcessSettings,
+    RevertedAnalysis, Task, XmlSelect, apply_saved, check_inputs, run_batch, undo_file,
     write_artefacts,
 };
 use sc_io::rekordbox::is_soundcheck_xml;
@@ -71,12 +71,18 @@ impl Shell {
         })
     }
 
-    /// The rows `file_ids` name, in that order, each named once however it is spelled on disk.
+    /// The rows `file_ids` name, in that order, each named once however it is spelled on disk, and
+    /// the later of any files one folder would hold under one name: the first in the list is
+    /// written, and those are skipped.
     ///
     /// # Errors
     /// `invalidArgument` for no file or a row the session does not hold; `listedTwice` for a
-    /// file named twice; `sameOutputName` for two files one folder would hold under one name.
-    fn distinct_rows(&self, file_ids: &[u32], place: &Place) -> Result<Vec<BatchFile>, IpcError> {
+    /// file named twice.
+    fn distinct_rows(
+        &self,
+        file_ids: &[u32],
+        place: &Place,
+    ) -> Result<(Vec<BatchFile>, BTreeSet<u32>), IpcError> {
         if file_ids.is_empty() {
             return Err(Error::InvalidArgument("no files were named".into()).into());
         }
@@ -91,14 +97,17 @@ impl Shell {
             session.batch(file_ids)
         };
         let paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
-        let refused = check_inputs(&paths, place)
-            .into_iter()
-            .zip(&files)
-            .find_map(|(refusal, file)| refusal.map(|e| about(file.file_id, e)));
-        match refused {
-            Some(error) => Err(error),
-            None => Ok(files),
+        let mut same_name = BTreeSet::new();
+        for (refusal, file) in check_inputs(&paths, place).into_iter().zip(&files) {
+            match refusal {
+                Some(Error::SameOutputName { .. }) => {
+                    same_name.insert(file.file_id);
+                }
+                Some(error) => return Err(about(file.file_id, error)),
+                None => {}
+            }
         }
+        Ok((files, same_name))
     }
 
     /// Refuses a folder nothing is written into, whatever the rows do: inside the backups, which
@@ -151,12 +160,17 @@ impl Shell {
                     .map(|f| (f.file_id, f.identity.clone()))
                     .collect()
             }),
+            same_name: BTreeSet::new(),
         };
         process.validate()?;
         let place = out_dir
             .as_ref()
             .map_or(Place::InPlace, |dir| Place::Folder(dir.clone()));
-        let files = self.distinct_rows(&req.file_ids, &place)?;
+        let (files, same_name) = self.distinct_rows(&req.file_ids, &place)?;
+        let process = ProcessSettings {
+            same_name,
+            ..process
+        };
         if let Some(dir) = &out_dir {
             if dir.exists() && !dir.is_dir() {
                 return Err(
@@ -243,7 +257,7 @@ impl Shell {
         if planning.identity.as_ref().is_some_and(|i| *i != identity) {
             return failed(Error::FileChanged {
                 path: file.path.clone(),
-                detail: "since it was analysed; analyse it again to see what it needs".to_owned(),
+                detail: "since it was analysed; press Analyse to read it again".to_owned(),
                 cause: ChangeCause::SincePlanned,
             });
         }
@@ -255,6 +269,7 @@ impl Shell {
             settings: &req.settings,
             out_dir: process.out_dir.as_deref(),
             revertible: planning.revertible,
+            same_name: process.same_name.contains(&file_id),
         };
         match preview_row(&input) {
             Ok((mut row, replaces_copy)) => {
@@ -352,7 +367,7 @@ impl Shell {
     pub(super) fn revert_analysing(
         &self,
         file_id: u32,
-        analyse: impl FnOnce(&Path) -> sc_core::Result<(AnalysisRecord, EditState)>,
+        analyse: impl FnOnce(&Path) -> sc_core::Result<RevertedAnalysis>,
     ) -> Result<RevertResult, IpcError> {
         self.refuse_while_recovering()?;
         let root = self.backup_root()?;
@@ -394,20 +409,26 @@ impl Shell {
     }
 
     /// The analysis of the file at `path`, with its saved edit applied.
-    fn analyse_original(&self, path: &Path) -> sc_core::Result<(AnalysisRecord, EditState)> {
+    fn analyse_original(&self, path: &Path) -> sc_core::Result<RevertedAnalysis> {
         let mut analyzer = Analyzer::load(
             self.analysis_settings(),
             self.inner.cache.clone(),
             CancelToken::new(),
         )?;
-        let mut record = analyzer.analyze(path)?.record;
+        let report = analyzer.analyze(path)?;
+        let mut record = report.record;
         let edit = self
             .inner
             .edits
             .as_ref()
             .map(|store| apply_saved(&mut record, store))
             .unwrap_or_default();
-        Ok((record, edit))
+        Ok(RevertedAnalysis {
+            record,
+            edit,
+            identity: report.identity,
+            bpm_range: report.bpm_range,
+        })
     }
 
     /// Writes a rekordbox XML of the files `req.file_ids`, as `sc-cli xml` does: each analysed
@@ -447,7 +468,7 @@ impl Shell {
                 self.refuse_destination(dir)?;
             }
         }
-        let files = self.distinct_rows(&req.file_ids, &Place::InPlace)?;
+        let (files, _) = self.distinct_rows(&req.file_ids, &Place::InPlace)?;
         let _hold = self.hold(&files, HoldKind::Reading)?;
         // A file exported to a folder is listed as that copy, which is what the export made.
         let files: Vec<BatchFile> = {

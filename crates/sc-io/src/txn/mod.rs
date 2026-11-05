@@ -95,8 +95,9 @@ pub use fsx::{TEMP_MARKER, hash_file, hex};
 pub use journal::{Entry, JOURNAL_FILE, Outcome, State, TxnKind, is_txn_id};
 pub use meta::file_identity;
 pub use preflight::{
-    SPACE_MARGIN_BYTES, TagFamily, check_folder_not_rekordbox, is_in_resolved_backup_root,
-    is_under_backup_root, resolve_backup_root, resolve_file, tag_family,
+    SPACE_MARGIN_BYTES, TagFamily, check_folder_not_rekordbox, folder_folds_case,
+    is_in_resolved_backup_root, is_under_backup_root, resolve_backup_root, resolve_file,
+    tag_family,
 };
 pub use recover::{Pending, Recovered, RecoveryReport, recover};
 pub use sidecar::{SIDECAR_SUFFIX, record_grid_check, sidecar_path};

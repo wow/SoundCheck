@@ -34,6 +34,8 @@ pub struct PreviewInput<'a> {
     pub out_dir: Option<&'a Path>,
     /// An earlier change of the file is in effect.
     pub revertible: bool,
+    /// An earlier file of the batch takes the name its copy would have.
+    pub same_name: bool,
 }
 
 /// The row exporting the file would show, and whether its write replaces an earlier copy. The
@@ -58,7 +60,7 @@ pub fn preview_row(input: &PreviewInput<'_>) -> Result<(Box<ExportRow>, bool)> {
         grid_confirmed: input.edit.confirmed,
     };
     let outcome = plan_export_snapped(input.path, &planning, input.settings)?;
-    let (outcome, replaces) = gate_folder(outcome, input.path, input.out_dir)?;
+    let (outcome, replaces) = gate_folder(outcome, input.path, input.out_dir, input.same_name)?;
     Ok((
         match outcome {
             ExportOutcome::Write { plan } => row::planned(&plan, input.revertible),

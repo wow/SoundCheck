@@ -56,13 +56,14 @@ pub(crate) struct FileId {
 }
 
 /// A file's identity for telling later whether it is still that file: its device, inode, length and
-/// modification time as opaque text. Unlike [`FileId`] it leaves out the change time, which the
-/// system moves when it merely reads or labels a file.
+/// modification time as opaque text, of the file itself when `path` is a symbolic link. Unlike
+/// [`FileId`] it leaves out the change time, which the system moves when it merely reads or labels
+/// a file.
 ///
 /// # Errors
 /// [`sc_core::Error::Io`] when the file cannot be read.
 pub fn file_identity(path: &Path) -> Result<String> {
-    let id = FileId::read(path)?;
+    let id = FileId::of(&std::fs::metadata(path).map_err(|e| io_err(path, e))?);
     Ok(format!(
         "{}:{}:{}:{}.{}",
         id.dev, id.ino, id.len, id.mtime.0, id.mtime.1

@@ -6,8 +6,9 @@ use sc_core::{Bpm, Seconds};
 
 use super::{BOM, COLUMNS, FORMULA_STARTS, ReportRow};
 
-/// The records of `text`: RFC 4180, comma-separated, CRLF or LF line ends.
-fn records(text: &str) -> Vec<Vec<String>> {
+/// The records of `text`: RFC 4180, comma-separated, CRLF or LF line ends; `None` for one cut short
+/// inside a quoted field.
+fn records(text: &str) -> Option<Vec<Vec<String>>> {
     let mut rows = Vec::new();
     let mut row = Vec::new();
     let mut field = String::new();
@@ -29,11 +30,14 @@ fn records(text: &str) -> Vec<Vec<String>> {
             c => field.push(c),
         }
     }
+    if quoted {
+        return None;
+    }
     if !field.is_empty() || !row.is_empty() {
         row.push(field);
         rows.push(row);
     }
-    rows
+    Some(rows)
 }
 
 /// A text field as it was before the writer guarded it against spreadsheet formulas.
@@ -44,15 +48,21 @@ fn text(field: &str) -> String {
     }
 }
 
-fn number(field: &str) -> Option<f64> {
-    field.parse().ok()
+/// A number field: `Ok(None)` when empty, `Err` when it is not a number.
+fn number(field: &str) -> Result<Option<f64>, std::num::ParseFloatError> {
+    if field.is_empty() {
+        return Ok(None);
+    }
+    field.parse().map(Some)
 }
 
-/// The rows of the report `bytes`, in order; `None` when it is not one with today's columns.
+/// The rows of the report `bytes`, in order; `None` when it is not readable whole as one with
+/// today's columns: a row cut short, a number that is none. A caller must not take that for an
+/// empty report: writing over it would lose what it says.
 #[must_use]
 pub fn read_rows(bytes: &[u8]) -> Option<Vec<ReportRow>> {
     let text_of = std::str::from_utf8(bytes.strip_prefix(BOM)?).ok()?;
-    let mut records = records(text_of).into_iter();
+    let mut records = records(text_of)?.into_iter();
     if records.next()? != COLUMNS {
         return None;
     }
@@ -66,10 +76,10 @@ pub fn read_rows(bytes: &[u8]) -> Option<Vec<ReportRow>> {
                 file: text(&file),
                 mode: text(&mode),
                 action: text(&action),
-                gain_db: number(&gain),
-                cut: number(&cut).map(Seconds),
-                bpm: number(&bpm).map(Bpm),
-                bar1: number(&bar1).map(Seconds),
+                gain_db: number(&gain).ok()?,
+                cut: number(&cut).ok()?.map(Seconds),
+                bpm: number(&bpm).ok()?.map(Bpm),
+                bar1: number(&bar1).ok()?.map(Seconds),
                 grid: text(&grid),
                 grid_check: (!check.is_empty()).then_some(check),
                 notes: if notes.is_empty() {

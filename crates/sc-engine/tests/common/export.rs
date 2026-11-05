@@ -73,6 +73,7 @@ pub fn process(lib: &Lib, mode: BatchMode, out: Option<PathBuf>) -> ProcessSetti
         edits: Some(lib.edits()),
         recovery: Arc::new(RecoveryGate::new(finished())),
         confirmed: None,
+        same_name: std::collections::BTreeSet::new(),
     }
 }
 

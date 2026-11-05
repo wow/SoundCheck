@@ -337,6 +337,8 @@ pub struct SessionRow {
     /// A grid different from what its export wrote was saved since: exporting it again would write
     /// something new.
     pub export_stale: bool,
+    /// The BPM range its analysis was made with, when analysed.
+    pub analysed_range: Option<(Bpm, Bpm)>,
 }
 
 /// Everything the session holds, in the order the files were added.

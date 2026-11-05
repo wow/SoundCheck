@@ -75,6 +75,7 @@ fn written_with(grid_check: GridCheck) -> FileResult {
                 artist: None,
             },
             analysis: None,
+            analysed: None,
             edit: EditState::default(),
             edit_carried: false,
             grid_check,

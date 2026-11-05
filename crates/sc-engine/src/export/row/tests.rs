@@ -89,6 +89,7 @@ fn process_done(notes: Vec<String>) -> ProcessDone {
             artist: None,
         },
         analysis: None,
+        analysed: None,
         edit: EditState::default(),
         edit_carried: false,
         grid_check: GridCheck::NotChecked {

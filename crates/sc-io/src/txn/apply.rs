@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use sc_core::{ChangeCause, Error, RenderRequest, Result};
 
-use super::copy_at::{CopyAt, copy_at};
+use super::copy_at::{CopyAt, proven_copy};
 use super::crash;
 use super::finish::finish;
 use super::fsx::{
@@ -26,7 +26,7 @@ use super::journal::{Journal, Line, State, TargetLock, TxnKind, TxnLock};
 use super::meta::{FileId, FileMeta, folder_id, restore, snapshot};
 use super::preflight::{
     Container, Source, check_in_place, check_not_rekordbox, check_outside_backups, check_space,
-    name_in_dir, nearest_existing, resolve, source,
+    name_in_dir, nearest_existing, real_path, resolve, source,
 };
 use super::recover::settle_failure;
 use super::sidecar::{Record, RenderSummary};
@@ -153,7 +153,15 @@ fn check(
     req: &RenderRequest,
     opts: &TxnOptions,
 ) -> Result<Checked> {
-    let (full, dir, name) = resolve(path)?;
+    let (mut full, mut dir, mut name) = resolve(path)?;
+    // A copy is made of the file itself: a link is only kept to refuse it in place.
+    if out_dir.is_some() && full.is_symlink() {
+        full = real_path(&full)?;
+        if let (Some(folder), Some(file)) = (full.parent(), full.file_name()) {
+            dir = folder.to_path_buf();
+            name = file.to_os_string();
+        }
+    }
     check_outside_backups(&full, &opts.backup_root)?;
     let (kind, target_dir, create_dir, volume) = match out_dir {
         None => {
@@ -194,10 +202,15 @@ fn check(
     if kind == TxnKind::ToFolder {
         check_outside_backups(&target, &opts.backup_root)?;
         if exists(&target) {
-            if !opts.replace_own_copy || copy_at(&target, &full)? != CopyAt::Own {
+            let proven = if opts.replace_own_copy {
+                proven_copy(&target, &full)?
+            } else {
+                (CopyAt::Foreign, None)
+            };
+            let (CopyAt::Own, Some(id)) = proven else {
                 return Err(Error::AlreadyExists { path: target });
-            }
-            replaces = Some(FileId::read(&target)?);
+            };
+            replaces = Some(id);
         }
     }
     let source_id = FileId::read(&full)?;

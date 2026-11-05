@@ -107,6 +107,9 @@ pub fn skip_why(reason: ExportSkip) -> String {
              (or it changed since), so it is left as it is"
                 .to_owned()
         }
+        ExportSkip::CopyOfOtherTrack => {
+            "a copy of another track already has this name in the folder".to_owned()
+        }
         ExportSkip::GridNeedsReview => {
             "grid only, and its grid needs review, so it is not written and there is nothing \
              else to write"
