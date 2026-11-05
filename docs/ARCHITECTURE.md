@@ -201,4 +201,4 @@ RENDER (streamed)
 WAV/AIFF: tee-hash of PCM as written + header/chunk table re-read. FLAC: full re-decode compared to the tee hash (+ `flac -t` in CI). MP3: frame re-walk, decode first/last 32 frames, `Track.delay/padding/num_frames` unchanged. Library mode additionally asserts identical frame count. Full re-measure (I/TP) via `sc-cli --verify=full` and nightly CI.
 
 ## Build & release
-Cargo workspace (edition 2024, resolver 3), pnpm workspace, `scripts/verify.sh`, `ci.yml` (ubuntu + one macos-14 job), `release.yml` (tauri-action; signs + notarizes with the `APPLE_*` secrets from the first tag; forks without secrets get an unsigned "dev build" artifact), cargo-deny allowlist, cargo-about attribution.
+Cargo workspace (edition 2024, resolver 3), pnpm workspace, `scripts/verify.sh`, `ci.yml` (ubuntu + one macos-15 job), `release.yml` (tauri-action; signs + notarizes with the `APPLE_*` secrets from the first tag; forks without secrets get an unsigned "dev build" artifact), cargo-deny allowlist, cargo-about attribution.

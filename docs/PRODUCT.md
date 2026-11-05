@@ -41,7 +41,7 @@ True-peak limiter (with its gain-reduction meter), Re-Pitch, device picker, Sera
 MIT OR Apache-2.0. No pricing, licence keys or trial logic. Every shipped dependency is permissive (MIT/Apache-2.0/MPL-2.0/BSD/ISC/Zlib). Public repo from the first commit; every tagged build signed and notarized (the owner holds an Apple Developer ID).
 
 ## Definition of done for v0.1
-1. Clean M1 Mac: `git clone` -> `pnpm tauri dev` in < 15 min following the README; CI green on `ubuntu-latest` and `macos-14`.
+1. Clean M1 Mac: `git clone` -> `pnpm tauri dev` in < 15 min following the README; CI green on `ubuntu-latest` and `macos-15`.
 2. 50 mixed files (WAV/AIFF/FLAC/MP3) analysed in < 3 min on an 8-core M1 with the small model (>= 20x real time per core).
 3. EBU Tech 3341/3342 cases within tolerance under `SC_EBU_TESTSET=1`; integrated loudness within 0.1 LU of ffmpeg `ebur128` on 20 files.
 4. 20-track evaluation set: BPM within +/-0.02 on >= 18/20 after at most one x2 / /2; after export, rekordbox 7 fresh analysis shows beat 1 as the first grid entry within 15 ms of the start, same phase and BPM, on >= 18/20 (hand-run release gate; octave flips count as failures unless the XML carrier pins them).
