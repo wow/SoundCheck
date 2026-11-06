@@ -94,6 +94,12 @@ export function lastExportText(last: LastExport): string {
   return `Last export: ${parts.join(', ')}${time}${end}`;
 }
 
+/** The footer's word on files that kept loudness tags at the old level; `null` for none. */
+export function staleTagsSummary(files: number): string | null {
+  if (files === 0) return null;
+  return `${files} ${files === 1 ? 'keeps' : 'keep'} loudness tags at the old level`;
+}
+
 /** What the XML holds, said plainly: an empty one still is a file on disk. */
 export function xmlListedText(artefacts: ExportArtefacts, leftOut: number): string {
   if (artefacts.listed === 0) return 'The rekordbox XML lists no tracks: none has a grid it may carry';

@@ -15,4 +15,9 @@ path: string,
 /**
  * Why it was left (volume not mounted, busy, cleanup failed).
  */
-reason: string, };
+reason: string, 
+/**
+ * It was writing a copy into a folder (`path` is the copy), not changing the file in place:
+ * until its rename the copy is not there, or is an empty file holding its name.
+ */
+toFolder: boolean, };

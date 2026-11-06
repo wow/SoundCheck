@@ -124,7 +124,13 @@ function row(planned: Planned, stage: ExportRow['stage'], req: ExportRequest, de
   };
 }
 
-function verification(s: Synthetic): ExportVerification {
+/** Loudness tags each track keeps at the old level once its gain changes, as the engine labels them. */
+const STALE: Record<string, string[]> = {
+  'Quiet Classic': ['TXXX:REPLAYGAIN_ALBUM_GAIN', 'TXXX:REPLAYGAIN_ALBUM_PEAK', 'RVA2', 'COMM:iTunNORM'],
+  'Serato Cued': ['GEOB:Serato Autotags'],
+};
+
+function verification(s: Synthetic, gainDb: number): ExportVerification {
   return {
     blocks: 29,
     carried: 26,
@@ -138,7 +144,7 @@ function verification(s: Synthetic): ExportVerification {
     bitsOut: s.bits ?? 16,
     exact: false,
     dithered: false,
-    staleLoudnessTags: [],
+    staleLoudnessTags: gainDb === 0 ? [] : (STALE[s.title] ?? []),
   };
 }
 
@@ -199,7 +205,7 @@ async function exportOne(session: MockSession, jobId: number, fileId: number, re
     send({ type: 'failed', jobId, fileId, error: { kind: 'verifyFailed', message, fileId } });
     return;
   }
-  const wrote = { ...row(planned, 'writing', req, decide), verification: verification(s) };
+  const wrote = { ...row(planned, 'writing', req, decide), verification: verification(s, planned.action.gainDb) };
   send({ type: 'written', jobId, fileId, row: wrote });
   if (req.outDir !== null) written.add(`${req.outDir}/${fileId}`);
   await wait(STEP_MS);

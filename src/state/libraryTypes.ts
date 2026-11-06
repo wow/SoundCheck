@@ -107,6 +107,8 @@ export interface LastExport {
   seconds: number;
   /** The window reloaded during it, which stopped it. */
   stoppedByReload?: boolean;
+  /** The files it was given, when this window ran it (not known for one restored after a reload). */
+  fileIds?: number[];
 }
 
 /** Which of the footer's summaries is the newest. */

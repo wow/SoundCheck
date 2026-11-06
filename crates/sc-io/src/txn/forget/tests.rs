@@ -51,6 +51,7 @@ fn a_pending_change_is_forgotten_and_recovery_skips_it() {
     let s = scene();
     let report = recover(&s.root).expect("recovery runs");
     assert_eq!(report.pending.len(), 1, "unreachable, so pending");
+    assert!(!report.pending[0].to_folder, "it changed the file in place");
 
     let f = forget(&s.root, ID).expect("forgotten");
     assert_eq!(f.path, s.target);
@@ -132,4 +133,67 @@ fn an_id_that_is_a_path_touches_nothing() {
     assert_eq!(before, after, "the lock folder is untouched");
     assert!(TxnLock::try_acquire(&s.journal, "../../victim").is_err());
     assert!(victim.exists());
+}
+/// A journal in `root` holding a copy into `<dir>/a.wav` that reached `reached`.
+fn copy_to(root: &std::path::Path, dir: &std::path::Path, reached: State) -> (Journal, PathBuf) {
+    let journal = Journal::open(root).expect("journal");
+    let target = dir.join("a.wav");
+    let mut planned = Line::new(ID, State::Planned);
+    planned.kind = Some(TxnKind::ToFolder);
+    planned.path = Some(target.clone());
+    planned.source = Some(root.join("a.wav"));
+    planned.temp = Some(dir.join(".a.wav.soundcheck-tmp-t"));
+    planned.output_bytes = Some(4096);
+    journal.append(&planned).expect("planned");
+    for state in [State::TempWritten, State::Verified, State::Renamed] {
+        if state <= reached {
+            journal.append(&Line::new(ID, state)).expect("step");
+        }
+    }
+    (journal, target)
+}
+
+#[test]
+fn a_copy_to_an_unmounted_stick_lists_the_placeholder_it_may_have_left() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let base = dir.path().canonicalize().expect("resolves");
+    let root = base.join("backups");
+    // Whether the empty file is on the stick cannot be known while it is away, so it is listed.
+    let gone = base.join("Volumes/STICK/Crate");
+    let (_journal, target) = copy_to(&root, &gone, State::Verified);
+    let report = recover(&root).expect("recovery runs");
+    let pending = report.pending.first().expect("unreachable, so pending");
+    assert!(pending.to_folder, "recovery says it was a copy");
+    let f = forget(&root, ID).expect("forgotten");
+    assert!(f.kept.contains(&target), "{:?}", f.kept);
+    assert_eq!(f.backup, None, "a copy makes no backup");
+}
+
+#[test]
+fn an_empty_placeholder_is_listed_and_kept_but_a_real_file_is_not() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let base = dir.path().canonicalize().expect("resolves");
+    let folder = base.join("Crate");
+    std::fs::create_dir_all(&folder).expect("folder");
+
+    let root = base.join("backups");
+    let (_journal, target) = copy_to(&root, &folder, State::Verified);
+    std::fs::write(&target, b"").expect("placeholder");
+    let f = forget(&root, ID).expect("forgotten");
+    assert!(f.kept.contains(&target), "{:?}", f.kept);
+    assert!(target.exists(), "nothing deleted");
+
+    // A file of that name with something in it is not the change's placeholder.
+    let root = base.join("backups-2");
+    let (_journal, target) = copy_to(&root, &folder, State::Verified);
+    std::fs::write(&target, b"someone else's").expect("other file");
+    let f = forget(&root, ID).expect("forgotten");
+    assert!(!f.kept.contains(&target), "{:?}", f.kept);
+
+    // Past the rename, the file there is the copy itself, not a placeholder.
+    let root = base.join("backups-3");
+    let (_journal, target) = copy_to(&root, &folder, State::Renamed);
+    std::fs::write(&target, b"").expect("empty");
+    let f = forget(&root, ID).expect("forgotten");
+    assert!(!f.kept.contains(&target), "{:?}", f.kept);
 }

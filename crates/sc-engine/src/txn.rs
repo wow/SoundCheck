@@ -274,6 +274,7 @@ pub fn recovery_status(report: &RecoveryReport) -> RecoveryStatus {
                 txn: p.txn.clone(),
                 path: p.path.display().to_string(),
                 reason: p.reason.clone(),
+                to_folder: p.to_folder,
             })
             .collect(),
     }

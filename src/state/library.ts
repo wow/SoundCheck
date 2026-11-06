@@ -261,6 +261,7 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
               ...job.tally,
               cancelled: event.cancelled,
               seconds: (Date.now() - job.startedAt) / 1000,
+              fileIds: ids,
             },
           });
           break;

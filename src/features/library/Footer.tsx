@@ -7,7 +7,8 @@ import { useLibrary, xmlRowIds } from '@/state/library';
 import { useRecovery } from '@/state/recovery';
 import { cancelRunningJob } from '@/features/pipeline/actions';
 import { reveal, writeXmlOfAnalysed } from '@/features/export/actions';
-import { lastExportText, xmlListedText } from '@/features/export/text';
+import { hasStaleTags } from '@/features/export/notices';
+import { lastExportText, staleTagsSummary, xmlListedText } from '@/features/export/text';
 
 function useVersion(): string {
   const [version, setVersion] = useState('');
@@ -112,6 +113,14 @@ export function Footer({
   const artefacts = useLibrary((s) => s.artefacts);
   const xmlLeftOut = useLibrary((s) => s.xmlLeftOut);
   const artefactsFailed = useLibrary((s) => s.artefactsFailed);
+  // The last export's files only: a row exported in an earlier batch is not part of its summary.
+  const stale = useLibrary(
+    (s) =>
+      (s.lastExport?.fileIds ?? []).filter((id) => {
+        const row = s.rows[id];
+        return row !== undefined && hasStaleTags(row);
+      }).length,
+  );
   const narrow = useMediaQuery(NARROW);
   const version = useVersion();
   const fraction = job && job.total > 0 ? job.done / job.total : 0;
@@ -128,7 +137,8 @@ export function Footer({
           ].join('')
         : null;
   const xml = artefacts ? xmlListedText(artefacts, xmlLeftOut) : null;
-  const told = [summary, xml, artefactsFailed ? 'rekordbox XML not written' : null]
+  const staleLine = lastRun === 'export' && lastExport ? staleTagsSummary(stale) : null;
+  const told = [summary, staleLine, xml, artefactsFailed ? 'rekordbox XML not written' : null]
     .filter(Boolean)
     .join(' · ');
   return (

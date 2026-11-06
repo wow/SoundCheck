@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { useLibrary } from '@/state/library';
 import { useRecovery } from '@/state/recovery';
-import { analysed, artefacts, doneRow, entry } from '@/test/fixtures';
+import { analysed, artefacts, doneRow, entry, verification } from '@/test/fixtures';
 import { Footer } from './Footer';
 
 const initial = useLibrary.getState();
@@ -20,7 +20,14 @@ function finished() {
   lib().add([entry(1)]);
   lib().applyEvent(analysed(1));
   lib().beginExport([1], []);
-  lib().applyEvent({ type: 'exportDone', jobId: 3, fileId: 1, row: doneRow(), inPlace: false, update: null });
+  lib().applyEvent({
+    type: 'exportDone',
+    jobId: 3,
+    fileId: 1,
+    row: doneRow(),
+    inPlace: false,
+    update: null,
+  });
 }
 
 describe('the footer', () => {
@@ -46,10 +53,11 @@ describe('the footer', () => {
     expect(screen.getByRole('button', { name: 'Cancelling…' })).toBeDisabled();
   });
 
-  it('links the batch\'s files after it, each showing in the Finder', async () => {
+  it("links the batch's files after it, each showing in the Finder", async () => {
     const shown: unknown[] = [];
     mockIPC((cmd, args) => {
-      if (cmd === 'plugin:opener|reveal_item_in_dir') shown.push((args as { path?: unknown; items?: unknown }));
+      if (cmd === 'plugin:opener|reveal_item_in_dir')
+        shown.push(args as { path?: unknown; items?: unknown });
       return undefined;
     });
     finished();
@@ -57,11 +65,109 @@ describe('the footer', () => {
     lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
     render(<Footer cancelling={false} />);
     expect(screen.getByText(/Last export: 1 exported/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Show soundcheck-rekordbox.xml in the Finder' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Show grid-report.csv in the Finder' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Show soundcheck-rekordbox.xml in the Finder' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Show grid-report.csv in the Finder' }),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Show in Finder' }));
     await waitFor(() => expect(shown).toHaveLength(1));
     expect(JSON.stringify(shown[0])).toContain('/exports/2026-11-05');
+  });
+
+  it('adds to the last export how many files kept loudness tags at the old level', () => {
+    lib().add([entry(1), entry(2)]);
+    lib().applyEvent(analysed(1));
+    lib().applyEvent(analysed(2));
+    lib().beginExport([1, 2], []);
+    const stale = doneRow({
+      verification: verification({ staleLoudnessTags: ['REPLAYGAIN_ALBUM_GAIN'] }),
+    });
+    lib().applyEvent({
+      type: 'exportDone',
+      jobId: 3,
+      fileId: 1,
+      row: stale,
+      inPlace: false,
+      update: null,
+    });
+    lib().applyEvent({
+      type: 'exportDone',
+      jobId: 3,
+      fileId: 2,
+      row: doneRow(),
+      inPlace: false,
+      update: null,
+    });
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
+    render(<Footer cancelling={false} />);
+    expect(
+      screen.getByText(/Last export: 2 exported .* · 1 keeps loudness tags at the old level/),
+    ).toBeInTheDocument();
+  });
+
+  it('counts only the last export, not a file an earlier batch left with old tags', () => {
+    const stale = doneRow({ verification: verification({ staleLoudnessTags: ['RVA2'] }) });
+    lib().add([entry(1), entry(2), entry(3)]);
+    for (const id of [1, 2, 3]) lib().applyEvent(analysed(id));
+    // An earlier batch: file 1 kept a stale tag.
+    lib().beginExport([1], []);
+    lib().applyEvent({
+      type: 'exportDone',
+      jobId: 3,
+      fileId: 1,
+      row: stale,
+      inPlace: false,
+      update: null,
+    });
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
+    // The last one: file 2 did too, file 3 did not.
+    lib().beginExport([2, 3], []);
+    lib().applyEvent({
+      type: 'exportDone',
+      jobId: 4,
+      fileId: 2,
+      row: stale,
+      inPlace: false,
+      update: null,
+    });
+    lib().applyEvent({
+      type: 'exportDone',
+      jobId: 4,
+      fileId: 3,
+      row: doneRow(),
+      inPlace: false,
+      update: null,
+    });
+    lib().applyEvent({ type: 'finished', jobId: 4, cancelled: false });
+    const { unmount } = render(<Footer cancelling={false} />);
+    expect(
+      screen.getByText(/Last export: 2 exported .* · 1 keeps loudness tags at the old level/),
+    ).toBeInTheDocument();
+    unmount();
+    // A batch of only file 3: nothing to say, whatever file 1 and 2 kept.
+    lib().beginExport([3], []);
+    lib().applyEvent({
+      type: 'exportDone',
+      jobId: 5,
+      fileId: 3,
+      row: doneRow(),
+      inPlace: false,
+      update: null,
+    });
+    lib().applyEvent({ type: 'finished', jobId: 5, cancelled: false });
+    render(<Footer cancelling={false} />);
+    expect(screen.getByText(/Last export: 1 exported/)).toBeInTheDocument();
+    expect(screen.queryByText(/loudness tags/)).toBeNull();
+  });
+
+  it('says nothing of loudness tags when no file kept any', () => {
+    finished();
+    lib().applyEvent({ type: 'finished', jobId: 3, cancelled: false });
+    render(<Footer cancelling={false} />);
+    expect(screen.getByText(/Last export: 1 exported/)).toBeInTheDocument();
+    expect(screen.queryByText(/loudness tags/)).toBeNull();
   });
 
   it('says so plainly when the XML lists nothing, even though the file is there', () => {
@@ -75,7 +181,10 @@ describe('the footer', () => {
 
   it('counts the tracks the XML lists, and those the XML button left out', () => {
     lib().add([entry(1), entry(2)]);
-    lib().applyXml({ artefacts: artefacts({ listed: 1 }), notListed: [{ fileId: 2, why: 'no grid' }] });
+    lib().applyXml({
+      artefacts: artefacts({ listed: 1 }),
+      notListed: [{ fileId: 2, why: 'no grid' }],
+    });
     render(<Footer cancelling={false} />);
     expect(screen.getByText(/rekordbox XML lists 1 track, 1 left out/)).toBeInTheDocument();
   });
