@@ -148,17 +148,49 @@ export function surfacesOf(kind: IpcErrorKind): Surface[] {
   return SURFACES.filter((s) => todo[s] !== undefined);
 }
 
+/** A message cut into the engine's why and the advice it ends with. */
+interface Advised {
+  why: string;
+  advice: string;
+}
+
+/** `message` cut at `at`, the why keeping what comes before and the advice what follows `skip`. */
+function cutAt(message: string, at: number, skip: number): Advised | null {
+  const advice = message.slice(at + skip).trim();
+  return advice ? { why: message.slice(0, at), advice } : null;
+}
+
 /**
  * The engine's own advice at the end of its message, for the classes that word one: a refusal in
  * place says what to change about the file ("Unlock it, or write a copy to a folder"), which is
- * more exact than any line written here. It is the last sentence and never names a path.
+ * more exact than any line written here. A path can hold ". " followed by a capital
+ * (`Artist feat. Rihanna.wav`, a folder `Mr. Brightside`), so the advice is looked for only after
+ * the fixed words the engine puts after the path, never inside it:
+ *
+ * - `<path> cannot be changed in place: <reason>. <Advice>`, the reason being the engine's fixed
+ *   wording of the refusal, which names no path;
+ * - `<path> is on a rekordbox USB export (<volume>); SoundCheck does not change files there. <Advice>`;
+ * - `not enough free space on <volume>: <n> bytes needed, <m> free. <Advice>`.
  */
-const ADVISED: ReadonlySet<IpcErrorKind> = new Set([
-  'inPlaceRefused',
-  'rekordboxUsbExport',
-  'noSpace',
-]);
-const ADVICE = /\.\s+([A-Z][^/]*)$/;
+const ADVICE: Partial<Record<IpcErrorKind, (message: string) => Advised | null>> = {
+  inPlaceRefused: (m) => {
+    const lead = ' cannot be changed in place: ';
+    const at = m.lastIndexOf(lead);
+    if (at < 0) return null;
+    const start = at + lead.length;
+    const end = m.slice(start).search(/\.\s+[A-Z]/);
+    return end < 0 ? null : cutAt(m, start + end, 1);
+  },
+  rekordboxUsbExport: (m) => {
+    const lead = '; SoundCheck does not change files there.';
+    const at = m.lastIndexOf(lead);
+    return at < 0 ? null : cutAt(m, at + lead.length - 1, 1);
+  },
+  noSpace: (m) => {
+    const found = [...m.matchAll(/: \d+ bytes needed, \d+ free\./g)].pop();
+    return found?.index === undefined ? null : cutAt(m, found.index + found[0].length - 1, 1);
+  },
+};
 
 /** Endings the engine adds that a line here says better, per class. */
 const SAID_HERE: Partial<Record<IpcErrorKind, RegExp>> = {
@@ -190,12 +222,10 @@ export function refusal(error: IpcError, surface: Surface, path?: string): Refus
   let advice: string | null = null;
   const said = SAID_HERE[error.kind];
   if (said) why = why.replace(said, '');
-  if (ADVISED.has(error.kind)) {
-    const m = ADVICE.exec(why);
-    if (m?.[1]) {
-      advice = stop(m[1]);
-      why = why.slice(0, m.index + 1);
-    }
+  const advised = ADVICE[error.kind]?.(why);
+  if (advised) {
+    advice = stop(advised.advice);
+    why = advised.why;
   }
   if (path && why.startsWith(path)) why = `This file${why.slice(path.length)}`;
   const todo = todoFor(error.kind);

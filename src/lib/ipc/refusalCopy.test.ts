@@ -130,6 +130,58 @@ describe('refusal copy', () => {
     expect(space.todo).toBe('Free some space or choose another folder.');
   });
 
+  it.each([
+    '/Music/Artist feat. Rihanna.wav',
+    '/Music/Mr. Brightside.wav',
+    '/Music/Dr. Dre - Still D.R.E. Remix.aiff',
+    '/Music/Mr. Brightside/Live. Then Encore.wav',
+  ])('never splits a path that holds ". " and a capital: %s', (path) => {
+    const locked = refusal(
+      {
+        kind: 'inPlaceRefused',
+        message: `${path} cannot be changed in place: it is locked (Finder: Get Info > Locked). Unlock it, or write a copy to a folder`,
+        fileId: 1,
+      },
+      'confirm',
+    );
+    expect(locked).toEqual({
+      why: `${path.charAt(0).toUpperCase()}${path.slice(1)} cannot be changed in place: it is locked (Finder: Get Info > Locked)`,
+      todo: 'Unlock it, or write a copy to a folder.',
+    });
+    expect(refusal({ kind: 'inPlaceRefused', message: `${path} cannot be changed in place: it is locked`, fileId: 1 }, 'row', path)).toEqual({
+      why: 'This file cannot be changed in place: it is locked',
+      todo: 'Fix that and export it again, or export it To folder.',
+    });
+    const usb = refusal(
+      {
+        kind: 'rekordboxUsbExport',
+        message: `${path} is on a rekordbox USB export (/Volumes/Mr. DJ); SoundCheck does not change files there. Process the files in your library, then export again from rekordbox`,
+        fileId: 1,
+      },
+      'row',
+      path,
+    );
+    expect(usb).toEqual({
+      why: 'This file is on a rekordbox USB export (/Volumes/Mr. DJ); SoundCheck does not change files there',
+      todo: 'Process the files in your library, then export again from rekordbox.',
+    });
+  });
+
+  it('finds the space advice after the numbers, whatever the volume is called', () => {
+    const space = refusal(
+      {
+        kind: 'noSpace',
+        message: 'not enough free space on /Volumes/Mr. Brightside: 90 bytes needed, 10 free. Free some space or choose another folder',
+        fileId: null,
+      },
+      'banner',
+    );
+    expect(space).toEqual({
+      why: 'Not enough free space on /Volumes/Mr. Brightside: 90 bytes needed, 10 free',
+      todo: 'Free some space or choose another folder.',
+    });
+  });
+
   it('never leaves the why empty', () => {
     expect(refusal({ kind: 'internal', message: '', fileId: null }, 'banner').why).toBe(
       'The command failed',
