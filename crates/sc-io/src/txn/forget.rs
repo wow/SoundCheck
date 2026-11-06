@@ -2,8 +2,9 @@
 //! leaving pending (its volume will never be mounted again, its folder was moved away).
 //!
 //! A `forgotten` line ends it, so recovery skips it from then on. Nothing is deleted: the
-//! backup of the original, its temp copy and the transaction's temp file stay where they are,
-//! and [`Forgotten::kept`] lists the ones that may still exist so the user can find them. Only
+//! backup of the original, its temp copy, the transaction's temp file and the empty placeholder
+//! a copy to an exFAT or FAT folder holds its name with stay where they are, and
+//! [`Forgotten::kept`] lists the ones that may still exist so the user can find them. Only
 //! a transaction that has not ended can be forgotten, and not while it runs.
 
 use std::path::{Path, PathBuf};
@@ -11,7 +12,7 @@ use std::path::{Path, PathBuf};
 use sc_core::{Error, Result};
 
 use super::fsx::exists;
-use super::journal::{Journal, Line, State, TxnKind, TxnLock, is_txn_id};
+use super::journal::{Entry, Journal, Line, State, TxnKind, TxnLock, is_txn_id};
 
 /// What [`forget`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +95,9 @@ pub fn forget(backup_root: &Path, txn: &str) -> Result<Forgotten> {
             kept.push(path);
         }
     }
+    if placeholder_may_remain(&entry) && !kept.contains(&entry.path) {
+        kept.push(entry.path.clone());
+    }
     let mut line = Line::new(txn, State::Forgotten);
     line.notes = kept
         .iter()
@@ -109,6 +113,20 @@ pub fn forget(backup_root: &Path, txn: &str) -> Result<Forgotten> {
         backup,
         kept,
     })
+}
+
+/// Whether a copy to a folder may have left the empty placeholder that holds its name on a
+/// volume without an exclusive rename (exFAT, FAT32; see `fsx::rename_noreplace`): it had not
+/// renamed, and its target is an empty file, or sits in a folder that cannot be reached now. A
+/// later export to that folder would find a file of that name that is not SoundCheck's.
+fn placeholder_may_remain(e: &Entry) -> bool {
+    if e.kind != TxnKind::ToFolder || e.reached >= State::Renamed {
+        return false;
+    }
+    if e.path.parent().is_some_and(|d| !d.is_dir()) {
+        return true;
+    }
+    std::fs::symlink_metadata(&e.path).is_ok_and(|m| m.is_file() && m.len() == 0)
 }
 
 /// Whether `path` exists, or its folder cannot be reached so it cannot be known.
