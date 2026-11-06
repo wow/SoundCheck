@@ -1,4 +1,4 @@
-import { sentence, type ForgetResult, type RecoveredChange } from '@/lib/ipc';
+import { refusal, sentence, type ForgetResult, type IpcError, type PendingChange, type RecoveredChange } from '@/lib/ipc';
 
 /**
  * The words of the start-up recovery: what a crash interrupted, what became of it, and what
@@ -57,28 +57,75 @@ export function failedText(message: string): { what: string; why: string; todo: 
   return {
     what: 'The changes from the last session could not be checked',
     why: sentence(message.trim()).replace(/\.$/, ''),
-    todo: 'Nothing was changed. Restart SoundCheck to check again; if it fails again, make sure the SoundCheck Backups folder in your Music folder can be opened.',
+    todo: 'Restart SoundCheck to check again; if it fails again, make sure the SoundCheck Backups folder in your Music folder can be opened.',
   };
 }
 
 /**
  * What Forget does, from what the engine does: it ends the change in its journal so it is not
- * tried again, and deletes nothing.
+ * tried again, and deletes nothing. A change in place may have stopped before or after the new
+ * version replaced the file; a copy into a folder, before its rename, is not there yet or is the
+ * empty file that holds its name on an exFAT or FAT drive.
  */
-export const FORGET_LINES = [
-  'SoundCheck stops trying to finish this change when it starts.',
-  'The file is left as it is now, which may be the version before or after the change, depending on how far the change got.',
-  'Nothing is deleted: a backup of the original, if the change made one, stays in the SoundCheck Backups folder, and a half-written copy, if there is one, stays next to the file as a hidden file.',
-];
+export function forgetLines(change: PendingChange): string[] {
+  const stops = 'SoundCheck stops trying to finish this change when it starts.';
+  if (change.toFolder) {
+    return [
+      stops,
+      'The copy is left as it is now: depending on how far the change got, there is no copy yet, an empty file holding its name, or the new copy. The original was not changed.',
+      'Nothing is deleted: a half-written copy, if there is one, stays in that folder as a hidden file, and so does an empty file holding the copy\'s name. Both are listed once the change is forgotten.',
+    ];
+  }
+  return [
+    stops,
+    'The file is left as it is now, which may be the original or the new version, depending on how far the change got.',
+    'Nothing is deleted: a backup of the original, if the change made one, stays in the SoundCheck Backups folder, and a half-written copy, if there is one, stays next to the file as a hidden file.',
+  ];
+}
 
-/** What a Forget kept, once it is done. */
-export function forgottenText(result: ForgetResult): string {
-  const name = fileName(result.path);
-  const backup = result.backup ? ` The backup of the original is at ${result.backup}.` : '';
-  const others = result.kept.filter((p) => p !== result.backup).length;
-  const kept =
-    others > 0
-      ? ` ${others === 1 ? '1 other file it made stays' : `${others} other files it made stay`} too.`
-      : '';
-  return `The change to ${name} is forgotten. Nothing was deleted.${backup}${kept}`;
+export interface KeptFile {
+  path: string;
+  /** What it is, and what to do with it when that matters. */
+  what: string;
+}
+
+/** Whether `path` names one of the hidden temp files a change writes next to its target. */
+function isTemp(path: string): boolean {
+  const name = fileName(path);
+  return name.startsWith('.') && name.includes('.soundcheck-tmp-');
+}
+
+/** What a Forget kept, once it is done: every file by its path, each said what it is. */
+export function forgottenText(result: ForgetResult): { head: string; kept: KeptFile[] } {
+  const head = `The change to ${fileName(result.path)} is forgotten. Nothing was deleted.`;
+  const kept = result.kept.map((path): KeptFile => {
+    if (path === result.backup) return { path, what: 'the backup of the original' };
+    if (path === result.path) {
+      return {
+        path,
+        what: 'may be an empty file holding the copy\'s name; remove it before exporting to that folder again, or that export skips the name',
+      };
+    }
+    if (isTemp(path)) {
+      return {
+        path,
+        what: 'a hidden copy the change was writing, which may be complete; the Finder shows hidden files with Cmd+Shift+.',
+      };
+    }
+    return { path, what: 'a file the change made' };
+  });
+  return { head, kept };
+}
+
+/**
+ * A Forget the engine refused, for a change still pending after the status was read again: the
+ * engine's words without the class name it starts with ("invalid argument: "), then what to do.
+ */
+export function forgetRefusedText(error: IpcError): string {
+  const why = sentence(error.message.trim().replace(/^invalid argument:\s*/i, '')).replace(/\.$/, '');
+  const todo =
+    error.kind === 'invalidArgument'
+      ? 'Try again once it has stopped; if it is still refused, restart SoundCheck to check it again.'
+      : refusal(error, 'banner').todo;
+  return `${why}. ${todo}`;
 }

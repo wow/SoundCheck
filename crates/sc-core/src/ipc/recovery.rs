@@ -67,4 +67,7 @@ pub struct PendingChange {
     pub path: String,
     /// Why it was left (volume not mounted, busy, cleanup failed).
     pub reason: String,
+    /// It was writing a copy into a folder (`path` is the copy), not changing the file in place:
+    /// until its rename the copy is not there, or is an empty file holding its name.
+    pub to_folder: bool,
 }

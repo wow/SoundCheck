@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Loader2, X } from 'lucide-react';
-import { refusal, type PendingChange } from '@/lib/ipc';
+import type { PendingChange } from '@/lib/ipc';
 import { askForget, dismissForgotten, dismissRecovery, useRecovery } from '@/state/recovery';
 import { ForgetConfirm } from './ForgetConfirm';
 import {
   failedText,
   fileName,
+  forgetRefusedText,
   forgottenText,
   PENDING_TODO,
   pendingHead,
@@ -59,7 +60,7 @@ function Pending({ change }: { change: PendingChange }) {
     r.forgetError?.txn === change.txn ? r.forgetError.error : null,
   );
   const reason = pendingReason(change.reason);
-  const refused = error ? refusal(error, 'banner') : null;
+  const refused = error ? forgetRefusedText(error) : null;
   return (
     <li className="flex min-w-0 flex-col gap-0.5 py-1">
       <div className="flex min-w-0 items-center gap-2">
@@ -84,39 +85,65 @@ function Pending({ change }: { change: PendingChange }) {
       </div>
       {refused && (
         <p role="alert" className="break-words text-[12px] text-err">
-          {`${refused.why}. ${refused.todo}`}
+          {refused}
         </p>
       )}
     </li>
   );
 }
 
-/** The line about what the last Forget kept, so its backup can be found. */
+/** The line about what the last Forget kept: every file by its path, so each can be found. */
 function Forgotten() {
   const forgotten = useRecovery((r) => r.forgotten);
   if (!forgotten) return null;
+  const { head, kept } = forgottenText(forgotten);
   return (
-    <div role="status" className={CALM}>
-      <p className="min-w-0 flex-1 break-words text-fg-1">{forgottenText(forgotten)}</p>
+    <div className={CALM}>
+      <div className="flex max-h-[112px] min-w-0 flex-1 flex-col overflow-y-auto text-fg-1">
+        <p>{head}</p>
+        {kept.length > 0 && (
+          <ul aria-label="Kept" className="flex flex-col">
+            {kept.map((file) => (
+              <li key={file.path} className="break-words text-[12px] text-fg-2">
+                <span className="break-all font-mono text-fg-1">
+                  {file.path}
+                </span>
+                : {file.what}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
       <Dismiss label="Dismiss" onClick={dismissForgotten} />
     </div>
   );
 }
 
-/**
- * What the start-up recovery found, above the table: the check running, changes it could not
- * finish (each with Forget), changes it finished, or that it could not run. In the page's flow,
- * never over the list; a long list scrolls inside its own few lines.
- */
-export function RecoveryBanner() {
+/** What is on screen, as one sentence for the live region that says it. */
+function useAnnouncement(running: boolean): string {
   const status = useRecovery((r) => r.status);
   const dismissed = useRecovery((r) => r.dismissed);
-  const running = useAfter(status?.state === 'running', RUNNING_SHOW_AFTER_MS);
-  const asking = useRecovery((r) => r.asking);
+  const forgotten = useRecovery((r) => r.forgotten);
+  if (running) return RUNNING_TEXT;
+  if (status?.state !== "finished") return "";
+  const said = [
+    forgotten ? forgottenText(forgotten).head : null,
+    status.pending.length > 0 ? pendingHead(status.pending.length) : null,
+    !dismissed || status.pending.length > 0
+      ? recoveredText(status.recovered)
+      : null,
+  ];
+  return said.filter(Boolean).join(" ");
+}
 
+/** The banner's lines, drawn; what they say is announced by the live region beside them. */
+function Lines({ running }: { running: boolean }) {
+  const status = useRecovery((r) => r.status);
+  const dismissed = useRecovery((r) => r.dismissed);
+  const asking = useRecovery((r) => r.asking);
   if (running) {
     return (
-      <div role="status" className={CALM}>
+      <div className={CALM}>
         <Loader2
           className="mt-[3px] size-3.5 shrink-0 text-fg-1 motion-safe:animate-spin"
           aria-hidden="true"
@@ -127,11 +154,11 @@ export function RecoveryBanner() {
       </div>
     );
   }
-  if (!status) return null;
   // The only reason it skips is that there is no home folder: then nothing can have been
   // interrupted either, and nothing would help to say.
-  if (status.state === 'skipped' || status.state === 'running') return null;
-  if (status.state === 'failed') {
+  if (!status || status.state === "skipped" || status.state === "running")
+    return null;
+  if (status.state === "failed") {
     if (dismissed) return null;
     const { what, why, todo } = failedText(status.message);
     return (
@@ -146,13 +173,13 @@ export function RecoveryBanner() {
     );
   }
   const recovered = recoveredText(status.recovered);
-  const paths = status.recovered.map((r) => r.path).join('\n');
+  const paths = status.recovered.map((r) => r.path).join("\n");
   if (status.pending.length === 0) {
     return (
       <>
         <Forgotten />
         {recovered && !dismissed && (
-          <div role="status" className={CALM}>
+          <div className={CALM}>
             <p className="min-w-0 flex-1 truncate text-fg-1" title={paths}>
               {recovered}
             </p>
@@ -165,9 +192,15 @@ export function RecoveryBanner() {
   return (
     <>
       <Forgotten />
-      <section aria-label="Changes from the last session" className={WARN}>
+      <section
+        role="region"
+        aria-label="Changes from the last session"
+        className={WARN}
+      >
         <div className="flex min-w-0 flex-1 flex-col">
-          <p className="font-medium text-warn">{pendingHead(status.pending.length)}</p>
+          <p className="font-medium text-warn">
+            {pendingHead(status.pending.length)}
+          </p>
           <p className="text-fg-2">{PENDING_TODO}</p>
           <ul className="max-h-[92px] min-w-0 overflow-y-auto">
             {status.pending.map((change) => (
@@ -181,7 +214,34 @@ export function RecoveryBanner() {
           )}
         </div>
       </section>
-      {asking && <ForgetConfirm change={asking} onClose={() => askForget(null)} />}
+      {asking && (
+        <ForgetConfirm change={asking} onClose={() => askForget(null)} />
+      )}
+    </>
+  );
+}
+
+/**
+ * What the start-up recovery found, above the table: the check running, changes it could not
+ * finish (each with Forget), changes it finished, or that it could not run. In the page's flow,
+ * never over the list; a long list scrolls inside its own few lines. One live region is there
+ * from the start and only its text changes, so screen readers say each new line.
+ */
+export function RecoveryBanner() {
+  const status = useRecovery((r) => r.status);
+  const running = useAfter(status?.state === "running", RUNNING_SHOW_AFTER_MS);
+  const announcement = useAnnouncement(running);
+  return (
+    <>
+      <div
+        role="status"
+        aria-live="polite"
+        className="sr-only"
+        data-testid="recovery-live"
+      >
+        {announcement}
+      </div>
+      <Lines running={running} />
     </>
   );
 }

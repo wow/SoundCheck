@@ -31,11 +31,13 @@ const PENDING = [
     txn: '6ac5b4f4-75821-0',
     path: '/Volumes/GIG STICK/Crates/Friday/Mock Artist A - Night Drive (Extended Mix).flac',
     reason: '/Volumes/GIG STICK/Crates/Friday is not reachable (volume not mounted?)',
+    toFolder: true,
   },
   {
     txn: '6ac5b4f4-75821-1',
     path: '/Users/mock/Music/Crate/Mock Artist J - Big Room.wav',
     reason: 'cleanup incomplete',
+    toFolder: false,
   },
 ];
 
@@ -106,9 +108,17 @@ export function mockRecovery(demo: RecoveryDemo, now: () => number = Date.now) {
       }
       const change = status.pending.find((p) => p.txn === txn);
       status = { ...status, pending: status.pending.filter((p) => p.txn !== txn) };
-      const name = change?.path.split('/').pop() ?? txn;
+      const path = change?.path ?? '';
+      const slash = path.lastIndexOf('/');
+      const name = path.slice(slash + 1);
+      // As the shell answers: a copy keeps its hidden temp file and the empty file holding its
+      // name; a change in place keeps the backup of the original.
+      if (change?.toFolder) {
+        const temp = `${path.slice(0, slash)}/.${name}.soundcheck-tmp-4242-7f3a`;
+        return { path, backup: null, kept: [temp, path], status };
+      }
       const backup = `${BACKUPS}/${name}`;
-      return { path: change?.path ?? '', backup, kept: [backup], status };
+      return { path, backup, kept: [backup], status };
     },
   };
 }

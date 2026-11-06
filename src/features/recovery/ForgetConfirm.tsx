@@ -1,7 +1,7 @@
 import { Modal } from '@/components/Modal';
 import type { PendingChange } from '@/lib/ipc';
 import { forgetChange } from '@/state/recovery';
-import { FORGET_LINES, fileName, pendingReason } from './text';
+import { fileName, forgetLines, pendingReason } from './text';
 
 const BUTTON =
   'inline-flex h-[30px] items-center whitespace-nowrap rounded-[7px] border px-3 text-[13px] font-medium';
@@ -15,7 +15,7 @@ export function ForgetConfirm({ change, onClose }: { change: PendingChange; onCl
         <h2 className="text-[15px] font-semibold text-fg-0">{`Forget the change to ${name}?`}</h2>
         <p className="break-all font-mono text-[12px] text-fg-2">{change.path}</p>
         <p className="text-fg-2">{`${pendingReason(change.reason)}.`}</p>
-        {FORGET_LINES.map((line) => (
+        {forgetLines(change).map((line) => (
           <p key={line} className="text-fg-1">
             {line}
           </p>

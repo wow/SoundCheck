@@ -50,14 +50,22 @@ function setStatus(status: RecoveryStatus): void {
   useRecovery.setState({ status, running: status.state === 'running' });
 }
 
+/**
+ * How long to wait before reading again after a read failed, one per retry: a read can fail
+ * while the app is still starting, so a few short waits before saying it could not be read.
+ */
+export const RETRY_MS = [250, 500, 1000] as const;
+
 /** Follows the start-up recovery until it has ended. Returns a stop function. */
 export function startRecoveryWatch(): () => void {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let failures = 0;
   const read = () => {
     recoveryStatus()
       .then((status) => {
         if (stopped) return;
+        failures = 0;
         // Nothing known yet (an engine that does not answer this): as if it ended clean.
         if (!status) {
           useRecovery.setState({ running: false });
@@ -66,9 +74,19 @@ export function startRecoveryWatch(): () => void {
         setStatus(status);
         if (status.state === 'running') timer = setTimeout(read, POLL_MS);
       })
-      .catch(() => {
-        // Not known: the engine still refuses what it must, with its own words.
-        if (!stopped) useRecovery.setState({ running: false });
+      .catch((err: unknown) => {
+        if (stopped) return;
+        const wait = RETRY_MS[failures];
+        failures += 1;
+        if (wait !== undefined) {
+          timer = setTimeout(read, wait);
+          return;
+        }
+        // Not known: said so, and the engine still refuses what it must, with its own words.
+        setStatus({
+          state: 'failed',
+          message: `what it found could not be read: ${ipcErrorOf(err).message}`,
+        });
       });
   };
   read();
@@ -90,7 +108,14 @@ export async function forgetChange(txn: string): Promise<void> {
     setStatus(result.status);
     useRecovery.setState({ forgotten: result });
   } catch (err) {
-    useRecovery.setState({ forgetError: { txn, error: ipcErrorOf(err) } });
+    const error = ipcErrorOf(err);
+    // Refused, perhaps because it ended meanwhile: what the engine says now decides whether the
+    // row stays, with why it was refused, or goes.
+    const now = await recoveryStatus().catch(() => null);
+    if (now) setStatus(now);
+    const pending = useRecovery.getState().status;
+    const still = pending?.state === 'finished' && pending.pending.some((p) => p.txn === txn);
+    if (still || !now) useRecovery.setState({ forgetError: { txn, error } });
   } finally {
     useRecovery.setState({ forgetting: null });
   }

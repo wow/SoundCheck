@@ -87,6 +87,7 @@ fn updates_at_once_lose_nothing() {
         txn: format!("t{n}"),
         path: format!("/p{n}"),
         reason: "gone".to_owned(),
+        to_folder: false,
     };
     let gate = Arc::new(RecoveryGate::new(RecoveryStatus::Finished {
         recovered: Vec::new(),

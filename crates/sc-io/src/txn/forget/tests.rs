@@ -51,6 +51,7 @@ fn a_pending_change_is_forgotten_and_recovery_skips_it() {
     let s = scene();
     let report = recover(&s.root).expect("recovery runs");
     assert_eq!(report.pending.len(), 1, "unreachable, so pending");
+    assert!(!report.pending[0].to_folder, "it changed the file in place");
 
     let f = forget(&s.root, ID).expect("forgotten");
     assert_eq!(f.path, s.target);
@@ -160,6 +161,9 @@ fn a_copy_to_an_unmounted_stick_lists_the_placeholder_it_may_have_left() {
     // Whether the empty file is on the stick cannot be known while it is away, so it is listed.
     let gone = base.join("Volumes/STICK/Crate");
     let (_journal, target) = copy_to(&root, &gone, State::Verified);
+    let report = recover(&root).expect("recovery runs");
+    let pending = report.pending.first().expect("unreachable, so pending");
+    assert!(pending.to_folder, "recovery says it was a copy");
     let f = forget(&root, ID).expect("forgotten");
     assert!(f.kept.contains(&target), "{:?}", f.kept);
     assert_eq!(f.backup, None, "a copy makes no backup");

@@ -63,6 +63,8 @@ pub struct Pending {
     pub path: PathBuf,
     /// Why it was left (running, folder not reachable, cleanup failed).
     pub reason: String,
+    /// It was writing a copy into a folder, not changing the file in place.
+    pub to_folder: bool,
 }
 
 /// What [`recover`] did.
@@ -119,6 +121,7 @@ pub fn recover(backup_root: &Path) -> Result<RecoveryReport> {
             txn: first.txn.clone(),
             path: first.path.clone(),
             reason,
+            to_folder: first.kind == TxnKind::ToFolder,
         };
         let lock = match TxnLock::try_acquire(&journal, &first.txn) {
             Ok(Some(lock)) => lock,

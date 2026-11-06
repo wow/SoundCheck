@@ -8,6 +8,9 @@ import { installMockBackend } from './mockBackend';
 
 const advance = (ms: number) => act(async () => vi.advanceTimersByTimeAsync(ms));
 
+/** The drawn lines, leaving out the live region that repeats the banner for screen readers. */
+const DRAWN = { ignore: '[data-testid="recovery-live"], script, style' };
+
 function select(title: string) {
   const id = Object.values(useLibrary.getState().rows).find((r) => r.entry.info.title === title)
     ?.entry.fileId;
@@ -69,7 +72,7 @@ describe('the browser stand-in, for the notices and the recovery banner', { time
     installMockBackend('pending');
     render(<App />);
     await advance(800);
-    expect(screen.getByText('Finishing changes from the last session…')).toBeInTheDocument();
+    expect(screen.getByText('Finishing changes from the last session…', DRAWN)).toBeInTheDocument();
     await advance(3000);
     const banner = screen.getByRole('region', { name: 'Changes from the last session' });
     expect(
@@ -87,9 +90,9 @@ describe('the browser stand-in, for the notices and the recovery banner', { time
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Forget' }));
     await advance(100);
     expect(
-      screen.getByText('1 change from the last session could not be finished'),
+      screen.getByText('1 change from the last session could not be finished', DRAWN),
     ).toBeInTheDocument();
-    expect(screen.getByText(/is forgotten\. Nothing was deleted\./)).toBeInTheDocument();
+    expect(screen.getByText(/is forgotten\. Nothing was deleted\./, DRAWN)).toBeInTheDocument();
   });
 
   it('?demo=recovery-failed and ?demo=recovery-finished', async () => {
@@ -103,7 +106,7 @@ describe('the browser stand-in, for the notices and the recovery banner', { time
     render(<App />);
     await advance(100);
     expect(
-      screen.getByText(/^2 changes from the last session were settled: 1 finished, 1 undone/),
+      screen.getByText(/^2 changes from the last session were settled: 1 finished, 1 undone/, DRAWN),
     ).toBeInTheDocument();
   });
 });

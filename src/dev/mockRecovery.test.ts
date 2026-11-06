@@ -17,9 +17,19 @@ describe('the stand-in recovery', () => {
     t = 10_000;
     const before = r.status();
     expect(before.state === 'finished' && before.pending).toHaveLength(2);
-    const result = r.forget('6ac5b4f4-75821-0');
-    expect(result.backup).toMatch(/SoundCheck Backups/);
-    expect(result.status.state === 'finished' && result.status.pending).toHaveLength(1);
+    // The copy to the stick keeps its hidden temp file and the empty file holding its name.
+    const copy = r.forget('6ac5b4f4-75821-0');
+    expect(copy.backup).toBeNull();
+    expect(copy.kept).toHaveLength(2);
+    expect(copy.kept[0]).toMatch(
+      /\/\.Mock Artist A - Night Drive \(Extended Mix\)\.flac\.soundcheck-tmp-/,
+    );
+    expect(copy.kept[1]).toBe(copy.path);
+    expect(copy.status.state === 'finished' && copy.status.pending).toHaveLength(1);
     expect(() => r.forget('6ac5b4f4-75821-0')).toThrow();
+    // The change in place keeps the backup of the original.
+    const inPlace = r.forget('6ac5b4f4-75821-1');
+    expect(inPlace.backup).toMatch(/SoundCheck Backups/);
+    expect(inPlace.kept).toEqual([inPlace.backup]);
   });
 });

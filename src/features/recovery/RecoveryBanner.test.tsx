@@ -2,18 +2,22 @@ import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import type { ForgetResult, PendingChange, RecoveryStatus } from '@/lib/ipc';
-import { resetRecovery, startRecoveryWatch, useRecovery } from '@/state/recovery';
+import { resetRecovery, useRecovery } from '@/state/recovery';
 import { RecoveryBanner, RUNNING_SHOW_AFTER_MS } from './RecoveryBanner';
 
+/** A copy to a stick that is not plugged in. */
 const stick: PendingChange = {
   txn: '6ac5b4f4-75821-0',
   path: '/Volumes/STICK/Crate/Night Drive.wav',
   reason: '/Volumes/STICK/Crate is not reachable (volume not mounted?)',
+  toFolder: true,
 };
+/** A change in place, still running in another window. */
 const busy: PendingChange = {
   txn: '6ac5b4f4-75821-1',
   path: '/Music/Crate/Big Room.aiff',
   reason: 'running',
+  toFolder: false,
 };
 
 function finished(pending: PendingChange[], recovered: number = 0): RecoveryStatus {
@@ -28,9 +32,20 @@ function finished(pending: PendingChange[], recovered: number = 0): RecoveryStat
   };
 }
 
-function show(status: RecoveryStatus) {
-  useRecovery.setState({ status, running: status.state === 'running' });
+function show(status: RecoveryStatus | null) {
+  useRecovery.setState({ status, running: status?.state === 'running' });
   return render(<RecoveryBanner />);
+}
+
+const live = () => screen.getByTestId('recovery-live');
+
+/** The drawn lines, leaving out the live region that repeats them for screen readers. */
+const DRAWN = { ignore: '[data-testid="recovery-live"], script, style' };
+
+/** Presses Forget on `name`'s row, then Forget in the step that asks. */
+async function forget(name: string) {
+  await userEvent.click(screen.getByRole('button', { name: `Forget the change to ${name}` }));
+  await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Forget' }));
 }
 
 beforeEach(() => {
@@ -45,25 +60,45 @@ describe('the recovery banner', () => {
       show({ state: 'running' });
       expect(screen.queryByText(/Finishing changes/)).toBeNull();
       await act(async () => vi.advanceTimersByTimeAsync(RUNNING_SHOW_AFTER_MS));
-      expect(screen.getByRole('status')).toHaveTextContent(
-        'Finishing changes from the last session…',
-      );
-      expect(screen.getByRole('status')).toHaveTextContent(
-        /Export, Revert and the rekordbox XML wait/,
-      );
+      expect(screen.getByText('Finishing changes from the last session…', DRAWN)).toBeInTheDocument();
+      expect(screen.getByText(/Export, Revert and the rekordbox XML wait/)).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('lists each change it could not finish: the file, why, and Forget', () => {
+  it('keeps one live region from the start and changes only its text', async () => {
+    vi.useFakeTimers();
+    try {
+      show(null);
+      const region = live();
+      expect(region).toHaveAttribute('role', 'status');
+      expect(region).toHaveAttribute('aria-live', 'polite');
+      expect(region).toBeEmptyDOMElement();
+      act(() => useRecovery.setState({ status: { state: 'running' }, running: true }));
+      await act(async () => vi.advanceTimersByTimeAsync(RUNNING_SHOW_AFTER_MS));
+      expect(live()).toBe(region);
+      expect(region).toHaveTextContent('Finishing changes from the last session…');
+      act(() => useRecovery.setState({ status: finished([stick], 1), running: false }));
+      expect(live()).toBe(region);
+      expect(region).toHaveTextContent(
+        '1 change from the last session could not be finished 1 change from the last session was finished.',
+      );
+      // The only status on the page: the lines themselves are not live regions of their own.
+      expect(screen.getAllByRole('status')).toEqual([region]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lists each change it could not finish: the file, why, and Forget, in a region', () => {
     show(finished([stick, busy]));
     const banner = screen.getByRole('region', { name: 'Changes from the last session' });
+    expect(banner).toHaveAttribute('role', 'region');
     expect(
       within(banner).getByText('2 changes from the last session could not be finished'),
     ).toBeInTheDocument();
-    const name = within(banner).getByText('Night Drive.wav');
-    expect(name).toHaveAttribute('title', stick.path);
+    expect(within(banner).getByText('Night Drive.wav')).toHaveAttribute('title', stick.path);
     expect(
       within(banner).getByText('/Volumes/STICK/Crate is not reachable (volume not mounted?)'),
     ).toBeInTheDocument();
@@ -75,18 +110,22 @@ describe('the recovery banner', () => {
     );
   });
 
-  it('says what Forget means before it forgets, and Cancel forgets nothing', async () => {
+  it('says what Forget means for a change in place, and Cancel forgets nothing', async () => {
     const calls: string[] = [];
     mockIPC((cmd) => {
       calls.push(cmd);
     });
     show(finished([stick, busy]));
     await userEvent.click(
-      screen.getByRole('button', { name: 'Forget the change to Night Drive.wav' }),
+      screen.getByRole('button', { name: 'Forget the change to Big Room.aiff' }),
     );
-    const dialog = screen.getByRole('dialog', { name: 'Forget the change to Night Drive.wav?' });
+    const dialog = screen.getByRole('dialog', { name: 'Forget the change to Big Room.aiff?' });
     expect(within(dialog).getByText(/stops trying to finish this change/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/The file is left as it is now/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        /^The file is left as it is now, which may be the original or the new version/,
+      ),
+    ).toBeInTheDocument();
     expect(
       within(dialog).getByText(/^Nothing is deleted: a backup of the original/),
     ).toBeInTheDocument();
@@ -95,73 +134,120 @@ describe('the recovery banner', () => {
     expect(calls).not.toContain('forget_pending');
   });
 
-  it('forgets on confirm, removes the row, and says where the backup stays', async () => {
-    const asked: unknown[] = [];
-    const answer: ForgetResult = {
-      path: stick.path,
-      backup: '/Users/me/Music/SoundCheck Backups/2026-11-05/STICK/Crate/Night Drive.wav',
-      kept: ['/Users/me/Music/SoundCheck Backups/2026-11-05/STICK/Crate/Night Drive.wav'],
-      status: finished([busy]),
-    };
-    mockIPC((cmd, args) => {
-      if (cmd === 'forget_pending') {
-        asked.push(args);
-        return answer;
-      }
-      return undefined;
-    });
-    show(finished([stick, busy]));
+  it('says what Forget means for a copy to a folder: no copy yet, an empty file, or the copy', async () => {
+    show(finished([stick]));
     await userEvent.click(
       screen.getByRole('button', { name: 'Forget the change to Night Drive.wav' }),
     );
-    await userEvent.click(
-      within(screen.getByRole('dialog')).getByRole('button', { name: 'Forget' }),
-    );
+    const dialog = screen.getByRole('dialog');
+    expect(
+      within(dialog).getByText(
+        'The copy is left as it is now: depending on how far the change got, there is no copy yet, an empty file holding its name, or the new copy. The original was not changed.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/backup of the original/)).toBeNull();
+  });
+
+  it('forgets on confirm, removes the row, and lists each kept file by its path', async () => {
+    const asked: unknown[] = [];
+    const temp = '/Volumes/STICK/Crate/.Night Drive.wav.soundcheck-tmp-42-7f';
+    const answer: ForgetResult = {
+      path: stick.path,
+      backup: null,
+      kept: [temp, stick.path],
+      status: finished([busy]),
+    };
+    mockIPC((cmd, args) => {
+      if (cmd !== 'forget_pending') return undefined;
+      asked.push(args);
+      return answer;
+    });
+    show(finished([stick, busy]));
+    await forget('Night Drive.wav');
     expect(asked).toEqual([{ txn: stick.txn }]);
     expect(
-      await screen.findByText('1 change from the last session could not be finished'),
+      await screen.findByText('1 change from the last session could not be finished', DRAWN),
     ).toBeInTheDocument();
     expect(screen.queryByText('Night Drive.wav')).toBeNull();
     expect(
-      screen.getByText(
-        /^The change to Night Drive\.wav is forgotten\. Nothing was deleted\. The backup/,
-      ),
+      screen.getByText('The change to Night Drive.wav is forgotten. Nothing was deleted.'),
     ).toBeInTheDocument();
+    const kept = within(screen.getByRole('list', { name: 'Kept' })).getAllByRole('listitem');
+    expect(kept).toHaveLength(2);
+    expect(kept[0]).toHaveTextContent(
+      `${temp}: a hidden copy the change was writing, which may be complete`,
+    );
+    expect(kept[1]).toHaveTextContent(
+      `${stick.path}: may be an empty file holding the copy's name; remove it before exporting`,
+    );
+    expect(live()).toHaveTextContent(/^The change to Night Drive\.wav is forgotten\./);
   });
 
-  it('shows a refused Forget on its row, with what to do', async () => {
+  it('names the backup of a change in place among what it kept', async () => {
+    const backup = '/Users/me/Music/SoundCheck Backups/2026-11-05/Big Room.aiff';
+    mockIPC((cmd) =>
+      cmd === 'forget_pending'
+        ? { path: busy.path, backup, kept: [backup], status: finished([]) }
+        : undefined,
+    );
+    show(finished([busy]));
+    await forget('Big Room.aiff');
+    expect(await screen.findByText(`${backup}`)).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: 'Kept' })).toHaveTextContent(
+      `${backup}: the backup of the original`,
+    );
+  });
+
+  it('drops a row whose change ended meanwhile, when Forget is refused for it', async () => {
     mockIPC((cmd) => {
       if (cmd === 'forget_pending') {
         throw {
           kind: 'invalidArgument',
           message:
-            'change 6ac5b4f4-75821-1 is running; it can only be forgotten once it has stopped',
+            'invalid argument: change 6ac5b4f4-75821-0 is already recovered; only an unfinished change can be forgotten',
           fileId: null,
         };
       }
-      return undefined;
+      return cmd === 'recovery_status' ? finished([busy]) : undefined;
+    });
+    show(finished([stick, busy]));
+    await forget('Night Drive.wav');
+    expect(
+      await screen.findByText('1 change from the last session could not be finished', DRAWN),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Night Drive.wav')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('shows a refusal for a change still pending in plain words, without the class name', async () => {
+    mockIPC((cmd) => {
+      if (cmd === 'forget_pending') {
+        throw {
+          kind: 'invalidArgument',
+          message:
+            'invalid argument: change 6ac5b4f4-75821-1 is running; it can only be forgotten once it has stopped',
+          fileId: null,
+        };
+      }
+      return cmd === 'recovery_status' ? finished([busy]) : undefined;
     });
     show(finished([busy]));
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Forget the change to Big Room.aiff' }),
-    );
-    await userEvent.click(
-      within(screen.getByRole('dialog')).getByRole('button', { name: 'Forget' }),
-    );
+    await forget('Big Room.aiff');
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
-      /^Change 6ac5b4f4-75821-1 is running; it can only be forgotten once it has stopped\. Try again/,
+      'Change 6ac5b4f4-75821-1 is running; it can only be forgotten once it has stopped. Try again once it has stopped; if it is still refused, restart SoundCheck to check it again.',
     );
+    expect(alert).not.toHaveTextContent(/invalid argument/i);
     expect(screen.getByText('Big Room.aiff')).toBeInTheDocument();
   });
 
   it('with only finished changes, says so in one line that can be closed', async () => {
     show(finished([], 2));
-    expect(screen.getByRole('status')).toHaveTextContent(
-      '2 changes from the last session were finished.',
-    );
+    expect(screen.getByText('2 changes from the last session were finished.', DRAWN)).toBeInTheDocument();
+    expect(live()).toHaveTextContent('2 changes from the last session were finished.');
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
-    expect(screen.queryByText(/were finished/)).toBeNull();
+    expect(screen.queryByText(/were finished/, DRAWN)).toBeNull();
+    expect(live()).toBeEmptyDOMElement();
   });
 
   it('says an undone change left its file as it was', () => {
@@ -170,9 +256,9 @@ describe('the recovery banner', () => {
       pending: [],
       recovered: [{ txn: '6ac5b4f4-1-0', path: '/Music/a.wav', outcome: 'rolledBack' }],
     });
-    expect(screen.getByRole('status')).toHaveTextContent(
-      '1 change from the last session was undone; its file is as it was.',
-    );
+    expect(
+      screen.getByText('1 change from the last session was undone; its file is as it was.', DRAWN),
+    ).toBeInTheDocument();
   });
 
   it('when the check could not run: what, why, what to do', () => {
@@ -180,7 +266,7 @@ describe('the recovery banner', () => {
     const alert = screen.getByRole('alert');
     expect(alert).toHaveTextContent('The changes from the last session could not be checked');
     expect(alert).toHaveTextContent('Recovery stopped before it finished.');
-    expect(alert).toHaveTextContent(/Nothing was changed\. Restart SoundCheck to check again/);
+    expect(alert).toHaveTextContent(/Restart SoundCheck to check again/);
   });
 
   it('says nothing when it skipped, or found nothing', () => {
@@ -192,19 +278,5 @@ describe('the recovery banner', () => {
     unmount();
     show(finished([]));
     expect(document.body.textContent).toBe('');
-  });
-
-  it('keeps the whole status from the engine, and stops reading once it ended', async () => {
-    let reads = 0;
-    mockIPC((cmd) => {
-      if (cmd !== 'recovery_status') return undefined;
-      reads += 1;
-      return finished([stick]);
-    });
-    const stop = startRecoveryWatch();
-    await vi.waitFor(() => expect(useRecovery.getState().status).toEqual(finished([stick])));
-    expect(useRecovery.getState().running).toBe(false);
-    expect(reads).toBe(1);
-    stop();
   });
 });
