@@ -113,7 +113,14 @@ export function Footer({
   const artefacts = useLibrary((s) => s.artefacts);
   const xmlLeftOut = useLibrary((s) => s.xmlLeftOut);
   const artefactsFailed = useLibrary((s) => s.artefactsFailed);
-  const stale = useLibrary((s) => s.order.filter((id) => s.rows[id] && hasStaleTags(s.rows[id])).length);
+  // The last export's files only: a row exported in an earlier batch is not part of its summary.
+  const stale = useLibrary(
+    (s) =>
+      (s.lastExport?.fileIds ?? []).filter((id) => {
+        const row = s.rows[id];
+        return row !== undefined && hasStaleTags(row);
+      }).length,
+  );
   const narrow = useMediaQuery(NARROW);
   const version = useVersion();
   const fraction = job && job.total > 0 ? job.done / job.total : 0;

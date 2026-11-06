@@ -3,12 +3,21 @@ import userEvent from '@testing-library/user-event';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { useLibrary, type Row } from '@/state/library';
 import { useRecovery } from '@/state/recovery';
-import type { Codec } from '@/lib/ipc';
+import type { Codec, ExportedWith } from '@/lib/ipc';
 import type { SeratoTag } from '@/lib/ipc/generated/SeratoTag';
 import { analysis, doneRow, entry, exportRow, plan, verification } from '@/test/fixtures';
 import { ExportDetail } from './ExportDetail';
 
 const initial = useLibrary.getState();
+
+/** What an export was made with, in place or to a folder. */
+function madeWith(place: 'inPlace' | 'folder'): ExportedWith {
+  return {
+    decide: { mode: 'dj', target: -11, ceiling: -0.5, bpmRange: [70, 180] },
+    settings: { batchMode: 'prepare', place, depth: null, gridOnly: false, tbpm: true, xml: true, leadMs: 5 },
+    outDir: place === 'folder' ? '/Users/me/Exports' : null,
+  };
+}
 
 /** Track 1 as another format, with Serato data when given. */
 function track(codec: Codec, seratoTags: SeratoTag[] = []) {
@@ -122,11 +131,19 @@ describe('the row details', () => {
     expect(screen.queryByText(/Serato's Auto Gain/)).toBeNull();
   });
 
-  it('tells a written FLAC to be analysed in rekordbox, and only once it is written', () => {
-    const { unmount } = show({ export: doneRow() });
-    expect(screen.getByText(/^Analyse this FLAC in rekordbox before playing it from a CDJ/)).toBeInTheDocument();
+  it('tells a FLAC written in place to be analysed again in rekordbox, once it is written', () => {
+    const { unmount } = show({ export: doneRow({ exportedWith: madeWith('inPlace') }) });
+    expect(
+      screen.getByText(/^Analyse this FLAC again in rekordbox before playing it from a CDJ/),
+    ).toHaveTextContent(
+      /import the track from the rekordbox XML after it, then turn on Analysis Lock, which stops rekordbox analysing it again or changing its grid\.$/,
+    );
     unmount();
-    show({ state: 'exportQueued', export: exportRow() });
+    const { unmount: queued } = show({ state: 'exportQueued', export: exportRow({ exportedWith: madeWith('inPlace') }) });
+    expect(screen.queryByText(/Analyse this FLAC/)).toBeNull();
+    queued();
+    // A copy in another folder is new to rekordbox and analysed when it is added: nothing to say.
+    show({ export: doneRow({ exportedWith: madeWith('folder') }) });
     expect(screen.queryByText(/Analyse this FLAC/)).toBeNull();
   });
 

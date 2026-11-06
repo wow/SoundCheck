@@ -46,8 +46,8 @@ function CutWarning({ counts }: { counts: ExportCounts }) {
 }
 
 /** Said once for the batch: rekordbox analyses a written FLAC again, before a CDJ plays it well. */
-function FlacNotice({ rows: planned }: { rows: ExportPreviewRow[] }) {
-  const count = useLibrary((l) => flacWrites(planned, l.rows));
+function FlacNotice({ rows: planned, inPlace }: { rows: ExportPreviewRow[]; inPlace: boolean }) {
+  const count = useLibrary((l) => flacWrites(planned, l.rows, inPlace));
   const text = flacConfirmText(count);
   if (!text) return null;
   return <p className="text-[12px] leading-[1.45] text-fg-1">{text}</p>;
@@ -125,7 +125,7 @@ export function ExportConfirm() {
             </p>
             <p className="text-[12px] text-fg-2">{settingsLine(request, preview.decide)}</p>
             <CutWarning counts={counts} />
-            <FlacNotice rows={rows} />
+            <FlacNotice rows={rows} inPlace={request.settings.place === 'inPlace'} />
             {counts.replacing > 0 && (
               <p className="text-[12px] text-fg-1">
                 {counts.replacing === 1

@@ -41,12 +41,12 @@ describe('the browser stand-in, for the notices and the recovery banner', { time
     await advance(100);
     await act(async () => addPaths(['/Users/mock/Music/Crate']));
     await advance(10_000);
-    act(() => useSettings.getState().setOutDir('/Users/mock/Music/Exports'));
+    act(() => useSettings.getState().setPlace('inPlace'));
     fireEvent.click(screen.getByRole('button', { name: /^Export \d+/ }));
     await advance(500);
     const dialog = screen.getByRole('dialog', { name: 'Confirm export' });
     expect(
-      within(dialog).getByText(/FLAC files in rekordbox once they are written/),
+      within(dialog).getByText(/FLAC files written in place again in rekordbox/),
     ).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: /^Write \d+ files$/ }));
     await advance(30_000);
@@ -64,7 +64,7 @@ describe('the browser stand-in, for the notices and the recovery banner', { time
       ),
     ).toBeInTheDocument();
     select('Night Drive');
-    expect(within(details()).getByText(/^Analyse this FLAC in rekordbox/)).toBeInTheDocument();
+    expect(within(details()).getByText(/^Analyse this FLAC again in rekordbox/)).toBeInTheDocument();
     expect(screen.getByText(/keep loudness tags at the old level/)).toBeInTheDocument();
   });
 

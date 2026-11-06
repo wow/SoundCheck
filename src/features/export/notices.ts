@@ -121,31 +121,44 @@ export function hasStaleTags(row: Row): boolean {
 
 /**
  * rekordbox keeps a seek index of each FLAC it has analysed, mapping positions to where they sit in
- * the file's frames; a written FLAC's frames are new, so the index no longer matches until
- * rekordbox analyses the file again, and that analysis makes its own beat grid.
+ * the file's frames. Written in place, the file keeps its path, so rekordbox still knows it, but
+ * its frames are new: the index no longer matches until rekordbox analyses the file again, and
+ * that analysis makes its own beat grid. Importing the track from the rekordbox XML puts the
+ * exported grid back, and Analysis Lock then stops rekordbox analysing it again or changing its
+ * grid. A copy in another folder is a new file to rekordbox, analysed when it is added, so it
+ * needs no notice.
  */
 export const FLAC_ROW_TEXT =
-  "Analyse this FLAC in rekordbox before playing it from a CDJ: rekordbox keeps an index of where each part of a FLAC sits, and writing it moved them, so until then the track can skip. That analysis can put rekordbox's own beat grid in place of the one written here.";
+  "Analyse this FLAC again in rekordbox before playing it from a CDJ: rekordbox keeps an index of where each part of a FLAC it knows sits, and writing it in place moved them, so until then the track can skip. That analysis can put rekordbox's own beat grid in place of the one written here; to keep this grid, import the track from the rekordbox XML after it, then turn on Analysis Lock, which stops rekordbox analysing it again or changing its grid.";
 
-/** The row holds a FLAC SoundCheck wrote. */
+/** The row holds a FLAC SoundCheck wrote in place, one rekordbox may already know. */
 export function flacWritten(row: Row): boolean {
-  return row.entry.info.codec === 'flac' && row.export?.verification != null;
+  const shown = row.export;
+  return (
+    row.entry.info.codec === "flac" &&
+    shown?.verification != null &&
+    shown.exportedWith?.settings.place === "inPlace"
+  );
 }
 
-/** The confirm step's line when the batch writes FLAC files; `null` when it writes none. */
+/** The confirm step's line when the batch writes FLAC files in place; `null` when it writes none. */
 export function flacConfirmText(count: number): string | null {
   if (count === 0) return null;
-  const files = count === 1 ? '1 FLAC file' : `${count} FLAC files`;
-  const them = count === 1 ? 'it' : 'them';
-  return `Analyse the ${files} in rekordbox once ${count === 1 ? 'it is' : 'they are'} written, before playing ${them} from a CDJ: rekordbox keeps an index of where each part of a FLAC sits, and writing moves them, so until then a track can skip. That analysis can put rekordbox's own beat grid in place of the exported one.`;
+  const one = count === 1;
+  const files = one ? "1 FLAC file" : `${count} FLAC files`;
+  return `Analyse the ${files} written in place again in rekordbox before playing ${one ? "it" : "them"} from a CDJ: rekordbox keeps an index of where each part of a FLAC it knows sits, and writing in place moves them, so until then a track can skip. That analysis can put rekordbox's own beat grid in place of the exported one; to keep the exported grid, import ${one ? "the track" : "the tracks"} from the rekordbox XML after it, then turn on Analysis Lock.`;
 }
 
-/** How many of the planned rows write a FLAC. */
+/** How many of the planned rows write a FLAC in place (`inPlace`: the export's place). */
 export function flacWrites(
   planned: readonly ExportPreviewRow[],
   rows: Record<number, Row>,
+  inPlace: boolean,
 ): number {
+  if (!inPlace) return 0;
   return planned.filter(
-    (p) => p.row?.action.type === 'write' && rows[p.fileId]?.entry.info.codec === 'flac',
+    (p) =>
+      p.row?.action.type === "write" &&
+      rows[p.fileId]?.entry.info.codec === "flac",
   ).length;
 }

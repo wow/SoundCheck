@@ -86,8 +86,6 @@ describe("Serato's auto gain", () => {
 describe('the FLAC notice of the confirm step', () => {
   it('counts the files, and is not there for none', () => {
     expect(flacConfirmText(0)).toBeNull();
-    expect(flacConfirmText(1)).toMatch(
-      /^Analyse the 1 FLAC file in rekordbox once it is written, before playing it/,
-    );
+    expect(flacConfirmText(1)).toMatch(/^Analyse the 1 FLAC file written in place again in rekordbox before playing it/);
   });
 });

@@ -65,14 +65,20 @@ describe('the confirm step, about rekordbox and FLAC', () => {
     );
     render(<ExportConfirm />);
     void openExportConfirm();
-    const said = await screen.findAllByText(
-      /in rekordbox once they are written, before playing them from a CDJ/,
-    );
+    const said = await screen.findAllByText(/written in place again in rekordbox before playing them from a CDJ/);
     expect(said).toHaveLength(1);
-    expect(said[0]).toHaveTextContent(/^Analyse the 2 FLAC files/);
-    expect(said[0]).toHaveTextContent(
-      /can put rekordbox's own beat grid in place of the exported one/,
-    );
+    expect(said[0]).toHaveTextContent(/^Analyse the 2 FLAC files written in place/);
+    expect(said[0]).toHaveTextContent(/import the tracks from the rekordbox XML after it, then turn on Analysis Lock\.$/);
+  });
+
+  it('says nothing about it for FLAC copies in another folder, which rekordbox analyses as new', async () => {
+    useSettings.setState({ place: 'folder', outDir: '/Users/me/Exports' });
+    add(entry(1), entry(2));
+    backend(exportPreview([previewRow(1, exportRow()), previewRow(2, exportRow())]));
+    render(<ExportConfirm />);
+    void openExportConfirm();
+    await screen.findByRole('button', { name: 'Write 2 files' });
+    expect(screen.queryByText(/FLAC files? written in place/)).toBeNull();
   });
 
   it('says nothing about it when no FLAC is written', async () => {
@@ -81,6 +87,6 @@ describe('the confirm step, about rekordbox and FLAC', () => {
     render(<ExportConfirm />);
     void openExportConfirm();
     await screen.findByRole('button', { name: 'Write 1 file' });
-    expect(screen.queryByText(/FLAC files? in rekordbox/)).toBeNull();
+    expect(screen.queryByText(/FLAC files? written in place/)).toBeNull();
   });
 });
